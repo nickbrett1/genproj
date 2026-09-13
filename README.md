@@ -4,25 +4,40 @@ The genproj service: the capability catalog and project generator, extracted fro
 [`ftn`](https://github.com/nickbrett1/ftn) so that `ftn`'s UI can be a thin,
 data-driven client of it.
 
-The extraction runs in phases. This repository currently serves **phase 2a**: the
-read-only catalog surface plus the generator (preview). Generation against
-GitHub, the MCP server and the `ftn` proxy routes follow.
+The extraction runs in phases. This repository currently serves the catalog
+surface, project generation, the conflict check and its own MCP server. `ftn` no
+longer generates projects; its `preview`, `generate` and `conflicts` routes proxy
+here over a Cloudflare service binding. What remains is deleting the generator
+from `ftn`.
 
 ## Endpoints
 
-| Route                         | Auth | Description                                                            |
-| ----------------------------- | ---- | ---------------------------------------------------------------------- |
-| `GET /healthz`                | none | Liveness, service version and the catalog version.                     |
-| `GET /v1/catalog`             | none | The capability catalog. `ETag` + `Cache-Control: public, max-age=300`. |
-| `GET /v1/catalog/schema.json` | none | JSON Schema for the catalog.                                           |
-| `GET /v1/version`             | none | Service version and catalog version.                                   |
-| `POST /v1/preview`            | none | Preview the files a configuration would generate.                      |
+| Route                         | Auth   | Description                                                            |
+| ----------------------------- | ------ | ---------------------------------------------------------------------- |
+| `GET /healthz`                | none   | Liveness, service version and the catalog version.                     |
+| `GET /v1/catalog`             | none   | The capability catalog. `ETag` + `Cache-Control: public, max-age=300`. |
+| `GET /v1/catalog/schema.json` | none   | JSON Schema for the catalog.                                           |
+| `GET /v1/version`             | none   | Service version and catalog version.                                   |
+| `POST /v1/preview`            | none   | Preview the files a configuration would generate.                      |
+| `POST /v1/generate`           | secret | Create or update a repository.                                         |
+| `POST /v1/conflicts`          | secret | Report files that would conflict with existing ones.                   |
+| `POST /mcp`                   | PAT    | MCP server: `list_genproj_capabilities`, `generate_project`.           |
 
 The catalog is deliberately public — the UI renders it before anyone signs in.
 Preview is public too: it renders the same file set generation would produce
-without touching GitHub or any external service. _Generating_ code requires
-authentication, as it always has; that lives on the `/v1/generate` route in the
-next phase.
+without touching GitHub or any external service.
+
+There are two different callers, authenticated two different ways:
+
+- **`ftn`**, proxying a signed-in user's request, presents a shared secret
+  (`x-service-secret`). A service binding is an internal handle rather than a
+  network address, and this Worker also has a public host, so the secret is what
+  distinguishes a call from `ftn` from a call from the internet.
+- **An MCP client** speaks to `POST /mcp` directly, with a personal access token
+  in `Authorization: Bearer …` (or `X-API-Key`). It has no `ftn` in the path to
+  vouch for it, so it identifies itself. The tokens are the `pat_…` values the
+  `ftn` `/api-keys` UI issues, validated against the shared `API_KEYS_DB`
+  database — one store, two consumers, no second source of truth.
 
 `catalogVersion` is a content hash of the capability list, so a client can tell
 whether its cached copy is stale. `/v1/catalog` returns it as a strong `ETag` and

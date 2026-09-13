@@ -51,14 +51,27 @@ export async function handleGenerate(request, env = {}) {
     return response;
   }
 
+  return generateProjectResult(body, identity.userEmail, env);
+}
+
+/**
+ * Generates a project and returns the HTTP result, without authenticating.
+ *
+ * Split out from {@link handleGenerate} so the MCP server — which has already
+ * established who is asking, by a different mechanism — can run a generation
+ * without inventing a service-secret request to hand to the HTTP guard.
+ *
+ * @param {object} body Validated request body (`name` and
+ *   `selectedCapabilities` at minimum).
+ * @param {string} userEmail Owning user, for the generated project's metadata.
+ * @param {Record<string, unknown>} [env] Worker environment bindings.
+ * @returns {Promise<Response>} The generation result, or an error response.
+ */
+export async function generateProjectResult(body, userEmail, env = {}) {
   try {
     const authTokens = buildAuthTokens(env);
     const service = new ProjectGeneratorService(authTokens);
-    const projectContext = buildProjectContext(
-      body,
-      identity.userEmail,
-      authTokens,
-    );
+    const projectContext = buildProjectContext(body, userEmail, authTokens);
 
     const result = await service.generateProject(projectContext);
 
