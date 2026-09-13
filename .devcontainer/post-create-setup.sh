@@ -1,0 +1,315 @@
+#!/bin/bash
+# This file is executed once per session to set up the devcontainer.
+# For example:
+# echo "Running devcontainer setup script..."
+# npm install
+
+CURRENT_USER=$(whoami)
+USER_HOME_DIR="$HOME"
+
+echo "INFO: Restoring or backing up SSH host keys..."
+sudo mkdir -p /var/lib/tailscale/ssh
+if [ -n "$(ls -A /var/lib/tailscale/ssh/ssh_host_* 2>/dev/null)" ]; then
+    echo "INFO: Restoring SSH host keys from /var/lib/tailscale/ssh..."
+    sudo cp -f /var/lib/tailscale/ssh/ssh_host_* /etc/ssh/
+    sudo chmod 600 /etc/ssh/ssh_host_*_key
+    sudo chmod 644 /etc/ssh/ssh_host_*_key.pub 2>/dev/null || true
+else
+    echo "INFO: Backing up SSH host keys to /var/lib/tailscale/ssh..."
+    sudo ssh-keygen -A || true
+    sudo cp -f /etc/ssh/ssh_host_* /var/lib/tailscale/ssh/
+fi
+
+echo "INFO: Ensuring SSH service is running..."
+sudo service ssh restart
+
+echo "INFO: Ensuring wrangler directory permissions..."
+mkdir -p "$USER_HOME_DIR/.wrangler"
+sudo chown -R "$CURRENT_USER:$CURRENT_USER" "$USER_HOME_DIR/.wrangler"
+echo "INFO: Ensuring gemini directory permissions..."
+mkdir -p "$USER_HOME_DIR/.gemini"
+sudo chown -R "$CURRENT_USER:$CURRENT_USER" "$USER_HOME_DIR/.gemini"
+
+
+echo "INFO: Creating Oh My Zsh custom directories..."
+mkdir -p "$USER_HOME_DIR/.oh-my-zsh/custom/themes" "$USER_HOME_DIR/.oh-my-zsh/custom/plugins"
+
+if [ -f "/workspaces/genproj/.devcontainer/.zshrc" ]; then
+    echo "INFO: Copying .zshrc to $USER_HOME_DIR/.zshrc"
+    cp "/workspaces/genproj/.devcontainer/.zshrc" "$USER_HOME_DIR/.zshrc"
+    sudo chown "$CURRENT_USER:$CURRENT_USER" "$USER_HOME_DIR/.zshrc"
+else
+    echo "INFO: /workspaces/genproj/.devcontainer/.zshrc not found, skipping copy."
+fi
+
+if [ -f "/workspaces/genproj/.devcontainer/.p10k.zsh" ]; then
+    echo "INFO: Copying .p10k.zsh to $USER_HOME_DIR/.p10k.zsh"
+    cp "/workspaces/genproj/.devcontainer/.p10k.zsh" "$USER_HOME_DIR/.p10k.zsh"
+    sudo chown "$CURRENT_USER:$CURRENT_USER" "$USER_HOME_DIR/.p10k.zsh"
+else
+    echo "INFO: /workspaces/genproj/.devcontainer/.p10k.zsh not found, skipping copy."
+fi
+
+if [ -f "/workspaces/genproj/.devcontainer/.tmux.conf" ]; then
+    echo "INFO: Copying .tmux.conf to $USER_HOME_DIR/.tmux.conf"
+    cp "/workspaces/genproj/.devcontainer/.tmux.conf" "$USER_HOME_DIR/.tmux.conf"
+    sudo chown "$CURRENT_USER:$CURRENT_USER" "$USER_HOME_DIR/.tmux.conf"
+else
+    echo "INFO: /workspaces/genproj/.devcontainer/.tmux.conf not found, skipping copy."
+fi
+
+echo "INFO: Ensuring doppler directory permissions..."
+mkdir -p "$USER_HOME_DIR/.doppler"
+sudo chown -R "$CURRENT_USER:$CURRENT_USER" "$USER_HOME_DIR/.doppler"
+# Round-5 (memo genproj-fixes-round5): guarantee the CLI is on PATH. The
+# Dockerfile installs it for fresh projects, but a regenerated project whose
+# Dockerfile was preserved (round-3 idempotent overwrite) needs the fallback.
+# (A devcontainer feature was tried first but ghcr.io/devcontainers-contrib
+# features are no longer reliably pullable — 'denied'.)
+if ! command -v doppler &> /dev/null; then
+    echo "INFO: Installing Doppler CLI (fallback)..."
+    (curl -Ls --tlsv1.2 --proto "=https" --retry 3 https://cli.doppler.com/install.sh || wget -t 3 -qO- https://cli.doppler.com/install.sh) | sudo sh
+fi
+# genproj-doppler-context-pin (memo Gi8CN7XqpH6CxFAc2YUJsK): ambient
+# DOPPLER_PROJECT/DOPPLER_CONFIG/DOPPLER_ENVIRONMENT from the launching session
+# override doppler.yaml (env > yaml) and silently point every 'doppler' command
+# at the wrong project. Pin the repo context in ~/.bashrc + ~/.zshrc so new
+# shells (including agent-spawned ones) inherit it. The marker keeps the
+# append idempotent across post-create re-runs.
+DOPPLER_RC_MARKER='# genproj-doppler-context-pin'
+if ! grep -qF "$DOPPLER_RC_MARKER" "$HOME/.bashrc" 2>/dev/null; then
+    cat >> "$HOME/.bashrc" <<'EOF'
+# genproj-doppler-context-pin: this repo's doppler.yaml context wins over ambient env
+export DOPPLER_PROJECT=genproj
+export DOPPLER_CONFIG=dev
+unset DOPPLER_ENVIRONMENT 2>/dev/null || true
+
+EOF
+    echo "INFO: Pinned doppler context (genproj/dev) in ~/.bashrc"
+fi
+if ! grep -qF "$DOPPLER_RC_MARKER" "$HOME/.zshrc" 2>/dev/null; then
+    cat >> "$HOME/.zshrc" <<'EOF'
+# genproj-doppler-context-pin: this repo's doppler.yaml context wins over ambient env
+export DOPPLER_PROJECT=genproj
+export DOPPLER_CONFIG=dev
+unset DOPPLER_ENVIRONMENT 2>/dev/null || true
+
+EOF
+    echo "INFO: Pinned doppler context (genproj/dev) in ~/.zshrc"
+fi
+# Apply to this shell too, then verify resolution is never silently wrong.
+export DOPPLER_PROJECT=genproj
+export DOPPLER_CONFIG=dev
+unset DOPPLER_ENVIRONMENT 2>/dev/null || true
+if command -v doppler &> /dev/null && doppler whoami &> /dev/null 2>&1; then
+    RESOLVED_PROJECT="$(doppler run -- printenv DOPPLER_PROJECT 2>/dev/null | tail -n 1)"
+    if [ -n "$RESOLVED_PROJECT" ] && [ "$RESOLVED_PROJECT" != "genproj" ]; then
+        echo "WARNING: 'doppler run' resolves project '$RESOLVED_PROJECT', but doppler.yaml"
+        echo "         declares 'genproj'. An ambient DOPPLER_* export is overriding"
+        echo "         the repo context. Run: unset DOPPLER_PROJECT DOPPLER_CONFIG DOPPLER_ENVIRONMENT"
+        echo "         then 'doppler setup --no-interactive --project genproj --config dev'."
+    elif [ -z "$RESOLVED_PROJECT" ]; then
+        echo "WARNING: could not resolve the doppler project via 'doppler run'. If"
+        echo "         'doppler projects get genproj' 404s, create it and run"
+        echo "         'doppler setup --no-interactive --project genproj --config dev'."
+    else
+        echo "INFO: doppler context verified: genproj/dev"
+    fi
+fi
+
+
+
+echo "INFO: Installing uv tool..."
+curl -LsSf https://astral.sh/uv/install.sh | sudo env CARGO_HOME=/usr/local UV_INSTALL_DIR=/usr/local/bin sh
+
+echo "INFO: Installing Cursor CLI..."
+curl https://cursor.com/install -fsS | bash
+
+
+
+
+
+# Setup node dependencies and expose node_modules/.bin on PATH
+# (memo: genproj node devcontainer .venv PATH — same class of bug as python
+# .venv). postCreate runs with the workspace as CWD, but cd explicitly so
+# this also works when invoked from elsewhere.
+cd "/workspaces/genproj" 2>/dev/null || true
+
+if [ -f "package.json" ]; then
+    # genproj-npm-pin: activate the npm pinned in package.json. npm 10 bundled
+    # with Node <24 crashes installing vitest-4 projects ('edgesOut'), and
+    # packageManager/corepack alone does NOT switch npm (corepack only shims
+    # yarn/pnpm) - so install the pinned version globally, mirroring CI.
+    PINNED_NPM="$(node -p "try{require('./package.json').packageManager}catch(e){''}" 2>/dev/null || true)"
+    if [ -n "$PINNED_NPM" ]; then
+        VERSION="${PINNED_NPM#npm@}"
+        CURRENT="$(npm --version 2>/dev/null || echo '')"
+        if [ "$VERSION" != "$CURRENT" ]; then
+            echo "INFO: Activating pinned ${PINNED_NPM} (image npm: ${CURRENT:-unknown})..."
+            (npm install -g "npm@${VERSION}" 2>/dev/null || sudo npm install -g "npm@${VERSION}") || echo "WARN: Could not activate pinned npm ${VERSION}; continuing with $(npm --version 2>/dev/null)"
+        fi
+    fi
+    echo "INFO: Installing dependencies with npm install..."
+    npm install
+fi
+
+# genproj-node-bin-path: expose node_modules/.bin on PATH for shells that do
+# NOT inherit devcontainer.json remoteEnv (VS Code terminals get PATH from
+# remoteEnv; ssh / 'bash -lc' / tmux panes started outside VS Code do not).
+# The marker comment keeps this idempotent across post-create re-runs.
+NODE_BIN_MARKER='# genproj-node-bin-path'
+if ! grep -qF "$NODE_BIN_MARKER" "$HOME/.bashrc" 2>/dev/null; then
+    cat >> "$HOME/.bashrc" <<'EOF'
+# genproj-node-bin-path: prefer project node_modules/.bin
+if [ -d "/workspaces/genproj/node_modules/.bin" ]; then
+    export PATH="/workspaces/genproj/node_modules/.bin:$PATH"
+fi
+EOF
+    echo "INFO: Added node_modules/.bin PATH hook to ~/.bashrc"
+fi
+if ! grep -qF "$NODE_BIN_MARKER" "$HOME/.zshrc" 2>/dev/null; then
+    cat >> "$HOME/.zshrc" <<'EOF'
+# genproj-node-bin-path: prefer project node_modules/.bin
+if [ -d "/workspaces/genproj/node_modules/.bin" ]; then
+    export PATH="/workspaces/genproj/node_modules/.bin:$PATH"
+fi
+EOF
+    echo "INFO: Added node_modules/.bin PATH hook to ~/.zshrc"
+fi
+
+
+
+echo "INFO: Configuring git safe directory..."
+git config --global --add safe.directory /workspaces/genproj
+
+
+echo "INFO: Configuring GitHub auth over SSH (no PAT)..."
+# genproj-github-auth (SSH-first): GitHub remotes authenticate via an SSH key
+# supplied by the host bind-mount (~/.ssh) or the forwarded SSH agent. No PAT
+# is ever written to ~/.gitconfig or remote URLs. Defaults to SSH; fails loud
+# with guidance if no working key/agent is found. Idempotent: re-runs must not
+# duplicate or clobber the existing rewrite.
+
+# --- 1. Make a usable key for the container user ---------------------------
+# The host ~/.ssh is bind-mounted at $HOME/.ssh. Those files keep the host uid
+# (macOS 501), which OpenSSH (running as the container uid, typically 1000)
+# refuses to use. We never chown the mount (that mutates the host file).
+# Preferred: forward the SSH agent (zero keys on disk). Fallback: copy the
+# mounted key into a container-owned dir with mode 600.
+KEY_COPIED=""
+if [ -n "${SSH_AUTH_SOCK:-}" ] && command -v ssh-add &> /dev/null && ssh-add -l >/dev/null 2>&1; then
+    echo "INFO: GitHub auth via forwarded SSH agent (${SSH_AUTH_SOCK})."
+else
+    mkdir -p "$HOME/.genproj-ssh" && chmod 700 "$HOME/.genproj-ssh"
+    for KEY in "$HOME/.ssh/id_ed25519" "$HOME/.ssh/id_rsa"; do
+        if [ -r "$KEY" ]; then
+            DEST="$HOME/.genproj-ssh/$(basename "$KEY")"
+            cp "$KEY" "$DEST"
+            chmod 600 "$DEST"
+            KEY_COPIED="$DEST"
+            echo "INFO: Copied host-mounted key $KEY into $DEST."
+            break
+        fi
+    done
+fi
+
+# --- 2. Point git's ssh at the copied key (if any) -------------------------
+# Persisted in ~/.gitconfig (no secret involved), so it survives re-runs.
+if [ -n "$KEY_COPIED" ]; then
+    git config --global core.sshCommand "ssh -i $KEY_COPIED -o IdentitiesOnly=yes"
+fi
+
+# --- 3. Idempotent SSH insteadOf rewrite for github.com ---------------------
+if git config --global --get-regexp '^url\.git@github\.com:.*\.insteadof' >/dev/null 2>&1; then
+    echo "INFO: GitHub SSH rewrite already configured; leaving in place."
+elif ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=8 -T git@github.com 2>&1 | grep -qi "successfully authenticated"; then
+    git config --global url."git@github.com:".insteadOf "https://github.com/"
+    echo "INFO: GitHub remotes now use SSH (git@github.com:)."
+else
+    echo "WARN: No working SSH key/agent found for github.com."
+    echo "      Add an SSH public key at https://github.com/settings/keys,"
+    echo "      load it on the host (ssh-add --apple-use-keychain), and"
+    echo "      rebuild/re-run this setup. HTTPS push/pull will use the"
+    echo "      default credential helper until then."
+fi
+
+
+echo "INFO: Installing git pre-commit hooks (lint-staged)..."
+(cd /workspaces/genproj && npx --yes simple-git-hooks) || echo "WARN: Run 'npx simple-git-hooks' to install hooks manually."
+
+
+
+
+echo "INFO: Installing Antigravity CLI and Specify CLI..."
+if ! command -v npm &> /dev/null; then
+    echo "npm not found. Installing nodejs and npm..."
+    sudo apt-get update
+    sudo apt-get install -y nodejs npm
+fi
+sudo npm install -g @specifyapp/cli
+curl -fsSL https://antigravity.google/cli/install.sh | bash
+echo "INFO: Antigravity CLI and Specify CLI installation complete."
+
+echo "INFO: Initializing Antigravity CLI global settings..."
+mkdir -p "$USER_HOME_DIR/.agy"
+printf '{\n  "selectedAuthType": "oauth-personal",\n  "general": {\n    "sessionRetention": {\n      "enabled": true,\n      "maxAge": "30d",\n      "warningAcknowledged": true\n    }\n  },\n  "ide": {\n    "hasSeenNudge": true,\n    "enabled": true\n  }\n}\n' > "$USER_HOME_DIR/.agy/settings.json"
+sudo chown -R "$CURRENT_USER:$CURRENT_USER" "$USER_HOME_DIR/.agy"
+
+echo "INFO: Installing agy-telemetry hook..."
+curl -fsSL https://raw.githubusercontent.com/nickbrett1/agy-telemetry/main/install.py | python3
+
+echo "INFO: Setting up goose configuration and MCP servers..."
+
+CONFIG="$HOME/.config/goose/config.yaml"
+if [ -f "$CONFIG" ]; then
+    echo "INFO: Keeping existing $CONFIG (provider + extensions preserved)."
+else
+    echo "INFO: No goose config found - writing project goose config (extensions only; provider resolves from Doppler env at runtime)."
+    mkdir -p "$HOME/.config/goose"
+    cat > "$CONFIG" <<'GOOSECFGEOF'
+extensions:
+  mcphub-dev:
+    type: streamable_http
+    name: mcphub-dev
+    enabled: true
+    uri: http://nas:8781/mcp/dev
+    timeout: 300
+GOOSECFGEOF
+    echo "INFO: Wrote project goose config (MCPHub dev group + local/remote exceptions)."
+fi
+
+echo "INFO: Ensuring goose recipes are available (spec-first development process)..."
+RECIPES_DIR="$HOME/.config/goose/recipes"
+if [ -d "$RECIPES_DIR/.git" ]; then
+    (cd "$RECIPES_DIR" && git pull --ff-only --quiet)         || echo "WARN: Could not update goose-recipes (offline or conflict); keeping existing copy."
+else
+    mkdir -p "$HOME/.config/goose"
+    git clone --quiet https://github.com/nickbrett1/goose-recipes.git "$RECIPES_DIR"         || echo "WARN: Could not clone goose-recipes; recipes will be unavailable."
+fi
+
+echo "INFO: goose configuration complete."
+
+
+echo "INFO: Installing specdag globally..."
+npm install -g @japorto100/specdag
+
+if ! pgrep -f "socat TCP-LISTEN:9222" > /dev/null; then
+    echo "Setup bridget to access Chrome DevTools Protocol over a secure tunnel..."
+    sudo start-stop-daemon --start --background --pidfile /var/run/socat-9222.pid --make-pidfile --chuid $(id -un):$(id -gn) --exec /usr/bin/socat -- TCP-LISTEN:9222,fork,bind=127.0.0.1 TCP:host.docker.internal:9222
+fi
+
+
+echo "INFO: Checking Tailscale status..."
+if ! command -v tailscale &> /dev/null; then
+    echo "INFO: Installing Tailscale..."
+    curl -fsSL https://tailscale.com/install.sh | sh
+fi
+
+if ! pgrep -x tailscaled > /dev/null; then
+    echo "INFO: Starting Tailscale daemon..."
+    sudo start-stop-daemon --start --background --oknodo --pidfile /var/run/tailscaled.pid --make-pidfile --exec /usr/sbin/tailscaled -- --state=/var/lib/tailscale/tailscaled.state
+fi
+
+echo -e "\nINFO: Custom container setup script finished."
+echo -e "\n⚠️  To complete cloud login, run:"
+echo "    cd /workspaces/genproj && bash scripts/cloud_login.sh"

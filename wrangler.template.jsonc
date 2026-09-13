@@ -1,0 +1,24 @@
+{
+	"name": "genproj",
+	"main": "src/index.js",
+	"compatibility_date": "2026-09-13",
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	"observability": {
+		"logs": {
+			"enabled": true,
+			"head_sampling_rate": 1,
+			"invocation_logs": true,
+			"persist": true
+		}
+	},
+	"env": {
+		"production": {
+			"main": "src/index.js"
+		},
+		"preview": {
+			"main": "src/index.js"
+		}
+	}
+}
