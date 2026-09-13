@@ -1,0 +1,36 @@
+# Releasing {{projectName}}
+
+A tag is the release trigger. Pushing a tag that matches
+`{{githubReleaseTagPattern}}` runs the
+[release workflow](.github/workflows/release.yml), which publishes a GitHub
+Release for that tag. There is no manual "draft a release" step.
+
+## Cutting a release
+
+1. Make sure the default branch is green in Buildkite.
+2. Tag the commit and push the tag:
+
+   ```sh
+   git tag v1.2.3
+   git push origin v1.2.3
+   ```
+
+3. The release workflow runs on the tag and publishes the Release. Watch it
+   under the repository's **Actions** tab.
+
+## How it works
+
+- The workflow is triggered by `push` on tags matching
+  `{{githubReleaseTagPattern}}` — never by a branch push.
+- The Release is created with the run's own `GITHUB_TOKEN`
+  (`permissions: contents: write`). There is no PAT to provision.
+- Notes are generated from the pull requests and commits in the release,
+  classified by [`.github/release.yml`](.github/release.yml).
+
+## What this does not do
+
+- **It is not a validator.** Buildkite is the only validator for pushes and
+  pull requests; this workflow runs on tags only, so it can never report on a
+  branch.
+- **It does not build or attach release assets.** The release is a tag and its
+  notes. Packaging artifacts is a separate concern.

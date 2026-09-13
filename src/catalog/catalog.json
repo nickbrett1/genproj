@@ -1,6 +1,6 @@
 {
   "$schema": "./schema.json",
-  "catalogVersion": "bf736d10a27a",
+  "catalogVersion": "2b96617761f7",
   "capabilities": [
     {
       "id": "coding-agents",
@@ -502,6 +502,53 @@
       ],
       "links": [],
       "website": "https://buildkite.com/"
+    },
+    {
+      "id": "github-release",
+      "name": "GitHub Releases",
+      "description": "Publishes a GitHub Release when a version tag is pushed. The tag is the trigger, the generated workflow creates and publishes the release with notes, and the release is created with the repository's own token — there is no manual \"draft a release\" step and no PAT to provision. Independent of CI: Buildkite stays the only validator, and this workflow runs on tags only.",
+      "category": "ci-cd",
+      "selectedByDefault": false,
+      "provides": [],
+      "dependencies": [],
+      "conflicts": [],
+      "requiresAuth": [],
+      "authServices": [],
+      "externalServices": [],
+      "configurationSchema": {
+        "type": "object",
+        "properties": {
+          "tagPattern": {
+            "type": "string",
+            "default": "v*",
+            "description": "Git tag glob that triggers a release. The default publishes any tag starting with \"v\" (v1.2.3, v2.0.0-rc1)."
+          },
+          "generateNotes": {
+            "type": "boolean",
+            "default": true,
+            "description": "Build the release notes from the pull requests and commits in the release (--generate-notes), classified by .github/release.yml. Set to false to use the annotated tag's message as the notes instead."
+          },
+          "draft": {
+            "type": "boolean",
+            "default": false,
+            "description": "Create the release as a draft rather than publishing it immediately, so it can be reviewed before it is visible. Set to false to publish on the tag."
+          },
+          "prerelease": {
+            "type": "boolean",
+            "default": false,
+            "description": "Mark every release as a pre-release: it is not offered as \"latest\" and not the default download."
+          }
+        }
+      },
+      "vscodeExtensions": [],
+      "benefits": [
+        "A tag publishes the release — no manual release drafting",
+        "Release notes are generated from the merged pull requests",
+        "Uses the repository's own token; no PAT to provision or rotate",
+        "CI stays on Buildkite — the workflow runs on tags only"
+      ],
+      "links": [],
+      "website": "https://docs.github.com/en/repositories/releasing-projects-on-github/managing-releases-in-a-repository"
     },
     {
       "id": "doppler",

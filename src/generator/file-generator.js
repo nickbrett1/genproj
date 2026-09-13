@@ -29,6 +29,9 @@ const lighthouseCiConfig = templateFiles["lighthouse-ci-config.template"];
 const circleCiConfig = templateFiles["circleci-config.template"];
 const buildkitePipeline = templateFiles["buildkite-pipeline.template"];
 const buildkiteReadme = templateFiles["buildkite-readme.template"];
+const githubReleaseWorkflow = templateFiles["github-release-workflow.template"];
+const githubReleaseNotes = templateFiles["github-release-notes.template"];
+const githubReleaseReadme = templateFiles["github-release-readme.template"];
 const dockerfileTemplate = templateFiles["dockerfile.template"];
 const dockerignoreTemplate = templateFiles["dockerignore.template"];
 const dockerComposeTemplate = templateFiles["docker-compose.template"];
@@ -600,6 +603,9 @@ const templateImports = {
   "circleci-config": circleCiConfig,
   "buildkite-pipeline": buildkitePipeline,
   "buildkite-readme": buildkiteReadme,
+  "github-release-workflow": githubReleaseWorkflow,
+  "github-release-notes": githubReleaseNotes,
+  "github-release-readme": githubReleaseReadme,
   dockerfile: dockerfileTemplate,
   dockerignore: dockerignoreTemplate,
   "docker-compose": dockerComposeTemplate,

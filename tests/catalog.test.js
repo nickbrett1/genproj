@@ -30,6 +30,7 @@ const EXPECTED_IDS = [
   "devcontainer-rust",
   "circleci",
   "buildkite",
+  "github-release",
   "doppler",
   "gitguardian",
   "sonarcloud",

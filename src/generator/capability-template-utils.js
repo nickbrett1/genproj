@@ -1680,6 +1680,52 @@ ${_bkAgents(queue)}    env:
   };
 }
 
+/**
+ * Builds the generated project's GitHub Release workflow.
+ *
+ * A tag is the release trigger: the workflow runs on `push: tags`, so there is
+ * no manual "draft a release" step and nothing reports on a branch — Buildkite
+ * stays the only validator. The release is created with the repository's own
+ * `GITHUB_TOKEN`, so there is no PAT to provision and nothing for a user to
+ * paste in.
+ *
+ * @param {Object} context - Template context (capabilities, configuration)
+ * @returns {Object} GitHub Release template data
+ */
+function getGithubReleaseTemplateData(context) {
+  const config = context.configuration?.["github-release"] || {};
+  const tagPattern = config.tagPattern || "v*";
+  // GitHub-generated notes are the default. The alternative is the annotated
+  // tag's message, which is the only non-interactive fallback: `gh release
+  // create` opens an editor when neither flag is given, and that hangs in CI.
+  const generateNotes = config.generateNotes !== false;
+  const draft = config.draft === true;
+  const prerelease = config.prerelease === true;
+
+  // One flag per line, each continued with a backslash, so a non-default
+  // combination stays legible in the rendered workflow.
+  const flags = [
+    '--title "$GITHUB_REF_NAME"',
+    generateNotes ? "--generate-notes" : "--notes-from-tag",
+    ...(draft ? ["--draft"] : []),
+    ...(prerelease ? ["--prerelease"] : []),
+    "--verify-tag",
+  ];
+  const githubReleaseCreateScript = [
+    'gh release create "$GITHUB_REF_NAME" \\',
+    ...flags.map(
+      (flag, index) => `  ${flag}${index === flags.length - 1 ? "" : " \\"}`,
+    ),
+  ]
+    .map((line) => `          ${line}`)
+    .join("\n");
+
+  return {
+    githubReleaseTagPattern: tagPattern,
+    githubReleaseCreateScript,
+  };
+}
+
 function getDependabotTemplateData(context) {
   const config = context.configuration?.dependabot || {};
   const interval = config.updateSchedule || "weekly";
@@ -1753,6 +1799,7 @@ export function getCapabilityTemplateData(capabilityId, context) {
     sonarcloud: getSonarCloudTemplateData,
     circleci: getCircleCiTemplateData,
     buildkite: getBuildkiteTemplateData,
+    "github-release": getGithubReleaseTemplateData,
     dependabot: getDependabotTemplateData,
     "docker-container": getDockerContainerTemplateData,
     doppler: (ctx) => {
