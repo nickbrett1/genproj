@@ -50,11 +50,11 @@ paths:
                   nullable: true
                   description: Expiration timestamp of the refresh token (optional).
       responses:
-        '200':
+        "200":
           description: Token stored successfully.
-        '400':
+        "400":
           description: Invalid input.
-        '500':
+        "500":
           description: Internal Server Error.
 
   /auth/tokens/user/{userId}:
@@ -71,17 +71,17 @@ paths:
           required: true
           description: UUID of the user.
       responses:
-        '200':
+        "200":
           description: List of stored authentication token details.
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/UserStoredAuthTokenInternal'
-        '404':
+                  $ref: "#/components/schemas/UserStoredAuthTokenInternal"
+        "404":
           description: User not found or no tokens.
-        '500':
+        "500":
           description: Internal Server Error.
 
   /user/tokens:
@@ -92,17 +92,17 @@ paths:
       security:
         - cookieAuth: []
       responses:
-        '200':
+        "200":
           description: List of services with stored tokens.
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/UserTokenServiceStatus'
-        '401':
+                  $ref: "#/components/schemas/UserTokenServiceStatus"
+        "401":
           description: Unauthorized - User not logged in.
-        '500':
+        "500":
           description: Internal Server Error.
 
   /user/tokens/{serviceName}:
@@ -120,13 +120,13 @@ paths:
           required: true
           description: Name of the external service whose token is to be revoked.
       responses:
-        '200':
+        "200":
           description: Token revoked successfully.
-        '401':
+        "401":
           description: Unauthorized - User not logged in.
-        '404':
+        "404":
           description: Token for service not found.
-        '500':
+        "500":
           description: Internal Server Error.
 
 components:
