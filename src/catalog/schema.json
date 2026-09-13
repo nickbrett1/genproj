@@ -1,0 +1,166 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://genproj/v1/catalog/schema.json",
+  "title": "genproj capability catalog",
+  "description": "The capability catalog served at GET /v1/catalog. Describes every capability the generator can apply to a project. Metadata only: the templates and files a capability emits are internal to the generator.",
+  "type": "object",
+  "required": ["catalogVersion", "capabilities"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Relative path to this schema."
+    },
+    "catalogVersion": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{12}$",
+      "description": "Content hash of the capability list. Served as the endpoint's ETag."
+    },
+    "count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of capabilities. Present on the HTTP response only."
+    },
+    "capabilities": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/capability" }
+    }
+  },
+  "$defs": {
+    "capability": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "description",
+        "category",
+        "selectedByDefault",
+        "provides",
+        "dependencies",
+        "conflicts",
+        "authServices",
+        "externalServices",
+        "configurationSchema"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+          "description": "Stable identifier. Clients select capabilities by this."
+        },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "category": {
+          "type": "string",
+          "enum": [
+            "core",
+            "internal",
+            "devcontainer",
+            "frameworks",
+            "ci-cd",
+            "secrets",
+            "code-quality",
+            "deployment",
+            "project-structure",
+            "monitoring",
+            "apple-development"
+          ]
+        },
+        "selectedByDefault": {
+          "type": "boolean",
+          "description": "Whether the UI should pre-select this capability for a new project."
+        },
+        "provides": {
+          "type": "array",
+          "description": "Machine-readable values other capabilities or the UI can consume. Replaces UI-side hardcoded mappings.",
+          "items": {
+            "type": "object",
+            "required": ["type", "value"],
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "examples": ["sonarcloud.language"]
+              },
+              "value": { "type": "string" }
+            }
+          }
+        },
+        "dependencies": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Capability IDs that must also be selected."
+        },
+        "conflicts": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Capability IDs that cannot be selected together."
+        },
+        "requiresAuth": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Deprecated, retained for compatibility; prefer authServices."
+        },
+        "authServices": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "External service types that must be authenticated before generation."
+        },
+        "externalServices": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["type", "name", "actions", "requiresAuth"],
+            "additionalProperties": false,
+            "properties": {
+              "type": { "type": "string" },
+              "name": { "type": "string" },
+              "requiresAuth": { "type": "boolean" },
+              "actions": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["type", "description"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "enum": ["create", "configure"]
+                    },
+                    "description": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "configurationSchema": {
+          "type": "object",
+          "description": "JSON Schema for the per-capability configuration form."
+        },
+        "vscodeExtensions": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "benefits": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "links": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["label", "url"],
+            "additionalProperties": false,
+            "properties": {
+              "label": { "type": "string" },
+              "url": { "type": "string" }
+            }
+          }
+        },
+        "website": { "type": "string" }
+      }
+    }
+  }
+}

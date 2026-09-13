@@ -27,6 +27,5 @@ Thumbs.db
 .wrangler
 wrangler.jsonc
 
-
-
-
+# Test output
+coverage

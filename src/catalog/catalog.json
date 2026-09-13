@@ -1,0 +1,1046 @@
+{
+  "$schema": "./schema.json",
+  "catalogVersion": "bf736d10a27a",
+  "capabilities": [
+    {
+      "id": "coding-agents",
+      "name": "AI Coding Agents",
+      "description": "Sets up the AI coding agents in the devcontainer: goose (config, MCP servers and spec-first recipes) plus the Cursor and Antigravity CLIs.",
+      "category": "core",
+      "selectedByDefault": true,
+      "provides": [],
+      "dependencies": [],
+      "conflicts": [],
+      "requiresAuth": [],
+      "authServices": [],
+      "externalServices": [],
+      "configurationSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "vscodeExtensions": ["saoudrizwan.claude-dev", "GitHub.copilot"],
+      "benefits": [
+        "goose pre-installed, with project MCP servers and recipes wired up",
+        "Cursor CLI and Antigravity CLI available",
+        "Svelte MCP for context-aware AI",
+        "Memos, Vikunja and Fintechnick MCP integrations"
+      ],
+      "links": [
+        {
+          "label": "goose",
+          "url": "https://github.com/aaif-goose/goose"
+        },
+        {
+          "label": "Cursor",
+          "url": "https://cursor.sh"
+        },
+        {
+          "label": "Svelte MCP",
+          "url": "https://mcp.svelte.dev/"
+        },
+        {
+          "label": "Memos MCP",
+          "url": "http://nas:5230/mcp"
+        },
+        {
+          "label": "Vikunja MCP",
+          "url": "http://nas:8086/"
+        },
+        {
+          "label": "Antigravity",
+          "url": "https://antigravity.google/product/antigravity-cli"
+        }
+      ]
+    },
+    {
+      "id": "xcode-development",
+      "name": "Xcode Development",
+      "description": "Connects an agent to a remote Xcode project over an SSE proxy for AI-assisted iOS/macOS development. Requires Xcode running on a Mac with the Xcode MCP bridge installed.",
+      "category": "apple-development",
+      "selectedByDefault": false,
+      "provides": [],
+      "dependencies": ["coding-agents"],
+      "conflicts": [],
+      "requiresAuth": [],
+      "authServices": [],
+      "externalServices": [],
+      "configurationSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "vscodeExtensions": [],
+      "benefits": [
+        "Build, run, and test Xcode projects from within the devcontainer",
+        "AI can read, write, and grep Xcode project files",
+        "Real-time build logs and test results from Xcode"
+      ],
+      "links": [],
+      "website": "https://developer.apple.com/xcode/"
+    },
+    {
+      "id": "editor-tools",
+      "name": "Editor Configuration",
+      "description": "Shared VS Code extensions and workspace settings for consistent tooling across the team.",
+      "category": "core",
+      "selectedByDefault": true,
+      "provides": [],
+      "dependencies": [],
+      "conflicts": [],
+      "requiresAuth": [],
+      "authServices": [],
+      "externalServices": [],
+      "configurationSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "vscodeExtensions": [
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "svelte.svelte-vscode",
+        "usernamehw.errorlens",
+        "streetsidesoftware.code-spell-checker",
+        "eamodio.gitlens",
+        "donjayamanne.githistory",
+        "mhutchie.git-graph",
+        "redhat.vscode-yaml",
+        "tamasfe.even-better-toml",
+        "bierner.markdown-mermaid",
+        "pomdtr.excalidraw-editor",
+        "pejmannikram.vscode-auto-scroll",
+        "naumovs.color-highlight",
+        "oderwat.indent-rainbow",
+        "wix.vscode-import-cost",
+        "mkxml.vscode-filesize",
+        "christian-kohler.npm-intellisense",
+        "GitHub.vscode-pull-request-github",
+        "shyykoserhiy.git-autoconfig",
+        "actboy168.tasks",
+        "humao.rest-client",
+        "alefragnani.project-manager",
+        "mutantdino.resourcemonitor"
+      ],
+      "benefits": [
+        "ESLint & Prettier configured",
+        "Svelte VS Code extension",
+        "Consistent workspace settings"
+      ],
+      "links": []
+    },
+    {
+      "id": "shell-tools",
+      "name": "Shell & Terminal",
+      "description": "Zsh shell with the Powerlevel10k prompt and productivity plugins.",
+      "category": "core",
+      "selectedByDefault": true,
+      "provides": [],
+      "dependencies": [],
+      "conflicts": [],
+      "requiresAuth": [],
+      "authServices": [],
+      "externalServices": [],
+      "configurationSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "vscodeExtensions": [],
+      "benefits": [
+        "Oh My Zsh",
+        "Powerlevel10k Theme",
+        "Syntax Highlighting & Autosuggestions"
+      ],
+      "links": [],
+      "website": "https://github.com/romkatv/powerlevel10k"
+    },
+    {
+      "id": "spec-kit",
+      "name": "SpecKit",
+      "description": "GitHub's spec-kit: a spec-driven development workflow (specify, plan, tasks, implement) for AI coding agents.",
+      "category": "core",
+      "selectedByDefault": true,
+      "provides": [],
+      "dependencies": [],
+      "conflicts": [],
+      "requiresAuth": [],
+      "authServices": [],
+      "externalServices": [],
+      "configurationSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "vscodeExtensions": [],
+      "benefits": [
+        "Define your project specifications as code",
+        "Generate documentation automatically from specs",
+        "Ensure project alignment with requirements"
+      ],
+      "links": [],
+      "website": "https://github.com/github/spec-kit"
+    },
+    {
+      "id": "docker",
+      "name": "Docker",
+      "description": "Adds Docker support for containerised builds and tooling.",
+      "category": "internal",
+      "selectedByDefault": false,
+      "provides": [],
+      "dependencies": [],
+      "conflicts": [],
+      "requiresAuth": [],
+      "authServices": [],
+      "externalServices": [],
+      "configurationSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "vscodeExtensions": ["ms-azuretools.vscode-docker"],
+      "benefits": [
+        "Containerize your application for consistent execution",
+        "Eliminate \"works on my machine\" issues",
+        "Simplify dependency management and isolation"
+      ],
+      "links": [],
+      "website": "https://www.docker.com/"
+    },
+    {
+      "id": "devcontainer-node",
+      "name": "Node.js DevContainer",
+      "description": "Sets up a VS Code DevContainer with Node.js environment.",
+      "category": "devcontainer",
+      "selectedByDefault": false,
+      "provides": [
+        {
+          "type": "sonarcloud.language",
+          "value": "javascript"
+        }
+      ],
+      "dependencies": ["docker"],
+      "conflicts": [],
+      "requiresAuth": [],
+      "authServices": [],
+      "externalServices": [],
+      "configurationSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "vscodeExtensions": [
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "svelte.svelte-vscode",
+        "bradlc.vscode-tailwindcss",
+        "unifiedjs.vscode-mdx",
+        "ecmel.vscode-html-css",
+        "GraphQL.vscode-graphql-syntax"
+      ],
+      "benefits": [
+        "Instant development environment setup for new contributors",
+        "Pre-configured Node runtime and VS Code extensions",
+        "Consistent tooling across the entire engineering team"
+      ],
+      "links": [],
+      "website": "https://code.visualstudio.com/docs/devcontainers/containers"
+    },
+    {
+      "id": "sveltekit",
+      "name": "SvelteKit",
+      "description": "Initializes a SvelteKit project with Svelte 5.",
+      "category": "frameworks",
+      "selectedByDefault": false,
+      "provides": [],
+      "dependencies": ["devcontainer-node"],
+      "conflicts": [],
+      "requiresAuth": [],
+      "authServices": [],
+      "externalServices": [],
+      "configurationSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "vscodeExtensions": ["svelte.svelte-vscode"],
+      "benefits": [
+        "Web development, streamlined",
+        "Svelte 5 Runes support",
+        "Fast, efficient, and type-safe"
+      ],
+      "links": [],
+      "website": "https://kit.svelte.dev/"
+    },
+    {
+      "id": "dagster",
+      "name": "Dagster",
+      "description": "Configures a Dagster project for data orchestration.",
+      "category": "frameworks",
+      "selectedByDefault": false,
+      "provides": [],
+      "dependencies": ["devcontainer-python"],
+      "conflicts": [],
+      "requiresAuth": [],
+      "authServices": [],
+      "externalServices": [],
+      "configurationSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "vscodeExtensions": [],
+      "benefits": [
+        "Data orchestration for the whole lifecycle",
+        "Software-defined assets",
+        "Rich UI for observing and operating data pipelines"
+      ],
+      "links": [],
+      "website": "https://dagster.io/"
+    },
+    {
+      "id": "devcontainer-python",
+      "name": "Python DevContainer",
+      "description": "Sets up a VS Code DevContainer with Python environment.",
+      "category": "devcontainer",
+      "selectedByDefault": false,
+      "provides": [
+        {
+          "type": "sonarcloud.language",
+          "value": "python"
+        }
+      ],
+      "dependencies": ["docker"],
+      "conflicts": [],
+      "requiresAuth": [],
+      "authServices": [],
+      "externalServices": [],
+      "configurationSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "vscodeExtensions": ["ms-python.python", "ms-python.vscode-pylance"],
+      "benefits": [
+        "Instant development environment setup for new contributors",
+        "Pre-configured Python runtime and VS Code extensions",
+        "Consistent tooling across the entire engineering team"
+      ],
+      "links": [],
+      "website": "https://code.visualstudio.com/docs/devcontainers/containers"
+    },
+    {
+      "id": "devcontainer-java",
+      "name": "Java DevContainer",
+      "description": "Sets up a VS Code DevContainer with Java environment.",
+      "category": "devcontainer",
+      "selectedByDefault": false,
+      "provides": [
+        {
+          "type": "sonarcloud.language",
+          "value": "java"
+        }
+      ],
+      "dependencies": ["docker"],
+      "conflicts": [],
+      "requiresAuth": [],
+      "authServices": [],
+      "externalServices": [],
+      "configurationSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "vscodeExtensions": [
+        "redhat.java",
+        "vscjava.vscode-java-debug",
+        "vscjava.vscode-java-test"
+      ],
+      "benefits": [
+        "Instant development environment setup for new contributors",
+        "Pre-configured Java runtime and VS Code extensions",
+        "Consistent tooling across the entire engineering team"
+      ],
+      "links": [],
+      "website": "https://code.visualstudio.com/docs/devcontainers/containers"
+    },
+    {
+      "id": "devcontainer-rust",
+      "name": "Rust DevContainer",
+      "description": "Sets up a VS Code DevContainer with Rust environment.",
+      "category": "devcontainer",
+      "selectedByDefault": false,
+      "provides": [],
+      "dependencies": ["docker"],
+      "conflicts": [],
+      "requiresAuth": [],
+      "authServices": [],
+      "externalServices": [],
+      "configurationSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "vscodeExtensions": [
+        "rust-lang.rust-analyzer",
+        "tamasfe.even-better-toml"
+      ],
+      "benefits": [
+        "Instant development environment setup for new contributors",
+        "Pre-configured Rust runtime and VS Code extensions",
+        "Consistent tooling across the entire engineering team"
+      ],
+      "links": [],
+      "website": "https://code.visualstudio.com/docs/devcontainers/containers"
+    },
+    {
+      "id": "circleci",
+      "name": "CircleCI Integration",
+      "description": "Configures CircleCI for continuous integration and deployment. Requires Doppler: the CircleCI MCP server needs CircleCI tokens that are only available through Doppler.",
+      "category": "ci-cd",
+      "selectedByDefault": false,
+      "provides": [],
+      "dependencies": ["doppler"],
+      "conflicts": [],
+      "requiresAuth": [],
+      "authServices": ["circleci"],
+      "externalServices": [
+        {
+          "type": "circleci",
+          "name": "CircleCI",
+          "actions": [
+            {
+              "type": "create",
+              "description": "Create new project in CircleCI"
+            },
+            {
+              "type": "configure",
+              "description": "Set up environment variables"
+            }
+          ],
+          "requiresAuth": true
+        }
+      ],
+      "configurationSchema": {
+        "type": "object",
+        "properties": {
+          "context": {
+            "type": "object",
+            "properties": {
+              "enabled": {
+                "type": "boolean",
+                "default": true
+              },
+              "name": {
+                "type": "string",
+                "default": "common"
+              }
+            }
+          },
+          "requireStatusCheck": {
+            "type": "boolean",
+            "default": true,
+            "description": "Make the pipeline a required status check on the default branch, so a red build blocks the merge (the gate CircleCI contexts used to provide). Set to false to let CI inform without gating."
+          },
+          "branchGating": {
+            "type": "boolean",
+            "default": true,
+            "description": "Run the heavy pipeline (Lighthouse, preview deploys) on main only by default. Set to false to run them on every branch."
+          }
+        }
+      },
+      "vscodeExtensions": [],
+      "benefits": [
+        "Automate testing and deployment pipelines",
+        "Gain insights with visual build logs and test results",
+        "Ensure code quality before merging changes"
+      ],
+      "links": [],
+      "website": "https://circleci.com/"
+    },
+    {
+      "id": "buildkite",
+      "name": "Buildkite Integration",
+      "description": "Runs CI on a self-hosted Buildkite agent (Apple silicon) instead of a metered cloud fleet. The pipeline and its GitHub webhook are created during generation, so there is no manual \"set up project\" step. Can run alongside CircleCI, so a repository can migrate without a flag day.",
+      "category": "ci-cd",
+      "selectedByDefault": false,
+      "provides": [],
+      "dependencies": [],
+      "conflicts": [],
+      "requiresAuth": [],
+      "authServices": [],
+      "externalServices": [
+        {
+          "type": "buildkite",
+          "name": "Buildkite",
+          "actions": [
+            {
+              "type": "create",
+              "description": "The pipeline is created in the Buildkite organisation during generation"
+            },
+            {
+              "type": "configure",
+              "description": "Registers the pipeline GitHub webhook and triggers the first build. Without the webhook, pushes trigger nothing"
+            }
+          ],
+          "requiresAuth": false
+        }
+      ],
+      "configurationSchema": {
+        "type": "object",
+        "properties": {
+          "queue": {
+            "type": "string",
+            "default": "mac-studio-linux",
+            "description": "Buildkite agent queue the generated pipeline targets."
+          },
+          "provisionPipeline": {
+            "type": "boolean",
+            "default": true,
+            "description": "Create the pipeline and register its GitHub webhook during generation. Set to false to only emit the .buildkite/ config."
+          },
+          "branchGating": {
+            "type": "boolean",
+            "default": true,
+            "description": "Run the heavy gates (Lighthouse, preview deploys) on main only by default. Set to false to run them on every branch."
+          }
+        }
+      },
+      "vscodeExtensions": [],
+      "benefits": [
+        "Runs on your own hardware — no per-minute metering",
+        "No manual setup: the pipeline and its push webhook are provisioned for you",
+        "Installs dependencies once per build rather than once per step"
+      ],
+      "links": [],
+      "website": "https://buildkite.com/"
+    },
+    {
+      "id": "doppler",
+      "name": "Doppler Secrets Management",
+      "description": "Integrates Doppler for secure secrets management. Enables the various MCP servers that rely on privileged tokens to access their services (e.g. CircleCI, GitHub, SonarQube).",
+      "category": "secrets",
+      "selectedByDefault": false,
+      "provides": [],
+      "dependencies": [],
+      "conflicts": [],
+      "requiresAuth": [],
+      "authServices": ["doppler"],
+      "externalServices": [
+        {
+          "type": "doppler",
+          "name": "Doppler",
+          "actions": [
+            {
+              "type": "create",
+              "description": "Add config to shared common project"
+            },
+            {
+              "type": "configure",
+              "description": "Configure service tokens"
+            }
+          ],
+          "requiresAuth": true
+        }
+      ],
+      "configurationSchema": {
+        "type": "object",
+        "properties": {
+          "projectType": {
+            "type": "string",
+            "enum": ["web"],
+            "default": "web"
+          },
+          "projectStrategy": {
+            "type": "string",
+            "enum": ["common", "new"],
+            "default": "common",
+            "description": "Where this repo's secrets live: \"common\" reuses the shared common project (default — no new Doppler project is created); \"new\" creates a dedicated Doppler project for this repo."
+          }
+        }
+      },
+      "vscodeExtensions": ["doppler.doppler-vscode"],
+      "benefits": [
+        "Centralized secrets management across environments",
+        "Eliminate .env files and risk of leaking secrets",
+        "Inject secrets securely into your application at runtime"
+      ],
+      "links": [],
+      "website": "https://www.doppler.com/"
+    },
+    {
+      "id": "gitguardian",
+      "name": "GitGuardian",
+      "description": "Automated secrets detection in your CI pipeline.",
+      "category": "secrets",
+      "selectedByDefault": false,
+      "provides": [],
+      "dependencies": ["circleci"],
+      "conflicts": [],
+      "requiresAuth": [],
+      "authServices": ["gitguardian"],
+      "externalServices": [
+        {
+          "type": "gitguardian",
+          "name": "GitGuardian",
+          "actions": [
+            {
+              "type": "create",
+              "description": "Create new project in GitGuardian"
+            },
+            {
+              "type": "configure",
+              "description": "Get API Key and add to CircleCI environment variables"
+            }
+          ],
+          "requiresAuth": true
+        }
+      ],
+      "configurationSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "vscodeExtensions": [],
+      "benefits": [
+        "Detect secrets in your code before they are merged",
+        "Prevent credentials leakage",
+        "Real-time alerting"
+      ],
+      "links": [],
+      "website": "https://www.gitguardian.com/"
+    },
+    {
+      "id": "sonarcloud",
+      "name": "SonarCloud Code Quality",
+      "description": "Sets up SonarCloud for static code analysis.",
+      "category": "code-quality",
+      "selectedByDefault": false,
+      "provides": [],
+      "dependencies": [],
+      "conflicts": [],
+      "requiresAuth": [],
+      "authServices": ["sonarcloud"],
+      "externalServices": [
+        {
+          "type": "sonarcloud",
+          "name": "SonarCloud",
+          "actions": [
+            {
+              "type": "create",
+              "description": "Create new project in SonarCloud"
+            },
+            {
+              "type": "configure",
+              "description": "Configure analysis parameters"
+            }
+          ],
+          "requiresAuth": true
+        }
+      ],
+      "configurationSchema": {
+        "type": "object",
+        "properties": {
+          "language": {
+            "type": "string",
+            "enum": ["JavaScript", "Python", "Java"]
+          }
+        }
+      },
+      "vscodeExtensions": [],
+      "benefits": [
+        "Automatic detection of bugs, vulnerabilities, and code smells",
+        "Track technical debt and code coverage over time",
+        "Enforce quality gates on pull requests"
+      ],
+      "links": [],
+      "website": "https://sonarcloud.io/"
+    },
+    {
+      "id": "code-quality",
+      "name": "ESLint + SonarJS",
+      "description": "Adds fast, zero-configuration code quality linting using eslint-plugin-sonarjs and eslint-plugin-security. Runs in ~5–10s vs 1–2 minutes for SonarCloud.",
+      "category": "code-quality",
+      "selectedByDefault": false,
+      "provides": [],
+      "dependencies": [],
+      "conflicts": [],
+      "requiresAuth": [],
+      "authServices": [],
+      "externalServices": [],
+      "configurationSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "vscodeExtensions": ["dbaeumer.vscode-eslint"],
+      "benefits": [
+        "Catches bugs, code smells, and security issues in CI in under 10 seconds",
+        "No external service or API token required",
+        "Runs the same Sonar rules as SonarCloud via eslint-plugin-sonarjs",
+        "Works offline and in any CI environment"
+      ],
+      "links": [],
+      "website": "https://github.com/SonarSource/SonarJS"
+    },
+    {
+      "id": "code-quality-python",
+      "name": "Ruff (Python code quality)",
+      "description": "Adds fast, zero-configuration Python linting with Ruff (rules live in pyproject.toml [tool.ruff] and the CI test job runs `ruff check src tests`). Requires a Python devcontainer.",
+      "category": "code-quality",
+      "selectedByDefault": false,
+      "provides": [],
+      "dependencies": ["devcontainer-python"],
+      "conflicts": [],
+      "requiresAuth": [],
+      "authServices": [],
+      "externalServices": [],
+      "configurationSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "vscodeExtensions": ["charliermarsh.ruff"],
+      "benefits": [
+        "Catches bugs, code smells, and security issues in CI in milliseconds",
+        "No external service or API token required",
+        "Ruff ships as a dev dependency in the generated pyproject.toml",
+        "Works offline and in any CI environment"
+      ],
+      "links": [],
+      "website": "https://docs.astral.sh/ruff/"
+    },
+    {
+      "id": "sonarlint",
+      "name": "SonarLint",
+      "description": "Configures SonarLint for local code quality analysis.",
+      "category": "code-quality",
+      "selectedByDefault": false,
+      "provides": [],
+      "dependencies": ["sonarcloud", "devcontainer-java"],
+      "conflicts": [],
+      "requiresAuth": [],
+      "authServices": [],
+      "externalServices": [],
+      "configurationSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "vscodeExtensions": ["SonarSource.sonarlint-vscode"],
+      "benefits": [
+        "Real-time code quality feedback in your IDE",
+        "Fix issues before they are committed to the repository",
+        "Sync rules with SonarCloud for consistent analysis"
+      ],
+      "links": [],
+      "website": "https://www.sonarsource.com/products/sonarlint/"
+    },
+    {
+      "id": "cloudflare-wrangler",
+      "name": "Cloudflare Wrangler",
+      "description": "Configures project for deployment to Cloudflare Workers.",
+      "category": "deployment",
+      "selectedByDefault": false,
+      "provides": [],
+      "dependencies": [],
+      "conflicts": ["docker-container"],
+      "requiresAuth": [],
+      "authServices": [],
+      "externalServices": [],
+      "configurationSchema": {
+        "type": "object",
+        "properties": {
+          "workerType": {
+            "type": "string",
+            "enum": ["web", "rust"],
+            "default": "web"
+          }
+        }
+      },
+      "vscodeExtensions": [],
+      "benefits": [
+        "Deploy serverless applications to the global edge network",
+        "Local emulation for fast development cycles",
+        "Scalable and performant runtime for modern apps"
+      ],
+      "links": [],
+      "website": "https://developers.cloudflare.com/workers/wrangler/"
+    },
+    {
+      "id": "google-cloud",
+      "name": "Google Cloud",
+      "description": "Configures project for deployment to Google Cloud.",
+      "category": "deployment",
+      "selectedByDefault": false,
+      "provides": [],
+      "dependencies": [],
+      "conflicts": ["docker-container"],
+      "requiresAuth": [],
+      "authServices": [],
+      "externalServices": [],
+      "configurationSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "vscodeExtensions": [],
+      "benefits": [
+        "Deploy serverless applications to Google Cloud",
+        "Local authentication for fast development cycles",
+        "Scalable and performant runtime for modern apps"
+      ],
+      "links": [],
+      "website": "https://cloud.google.com/"
+    },
+    {
+      "id": "docker-container",
+      "name": "Docker Container",
+      "description": "Containerize the project and publish to the GitHub Container Registry (GHCR) for deployment to a NAS or self-hosted host via Docker Compose. Mutually exclusive with other deployment systems.",
+      "category": "deployment",
+      "selectedByDefault": false,
+      "provides": [],
+      "dependencies": ["docker"],
+      "conflicts": ["cloudflare-wrangler", "google-cloud"],
+      "requiresAuth": [],
+      "authServices": ["registry"],
+      "externalServices": [
+        {
+          "type": "registry",
+          "name": "GHCR",
+          "actions": [
+            {
+              "type": "create",
+              "description": "GHCR package is created on first push from CircleCI"
+            },
+            {
+              "type": "configure",
+              "description": "Create a classic PAT with the write:packages scope (fine-grained PATs cannot access GHCR); add GHCR_USERNAME and GHCR_TOKEN to the CircleCI context. The generated Dockerfile labels the image with its GitHub repo so GHCR links the package to it (public repo -> public package)"
+            }
+          ],
+          "requiresAuth": true
+        }
+      ],
+      "configurationSchema": {
+        "type": "object",
+        "properties": {
+          "registry": {
+            "type": "string",
+            "enum": ["ghcr"],
+            "default": "ghcr"
+          },
+          "imageVisibility": {
+            "type": "string",
+            "enum": ["public", "private"],
+            "default": "public"
+          },
+          "tagStrategy": {
+            "type": "string",
+            "enum": ["commit-sha"],
+            "default": "commit-sha"
+          },
+          "networkMode": {
+            "type": "string",
+            "enum": ["bridge", "host"],
+            "default": "bridge"
+          },
+          "exposePort": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535,
+            "default": 3000
+          },
+          "publishPort": {
+            "type": "string",
+            "description": "Compose port binding, e.g. \"3000:3000\" or \"127.0.0.1:3000:3000\" for a private (Tailscale-only) service. The left-hand side is the published HOST port — Homepage href/widget URLs use it, so \"127.0.0.1:3002:3000\" yields http://<hostname>:3002/.",
+            "default": "3000:3000"
+          },
+          "baseImage": {
+            "type": "string",
+            "description": "Runtime base image. Defaults to a glibc image (node:22-slim / python:3.12-slim); Alpine only for pure-JS apps.",
+            "default": "node:22-slim"
+          },
+          "hostname": {
+            "type": "string",
+            "description": "Hostname used in the Homepage href (defaults to localhost; set to your NAS hostname/IP for browser access).",
+            "default": "localhost"
+          },
+          "registryNamespace": {
+            "type": "string",
+            "description": "GHCR registry namespace (GitHub user/org). Defaults to the authenticated GitHub login at generation time.",
+            "default": ""
+          },
+          "dataMounts": {
+            "type": "array",
+            "description": "Host data mounts emitted into compose volumes, e.g. [{ \"hostPath\": \"/volume1/data\", \"containerPath\": \"/data\", \"readOnly\": true }]. Read-only by default.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "hostPath": {
+                  "type": "string"
+                },
+                "containerPath": {
+                  "type": "string"
+                },
+                "readOnly": {
+                  "type": "boolean",
+                  "default": true
+                }
+              }
+            },
+            "default": []
+          },
+          "aptPackages": {
+            "type": "array",
+            "description": "Debian packages installed in the runtime image via apt, e.g. [\"iproute2\", \"curl\"]. curl is added automatically for Python http healthchecks.",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          },
+          "envVars": {
+            "type": "array",
+            "description": "Environment variables emitted into the compose environment and .env.example, e.g. [\"MCP_PORT=3001\"] (a bare key like \"MCP_PORT\" is filled from .env).",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          },
+          "pythonDependencies": {
+            "type": "array",
+            "description": "Runtime Python dependencies (PEP 508 specifiers) emitted into [project] dependencies of the generated pyproject.toml, e.g. [\"mcp>=1.2.0\", \"mcpo>=0.1.0\", \"httpx>=0.27.0\"]. Empty by default; dev tools (pytest, ruff) live in the dev extra.",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          },
+          "command": {
+            "type": "array",
+            "description": "Container CMD override (exec form), e.g. [\"/usr/local/bin/entrypoint.sh\"]. Defaults to a language-appropriate command. A /usr/local/bin/<script> reference is copied from scripts/<script> in the repo (see deploy/README.md).",
+            "items": {
+              "type": "string"
+            }
+          },
+          "entrypoint": {
+            "type": "array",
+            "description": "Container ENTRYPOINT override (exec form), e.g. [\"/usr/local/bin/entrypoint.sh\"]. A /usr/local/bin/<script> reference is copied from scripts/<script> in the repo (see deploy/README.md).",
+            "items": {
+              "type": "string"
+            }
+          },
+          "healthcheck": {
+            "type": "string",
+            "description": "Health mechanism: \"none\", \"http:<path>\" (e.g. \"http:/healthz\"; installs curl on Python images), or \"command:<cmd>\". The Dockerfile HEALTHCHECK and Homepage widget are only emitted when declared. Node web apps default to \"http:/health\".",
+            "default": ""
+          },
+          "language": {
+            "type": "string",
+            "enum": ["python", "node", "java", "rust"],
+            "description": "Project language override. Normally derived from the selected devcontainer-* capability; set this only to override it."
+          },
+          "watchtower": {
+            "type": "boolean",
+            "default": true
+          },
+          "homepage": {
+            "type": "boolean",
+            "default": true
+          },
+          "armBuilds": {
+            "type": "boolean",
+            "default": false,
+            "description": "Also build and publish linux/arm64 images. Defaults to false (x86_64 / linux/amd64 only) — set true when a deploy host (e.g. an ARM NAS or Raspberry Pi) needs arm64 images."
+          }
+        }
+      },
+      "vscodeExtensions": [],
+      "benefits": [
+        "Deploy to any Docker host (Synology, Unraid, TrueNAS, VPS) — not tied to a cloud vendor",
+        "Auto-updates via Watchtower polling the registry",
+        "Surfaced in Homepage dashboard with a health widget",
+        "Full local/private control of the container"
+      ],
+      "links": [],
+      "website": "https://www.docker.com/"
+    },
+    {
+      "id": "dependabot",
+      "name": "Dependabot",
+      "description": "Configures Dependabot for automated dependency updates.",
+      "category": "project-structure",
+      "selectedByDefault": false,
+      "provides": [],
+      "dependencies": [],
+      "conflicts": [],
+      "requiresAuth": [],
+      "authServices": [],
+      "externalServices": [],
+      "configurationSchema": {
+        "type": "object",
+        "properties": {
+          "updateSchedule": {
+            "type": "string",
+            "enum": ["daily", "weekly", "monthly"]
+          },
+          "groupUpdates": {
+            "type": "boolean",
+            "default": true
+          }
+        }
+      },
+      "vscodeExtensions": [],
+      "benefits": [
+        "Automatically keep dependencies up to date",
+        "Receive security alerts for vulnerable packages",
+        "Reduce technical debt with regular maintenance PRs"
+      ],
+      "links": [],
+      "website": "https://docs.github.com/en/code-security/dependabot/dependabot-overview"
+    },
+    {
+      "id": "lighthouse-ci",
+      "name": "Lighthouse CI",
+      "description": "Configures Lighthouse CI for performance monitoring.",
+      "category": "monitoring",
+      "selectedByDefault": false,
+      "provides": [],
+      "dependencies": [],
+      "conflicts": [],
+      "requiresAuth": [],
+      "authServices": [],
+      "externalServices": [],
+      "configurationSchema": {
+        "type": "object",
+        "properties": {
+          "thresholds": {
+            "type": "object",
+            "properties": {
+              "performance": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100,
+                "default": 90
+              }
+            }
+          }
+        }
+      },
+      "vscodeExtensions": [],
+      "benefits": [
+        "Monitor performance, accessibility, and SEO metrics",
+        "Catch regressions in web vitals before deployment",
+        "Maintain high standards for user experience"
+      ],
+      "links": [],
+      "website": "https://github.com/GoogleChrome/lighthouse-ci"
+    },
+    {
+      "id": "playwright",
+      "name": "Playwright",
+      "description": "Configures Playwright for end-to-end testing.",
+      "category": "monitoring",
+      "selectedByDefault": false,
+      "provides": [],
+      "dependencies": [],
+      "conflicts": [],
+      "requiresAuth": [],
+      "authServices": [],
+      "externalServices": [],
+      "configurationSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "vscodeExtensions": ["ms-playwright.playwright", "vitest.explorer"],
+      "benefits": [
+        "Reliable end-to-end testing for modern web apps",
+        "Fast and reliable testing with Chromium",
+        "Powerful tooling for debugging and test generation"
+      ],
+      "links": [],
+      "website": "https://playwright.dev/"
+    }
+  ]
+}

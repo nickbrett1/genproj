@@ -1,10 +1,12 @@
 {
+	// genproj — capability catalog + project generator.
+	//
+	// This template is the deployment configuration: scripts/setup-wrangler-config.sh
+	// copies it to wrangler.jsonc (which is gitignored) and CI deploys that.
 	"name": "genproj",
 	"main": "src/index.js",
 	"compatibility_date": "2026-09-13",
-	"compatibility_flags": [
-		"nodejs_compat"
-	],
+	"compatibility_flags": ["nodejs_compat"],
 	"observability": {
 		"logs": {
 			"enabled": true,
@@ -13,6 +15,18 @@
 			"persist": true
 		}
 	},
+	"d1_databases": [
+		{
+			// Read-only in practice: genproj validates MCP personal access tokens
+			// against the ApiKeys table. The database is owned by ftn (it backs
+			// ftn's /api-keys UI and its own /api/mcp), so the binding is shared
+			// deliberately — one PAT store, two services.
+			"binding": "API_KEYS_DB",
+			"database_name": "api-keys",
+			"database_id": "f27d7485-93cf-49c7-99bb-8e9ea21951cf",
+			"preview_database_id": "f27d7485-93cf-49c7-99bb-8e9ea21951cf"
+		}
+	],
 	"env": {
 		"production": {
 			"main": "src/index.js"
