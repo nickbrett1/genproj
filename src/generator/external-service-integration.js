@@ -1,0 +1,435 @@
+/**
+ * External Service Integration Service
+ *
+ * Orchestrates integration with external services (CircleCI, Doppler, SonarCloud)
+ * and handles fallback scenarios when services are unavailable.
+ *
+ * @fileoverview Server-side external service integration orchestration
+ */
+
+import { CircleCIAPIService } from "../clients/circleci-api.js";
+import { DopplerAPIService } from "../clients/doppler-api.js";
+import { SonarCloudAPIService } from "../clients/sonarcloud-api.js";
+import { resolveDopplerTarget } from "./capability-template-utils.js";
+
+/**
+ * @typedef {Object} IntegrationResult
+ * @property {boolean} success - Whether integration was successful
+ * @property {string} [error] - Error message if integration failed
+ * @property {Object} [serviceData] - Service-specific data
+ * @property {string[]} [fallbackInstructions] - Manual setup instructions
+ */
+
+/**
+ * @typedef {Object} ServiceIntegrationContext
+ * @property {string} projectName - Project name
+ * @property {string} repositoryUrl - Repository URL
+ * @property {string} owner - Repository owner
+ * @property {string} repo - Repository name
+ * @property {Object} authTokens - Authentication tokens
+ * @property {Object} configuration - Service-specific configuration
+ */
+
+/**
+ * External Service Integration service class
+ */
+export class ExternalServiceIntegrationService {
+  /**
+   * Creates a new External Service Integration service instance
+   * @param {Object} authTokens - Authentication tokens for external services
+   */
+  constructor(authTokens) {
+    this.authTokens = authTokens;
+    this.services = {};
+
+    // Initialize service clients
+    if (authTokens.circleci) {
+      this.services.circleci = new CircleCIAPIService(authTokens.circleci);
+    }
+    if (authTokens.doppler) {
+      this.services.doppler = new DopplerAPIService(authTokens.doppler);
+    }
+    if (authTokens.sonarcloud) {
+      this.services.sonarcloud = new SonarCloudAPIService(
+        authTokens.sonarcloud,
+      );
+    }
+  }
+
+  /**
+   * Integrates CircleCI with the project
+   * @param {ServiceIntegrationContext} context - Integration context
+   * @returns {Promise<IntegrationResult>} Integration result
+   */
+  async integrateCircleCI(context) {
+    console.log(`🔄 Integrating CircleCI for ${context.projectName}`);
+
+    if (!this.services.circleci) {
+      return {
+        success: false,
+        error: "CircleCI authentication required",
+        fallbackInstructions: this.getCircleCIFallbackInstructions(context),
+      };
+    }
+
+    try {
+      // Follow the project to enable CircleCI
+      const project = await this.services.circleci.followProject(
+        "github",
+        context.owner,
+        context.repo,
+      );
+
+      // Set up environment variables if configured
+      if (context.configuration.circleci?.environmentVariables) {
+        for (const [name, value] of Object.entries(
+          context.configuration.circleci.environmentVariables,
+        )) {
+          await this.services.circleci.createEnvironmentVariable(
+            "github",
+            context.owner,
+            context.repo,
+            name,
+            value,
+          );
+        }
+      }
+
+      console.log(
+        `✅ CircleCI integrated successfully for ${context.projectName}`,
+      );
+
+      return {
+        success: true,
+        serviceData: {
+          projectId: project.id,
+          projectSlug: project.slug,
+          organizationSlug: project.organizationSlug,
+          vcsUrl: project.vcsUrl,
+        },
+      };
+    } catch (error) {
+      console.error(`❌ CircleCI integration failed: ${error.message}`);
+
+      return {
+        success: false,
+        error: error.message,
+        fallbackInstructions: this.getCircleCIFallbackInstructions(context),
+      };
+    }
+  }
+
+  /**
+   * Integrates Doppler with the project
+   * @param {ServiceIntegrationContext} context - Integration context
+   * @returns {Promise<IntegrationResult>} Integration result
+   */
+  async integrateDoppler(context) {
+    console.log(`🔄 Integrating Doppler for ${context.projectName}`);
+
+    if (!this.services.doppler) {
+      return {
+        success: false,
+        error: "Doppler authentication required",
+        fallbackInstructions: this.getDopplerFallbackInstructions(context),
+      };
+    }
+
+    try {
+      // Doppler scaling memo (memos/doppler-scaling): default to the
+      // SHARED `common` project — no new project, no environments. Only
+      // create a dedicated per-app project when the doppler capability is
+      // configured with projectStrategy: 'new'.
+      const strategy =
+        context.configuration?.doppler?.projectStrategy || "common";
+      let project;
+      let createdEnvironments = [];
+
+      if (strategy === "new") {
+        // Create Doppler project
+        project = await this.services.doppler.createProject(
+          context.projectName,
+          `Secrets management for ${context.projectName}`,
+        );
+
+        // Create environments
+        const environments = ["dev", "staging", "prod"];
+
+        for (const environmentName of environments) {
+          const environment = await this.services.doppler.createEnvironment(
+            project.slug,
+            environmentName.charAt(0).toUpperCase() + environmentName.slice(1),
+            environmentName,
+          );
+          createdEnvironments.push(environment);
+        }
+      } else {
+        project = { slug: "common", name: "common" };
+      }
+
+      // Set up initial secrets if configured (against the resolved project)
+      if (context.configuration.doppler?.secrets) {
+        for (const [environmentName, secrets] of Object.entries(
+          context.configuration.doppler.secrets,
+        )) {
+          for (const [secretName, secretValue] of Object.entries(secrets)) {
+            await this.services.doppler.setSecret(
+              project.slug,
+              environmentName,
+              secretName,
+              secretValue,
+              `Generated by genproj for ${context.projectName}`,
+            );
+          }
+        }
+      }
+
+      console.log(
+        `✅ Doppler integrated successfully for ${context.projectName}`,
+      );
+
+      return {
+        success: true,
+        serviceData: {
+          projectId: project.id || project.slug,
+          projectSlug: project.slug,
+          environments: createdEnvironments,
+          strategy,
+        },
+      };
+    } catch (error) {
+      console.error(`❌ Doppler integration failed: ${error.message}`);
+
+      return {
+        success: false,
+        error: error.message,
+        fallbackInstructions: this.getDopplerFallbackInstructions(context),
+      };
+    }
+  }
+
+  /**
+   * Integrates SonarCloud with the project
+   * @param {ServiceIntegrationContext} context - Integration context
+   * @returns {Promise<IntegrationResult>} Integration result
+   */
+  async integrateSonarCloud(context) {
+    console.log(`🔄 Integrating SonarCloud for ${context.projectName}`);
+
+    if (!this.services.sonarcloud) {
+      return {
+        success: false,
+        error: "SonarCloud authentication required",
+        fallbackInstructions: this.getSonarCloudFallbackInstructions(context),
+      };
+    }
+
+    try {
+      // Create SonarCloud project
+      const projectKey = `${context.owner}_${context.repo}`;
+      const project = await this.services.sonarcloud.createProject(
+        context.owner,
+        projectKey,
+        context.projectName,
+      );
+
+      // Associate quality gate
+      const qualityGates = await this.services.sonarcloud.listQualityGates();
+      const defaultQualityGate = qualityGates.find((gate) => gate.isDefault);
+
+      if (defaultQualityGate) {
+        await this.services.sonarcloud.associateQualityGate(
+          projectKey,
+          defaultQualityGate.id,
+        );
+      }
+
+      // Create webhook for GitHub integration
+      if (context.configuration.sonarcloud?.webhookUrl) {
+        await this.services.sonarcloud.createWebhook(
+          projectKey,
+          "GitHub Integration",
+          context.configuration.sonarcloud.webhookUrl,
+          context.configuration.sonarcloud.webhookSecret,
+        );
+      }
+
+      console.log(
+        `✅ SonarCloud integrated successfully for ${context.projectName}`,
+      );
+
+      return {
+        success: true,
+        serviceData: {
+          projectKey: project.key,
+          projectName: project.name,
+          organization: project.organization,
+          visibility: project.visibility,
+        },
+      };
+    } catch (error) {
+      console.error(`❌ SonarCloud integration failed: ${error.message}`);
+
+      return {
+        success: false,
+        error: error.message,
+        fallbackInstructions: this.getSonarCloudFallbackInstructions(context),
+      };
+    }
+  }
+
+  /**
+   * Integrates all configured external services
+   * @param {ServiceIntegrationContext} context - Integration context
+   * @param {string[]} capabilities - Selected capabilities
+   * @returns {Promise<Object>} Integration results for all services
+   */
+  async integrateAllServices(context, capabilities) {
+    const results = {};
+
+    // Integrate CircleCI if selected
+    if (capabilities.includes("circleci")) {
+      results.circleci = await this.integrateCircleCI(context);
+    }
+
+    // Integrate Doppler if selected
+    if (capabilities.includes("doppler")) {
+      results.doppler = await this.integrateDoppler(context);
+    }
+
+    // Integrate SonarCloud if selected
+    if (capabilities.includes("sonarcloud")) {
+      results.sonarcloud = await this.integrateSonarCloud(context);
+    }
+
+    return results;
+  }
+
+  /**
+   * Gets CircleCI fallback instructions
+   * @param {ServiceIntegrationContext} context - Integration context
+   * @returns {string[]} Fallback instructions
+   */
+  getCircleCIFallbackInstructions(context) {
+    return [
+      "1. Go to https://app.circleci.com/projects",
+      '2. Click "Set Up Project"',
+      `3. Select your GitHub repository: ${context.repositoryUrl}`,
+      "4. Choose your configuration file (.circleci/config.yml)",
+      '5. Click "Set Up Project" to enable CircleCI',
+      "6. Configure environment variables in Project Settings > Environment Variables",
+      "7. Push your code to trigger the first build",
+    ];
+  }
+
+  /**
+   * Gets Doppler fallback instructions
+   * @param {ServiceIntegrationContext} context - Integration context
+   * @returns {string[]} Fallback instructions
+   */
+  getDopplerFallbackInstructions(context) {
+    // Doppler scaling memo: repos default to the shared `common` project;
+    // only repos with app-specific secrets need a dedicated project.
+    const { project, strategy } = resolveDopplerTarget(context);
+    const projectStep =
+      strategy === "new"
+        ? [
+            '2. Click "Create Project"',
+            `3. Enter project name: ${project}`,
+            '4. Add description: "Secrets management for ' +
+              context.projectName +
+              '"',
+            "5. Create environments: dev, staging, prod",
+          ]
+        : [
+            '2. Select the shared "common" project (do NOT create a new project)',
+            `3. Use the \`dev\` config (or add a \`${context.projectName}\` config there)`,
+            "4. Add shared infra secrets to that config",
+          ];
+    return [
+      "1. Go to https://dashboard.doppler.com",
+      ...projectStep,
+      "6. Add secrets as needed",
+      "7. Install Doppler CLI: npm install -g @doppler/cli",
+      "8. Run: doppler login",
+      "9. Run: doppler setup --project " + project + " --config dev",
+    ];
+  }
+
+  /**
+   * Gets SonarCloud fallback instructions
+   * @param {ServiceIntegrationContext} context - Integration context
+   * @returns {string[]} Fallback instructions
+   */
+  getSonarCloudFallbackInstructions(context) {
+    return [
+      "1. Go to https://sonarcloud.io",
+      '2. Click "Create Project"',
+      '3. Select "GitHub" as your repository provider',
+      `4. Select repository: ${context.repositoryUrl}`,
+      "5. Choose organization and project key",
+      "6. Set up quality gate (recommended: Sonar way)",
+      "7. Generate project token in Project Settings > Security",
+      "8. Add SONAR_TOKEN to your CI/CD environment variables",
+      "9. Configure .sonarcloud.properties file in your repository",
+    ];
+  }
+
+  /**
+   * Validates all service tokens
+   * @returns {Promise<Object>} Token validation results
+   */
+  async validateAllTokens() {
+    const results = {};
+
+    for (const [service, token] of Object.entries(this.authTokens)) {
+      if (token && this.services[service]) {
+        try {
+          results[service] = await this.services[service].validateToken();
+        } catch (error) {
+          // Intentionally catch and ignore errors to set default value for token validation
+          console.log(
+            `⚠️ Token validation failed for ${service}: ${error.message}`,
+          );
+          results[service] = false;
+        }
+      } else {
+        results[service] = false;
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Gets integration status for all services
+   * @param {string[]} capabilities - Selected capabilities
+   * @returns {Object} Integration status
+   */
+  getIntegrationStatus(capabilities) {
+    const status = {
+      circleci: {
+        available: !!this.services.circleci,
+        required: capabilities.includes("circleci"),
+      },
+      doppler: {
+        available: !!this.services.doppler,
+        required: capabilities.includes("doppler"),
+      },
+      sonarcloud: {
+        available: !!this.services.sonarcloud,
+        required: capabilities.includes("sonarcloud"),
+      },
+    };
+
+    const missing = Object.entries(status)
+      .filter(([, s]) => s.required && !s.available)
+      .map(([service]) => service);
+
+    return {
+      status,
+      allAvailable: missing.length === 0,
+      missingServices: missing,
+    };
+  }
+}
