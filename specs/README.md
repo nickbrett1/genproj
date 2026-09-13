@@ -1,0 +1,18 @@
+# Specs
+
+Design documents for this service, in the order they were written:
+
+| Spec                                                                   | What it covers                                                                               |
+| ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| [`001-genproj`](001-genproj/spec.md)                                   | The service itself: catalog, generation, conflicts, the API contract (`contracts/api.yaml`). |
+| [`003-genproj-docker-container`](003-genproj-docker-container/spec.md) | The `docker-container` capability and its contract.                                          |
+| [`006-genproj-buildkite`](006-genproj-buildkite/spec.md)               | The `buildkite` capability and its contract.                                                 |
+
+They were written while the generator lived inside the front-end repository and
+moved here with the code. Read them as the reasoning behind the current shape,
+not as a plan of work in progress: where a spec and the code disagree, the code
+is what runs.
+
+Specs 001 and 003 predate the split of the front-end out of this service, so
+anything they say about the UI, sessions or sign-in describes the client, not
+this repository.
