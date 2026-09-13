@@ -27,7 +27,7 @@
     "npm": ">=11 <12"
   },
   "devDependencies": {
-    "wrangler": "^3.57.0",
+    "wrangler": "^4.131.0",
     "vitest": "^4.1.10",
     "@vitest/coverage-v8": "^4.1.11",
     "@eslint/js": "^10.0.1",
