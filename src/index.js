@@ -15,7 +15,8 @@
  *   POST /v1/preview            generated file set (no auth, no side effects)
  *   POST /v1/generate           create/update a project (PAT-authenticated)
  *   POST /v1/conflicts          report files that would conflict (PAT)
- *   GET /                       endpoint index
+ *   POST /mcp                   MCP server, for MCP clients (PAT)
+ *   GET  /                      endpoint index
  */
 
 import { buildCatalog, catalogVersion, capabilities } from "./catalog/index.js";
@@ -24,6 +25,7 @@ import { buildInfo, CORS_HEADERS, error, json, jsonWithEtag } from "./http.js";
 import { handlePreview } from "./handlers/preview.js";
 import { handleGenerate } from "./handlers/generate.js";
 import { handleConflicts } from "./handlers/conflicts.js";
+import { handleMcpRequest } from "./mcp/handler.js";
 
 /** Seconds the catalog may be cached by a shared cache. */
 const CATALOG_MAX_AGE = 300;
@@ -56,6 +58,7 @@ function index() {
       "POST /v1/preview",
       "POST /v1/generate",
       "POST /v1/conflicts",
+      "POST /mcp",
     ],
   });
 }
@@ -83,6 +86,13 @@ export function handleRequest(request, env = {}) {
 
   if (pathname === "/v1/conflicts" && request.method === "POST") {
     return handleConflicts(request, env);
+  }
+
+  if (
+    pathname === "/mcp" &&
+    (request.method === "POST" || request.method === "GET")
+  ) {
+    return handleMcpRequest(request, env);
   }
 
   if (request.method !== "GET") {

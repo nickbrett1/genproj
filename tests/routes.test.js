@@ -10,6 +10,11 @@ vi.mock("../src/generator/project-generator.js", () => ({
   ProjectGeneratorService: vi.fn(),
 }));
 
+// `agents/mcp` pulls in `cloudflare:` modules that only resolve inside workerd.
+// The router test never gets past authentication on `/mcp`, so the handler is
+// never built — it just has to be importable.
+vi.mock("agents/mcp", () => ({ createMcpHandler: vi.fn() }));
+
 import worker, { handleRequest } from "../src/index.js";
 import { catalogVersion, capabilities } from "../src/catalog/index.js";
 import { ProjectGeneratorService } from "../src/generator/project-generator.js";
@@ -105,6 +110,7 @@ describe("GET /", () => {
         "POST /v1/preview",
         "POST /v1/generate",
         "POST /v1/conflicts",
+        "POST /mcp",
       ],
     });
   });
@@ -409,6 +415,20 @@ describe("unknown routes", () => {
       status: 404,
       service: "genproj",
     });
+  });
+});
+
+describe("POST /mcp", () => {
+  it("is routed, and refuses an anonymous caller", async () => {
+    const response = await handleRequest(
+      new Request("https://genproj.example/mcp", {
+        method: "POST",
+        body: "{}",
+      }),
+    );
+
+    expect(response.status).toBe(401);
+    expect((await response.json()).error).toMatch(/personal access token/);
   });
 });
 
