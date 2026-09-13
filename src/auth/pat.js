@@ -3,11 +3,16 @@
 /**
  * Worker-native personal access token (PAT) authentication.
  *
+ * This is what authenticates callers of the public `POST /mcp` endpoint (P3):
+ * they reach genproj over the internet, with no ftn in the path to vouch for
+ * them, so they have to identify themselves. Requests that arrive from ftn
+ * itself over the `GENPROJ` service binding use a shared secret instead — see
+ * {@link ./service-secret.js}.
+ *
  * This replaces ftn's SvelteKit auth plumbing (`getCurrentUser` + the
- * cookie-backed session) for the generator endpoints. The token format and the
- * stored SHA-256 hashes are unchanged: genproj shares ftn's `API_KEYS_DB` D1
- * database and validates the same `pat_…` tokens against the `ApiKeys` table
- * via {@link ApiKeyService}.
+ * cookie-backed session). The token format and the stored SHA-256 hashes are
+ * unchanged: genproj shares ftn's `API_KEYS_DB` D1 database and validates the
+ * same `pat_…` tokens against the `ApiKeys` table via {@link ApiKeyService}.
  *
  * Tokens are read from either `Authorization: Bearer <token>` (the MCP and PAT
  * convention) or `X-API-Key: <token>`.

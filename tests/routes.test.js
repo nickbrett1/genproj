@@ -2,18 +2,16 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// The generate/conflicts handlers touch the network (GitHub et al.) and the D1
-// PAT store. The 401 tests exercise the real router path down to the handler's
-// guard; the happy paths stub the auth module and the generator service so no
-// request leaves the process.
-vi.mock("../src/auth/pat.js", () => ({ authenticatePat: vi.fn() }));
+// The generate/conflicts handlers touch the network (GitHub et al.). The 401
+// tests exercise the real router path down to the handler's guard, including
+// the real service-secret comparison; the happy paths stub the generator
+// service so no request leaves the process.
 vi.mock("../src/generator/project-generator.js", () => ({
   ProjectGeneratorService: vi.fn(),
 }));
 
 import worker, { handleRequest } from "../src/index.js";
 import { catalogVersion, capabilities } from "../src/catalog/index.js";
-import { authenticatePat } from "../src/auth/pat.js";
 import { ProjectGeneratorService } from "../src/generator/project-generator.js";
 
 const get = (path, init) =>
@@ -148,33 +146,42 @@ describe("POST /v1/preview", () => {
 });
 
 describe("POST /v1/generate", () => {
-  const post = (body, headers = {}) =>
+  const SECRET = { "x-service-secret": "test-secret" };
+  const post = (body, headers = SECRET) =>
     handleRequest(
       new Request("https://genproj.example/v1/generate", {
         method: "POST",
         headers: { "content-type": "application/json", ...headers },
         body: typeof body === "string" ? body : JSON.stringify(body),
       }),
-      { API_KEYS_DB: {} },
+      { SERVICE_SECRET: "test-secret" },
     );
 
   let generateProject;
 
   beforeEach(() => {
     generateProject = vi.fn();
-    authenticatePat.mockResolvedValue(null);
     ProjectGeneratorService.mockImplementation(function () {
       return { generateProject };
     });
   });
 
-  it("rejects a request with no PAT", async () => {
-    const response = await post({
-      name: "demo",
-      selectedCapabilities: ["coding-agents"],
-    });
+  it("rejects a request with no service secret", async () => {
+    const response = await post(
+      { name: "demo", selectedCapabilities: ["coding-agents"] },
+      {},
+    );
     expect(response.status).toBe(401);
     expect(await response.json()).toEqual({ message: "Unauthorized" });
+    expect(generateProject).not.toHaveBeenCalled();
+  });
+
+  it("rejects a request with the wrong service secret", async () => {
+    const response = await post(
+      { name: "demo", selectedCapabilities: ["coding-agents"] },
+      { "x-service-secret": "not-the-secret" },
+    );
+    expect(response.status).toBe(401);
     expect(generateProject).not.toHaveBeenCalled();
   });
 
@@ -192,20 +199,16 @@ describe("POST /v1/generate", () => {
     });
   });
 
-  it("generates a project for an authenticated PAT", async () => {
-    authenticatePat.mockResolvedValue({
-      userEmail: "dev@example.com",
-      token: "pat_x",
-    });
+  it("generates a project for a trusted caller", async () => {
     generateProject.mockResolvedValue({
       success: true,
       repository: { htmlUrl: "https://github.com/dev/demo" },
     });
 
-    const response = await post({
-      name: "demo",
-      selectedCapabilities: ["coding-agents"],
-    });
+    const response = await post(
+      { name: "demo", selectedCapabilities: ["coding-agents"] },
+      { "x-service-secret": "test-secret", "x-user-email": "dev@example.com" },
+    );
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
@@ -220,11 +223,25 @@ describe("POST /v1/generate", () => {
     );
   });
 
-  it("maps a repository-exists failure to 409", async () => {
-    authenticatePat.mockResolvedValue({
-      userEmail: "dev@example.com",
-      token: "pat_x",
+  it("leaves userId empty when the caller names no user", async () => {
+    // The email is a log label, not an identity, so its absence is not an error.
+    generateProject.mockResolvedValue({
+      success: true,
+      repository: { htmlUrl: "" },
     });
+
+    const response = await post({
+      name: "demo",
+      selectedCapabilities: ["coding-agents"],
+    });
+
+    expect(response.status).toBe(200);
+    expect(generateProject).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: "" }),
+    );
+  });
+
+  it("maps a repository-exists failure to 409", async () => {
     generateProject.mockResolvedValue({
       success: false,
       errorCode: "REPOSITORY_EXISTS",
@@ -240,10 +257,6 @@ describe("POST /v1/generate", () => {
   });
 
   it("maps a token failure in the result to 401", async () => {
-    authenticatePat.mockResolvedValue({
-      userEmail: "dev@example.com",
-      token: "pat_x",
-    });
     generateProject.mockResolvedValue({
       success: false,
       error: "GitHub token not found for user",
@@ -261,10 +274,6 @@ describe("POST /v1/generate", () => {
   });
 
   it("returns 500 when generation throws", async () => {
-    authenticatePat.mockResolvedValue({
-      userEmail: "dev@example.com",
-      token: "pat_x",
-    });
     generateProject.mockRejectedValue(new Error("boom"));
 
     const response = await post({
@@ -275,46 +284,34 @@ describe("POST /v1/generate", () => {
     expect(response.status).toBe(500);
     expect(await response.json()).toEqual({ message: "boom" });
   });
-
-  it("returns 429 when the PAT is rate limited", async () => {
-    authenticatePat.mockRejectedValue(new Error("Rate limit exceeded"));
-
-    const response = await post({
-      name: "demo",
-      selectedCapabilities: ["coding-agents"],
-    });
-
-    expect(response.status).toBe(429);
-    expect(await response.json()).toEqual({ message: "Rate limit exceeded" });
-  });
 });
 
 describe("POST /v1/conflicts", () => {
-  const post = (body) =>
+  const SECRET = { "x-service-secret": "test-secret" };
+  const post = (body, headers = SECRET) =>
     handleRequest(
       new Request("https://genproj.example/v1/conflicts", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", ...headers },
         body: typeof body === "string" ? body : JSON.stringify(body),
       }),
-      { API_KEYS_DB: {} },
+      { SERVICE_SECRET: "test-secret" },
     );
 
   let checkConflicts;
 
   beforeEach(() => {
     checkConflicts = vi.fn();
-    authenticatePat.mockResolvedValue(null);
     ProjectGeneratorService.mockImplementation(function () {
       return { checkConflicts };
     });
   });
 
-  it("rejects a request with no PAT", async () => {
-    const response = await post({
-      name: "demo",
-      selectedCapabilities: ["coding-agents"],
-    });
+  it("rejects a request with no service secret", async () => {
+    const response = await post(
+      { name: "demo", selectedCapabilities: ["coding-agents"] },
+      {},
+    );
     expect(response.status).toBe(401);
     expect(await response.json()).toEqual({ message: "Unauthorized" });
     expect(checkConflicts).not.toHaveBeenCalled();
@@ -328,19 +325,15 @@ describe("POST /v1/conflicts", () => {
     });
   });
 
-  it("returns the conflicts for an authenticated PAT", async () => {
-    authenticatePat.mockResolvedValue({
-      userEmail: "dev@example.com",
-      token: "pat_x",
-    });
+  it("returns the conflicts for a trusted caller", async () => {
     checkConflicts.mockResolvedValue([
       { path: "src/app.html", generatedContent: "new", existingContent: "old" },
     ]);
 
-    const response = await post({
-      name: "demo",
-      selectedCapabilities: ["coding-agents"],
-    });
+    const response = await post(
+      { name: "demo", selectedCapabilities: ["coding-agents"] },
+      { "x-service-secret": "test-secret", "x-user-email": "dev@example.com" },
+    );
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
@@ -361,10 +354,6 @@ describe("POST /v1/conflicts", () => {
   });
 
   it("maps a missing GitHub token to 401", async () => {
-    authenticatePat.mockResolvedValue({
-      userEmail: "dev@example.com",
-      token: "pat_x",
-    });
     checkConflicts.mockRejectedValue(
       new Error("GitHub authentication required for conflict checking"),
     );
@@ -381,10 +370,6 @@ describe("POST /v1/conflicts", () => {
   });
 
   it("returns 500 when the check throws", async () => {
-    authenticatePat.mockResolvedValue({
-      userEmail: "dev@example.com",
-      token: "pat_x",
-    });
     checkConflicts.mockRejectedValue(new Error("boom"));
 
     const response = await post({

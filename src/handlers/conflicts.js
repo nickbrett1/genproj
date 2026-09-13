@@ -7,12 +7,12 @@
  * would produce. Ported from ftn's
  * `routes/projects/genproj/api/conflicts/+server.js`.
  *
- * As with generate, authentication moves from ftn's session cookie to a PAT and
+ * As with generate, the caller is authenticated as *ftn* by a shared secret and
  * the external services use the deployment's tokens. The JSON response shape
  * (`{ conflicts }`) is unchanged.
  */
 
-import { authenticatePat } from "../auth/pat.js";
+import { requireService } from "../auth/service-secret.js";
 import { json } from "../http.js";
 import { ProjectGeneratorService } from "../generator/project-generator.js";
 import {
@@ -43,20 +43,9 @@ export async function handleConflicts(request, env = {}) {
     return json({ message: "Missing required fields" }, { status: 400 });
   }
 
-  let identity;
-  try {
-    identity = await authenticatePat(request, env);
-  } catch (caught) {
-    if (caught.message === "Rate limit exceeded") {
-      return json({ message: caught.message }, { status: 429 });
-    }
-    return json(
-      { message: caught.message || "Internal Server Error" },
-      { status: 500 },
-    );
-  }
-  if (!identity) {
-    return json({ message: "Unauthorized" }, { status: 401 });
+  const { identity, response } = await requireService(request, env);
+  if (response) {
+    return response;
   }
 
   try {
