@@ -899,7 +899,7 @@ function processAdditionalDevelopmentContainer(
   allExtensions,
 ) {
   const capability = capabilities.find((c) => c.id === capabilityId);
-   
+
   const capabilityConfig = applyDefaults(
     capability,
     context.configuration?.[capabilityId] || {},
