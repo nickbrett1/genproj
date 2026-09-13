@@ -1,14 +1,12 @@
 # genproj
 
-The genproj service: the capability catalog and project generator, extracted from
-[`ftn`](https://github.com/nickbrett1/ftn) so that `ftn`'s UI can be a thin,
-data-driven client of it.
+Turns a set of selected capabilities into a working repository — the files, the
+devcontainer, the CI pipeline, the Doppler wiring, and the external services the
+project needs.
 
-The extraction runs in phases. This repository currently serves the catalog
-surface, project generation, the conflict check and its own MCP server. `ftn` no
-longer generates projects; its `preview`, `generate` and `conflicts` routes proxy
-here over a Cloudflare service binding. What remains is deleting the generator
-from `ftn`.
+Two halves, deliberately separate. A **catalog** describes what can be generated
+and is public data any client can render. A **generator** turns a selection from
+that catalog into files and side effects, and is a service, not a library.
 
 ## Endpoints
 
@@ -23,46 +21,49 @@ from `ftn`.
 | `POST /v1/conflicts`          | secret | Report files that would conflict with existing ones.                   |
 | `POST /mcp`                   | PAT    | MCP server: `list_genproj_capabilities`, `generate_project`.           |
 
-The catalog is deliberately public — the UI renders it before anyone signs in.
-Preview is public too: it renders the same file set generation would produce
-without touching GitHub or any external service.
-
-There are two different callers, authenticated two different ways:
-
-- **`ftn`**, proxying a signed-in user's request, presents a shared secret
-  (`x-service-secret`). A service binding is an internal handle rather than a
-  network address, and this Worker also has a public host, so the secret is what
-  distinguishes a call from `ftn` from a call from the internet.
-- **An MCP client** speaks to `POST /mcp` directly, with a personal access token
-  in `Authorization: Bearer …` (or `X-API-Key`). It has no `ftn` in the path to
-  vouch for it, so it identifies itself. The tokens are the `pat_…` values the
-  `ftn` `/api-keys` UI issues, validated against the shared `API_KEYS_DB`
-  database — one store, two consumers, no second source of truth.
+The catalog is deliberately public: it is what a UI renders before anyone signs
+in. Preview is public too — it renders the same file set generation would
+produce without touching GitHub or any external service.
 
 `catalogVersion` is a content hash of the capability list, so a client can tell
 whether its cached copy is stale. `/v1/catalog` returns it as a strong `ETag` and
 answers `304 Not Modified` to `If-None-Match`.
 
+## How callers are trusted
+
+Two boundaries, two mechanisms, and they do not overlap.
+
+- **A server calling on a user's behalf** presents a shared secret in
+  `x-service-secret`. Calls like this arrive over a Cloudflare service binding,
+  which is an internal handle rather than a network address — and this Worker
+  also has a public host, so the secret is what distinguishes a trusted caller
+  from the internet. `x-user-email`, when present, is a label for logs and never
+  authorises anything.
+- **An MCP client** speaks to `POST /mcp` directly over the internet, with no
+  intermediary to vouch for it, so it identifies itself with a personal access
+  token in `Authorization: Bearer …` (or `X-API-Key`). Tokens are validated
+  against the `API_KEYS_DB` D1 database, which is the same store the
+  `/api-keys` page in the front-end issues from: one store, two consumers.
+
+Preview is the deliberate exception — it needs no credential because it produces
+nothing and touches nothing outside the process.
+
 ## The catalog
 
-`src/catalog/catalog.json` is the single source of truth for the capabilities the
-generator can apply, and it is what the UI renders. It was ported from `ftn`'s
-`webapp/src/lib/config/capabilities.js` — metadata only; the server-side
-`templates[]`/`templateId` entries belong to the generator and move here with it.
+`src/catalog/catalog.json` is the single source of truth for what the generator
+can apply, and it is what a UI renders. `src/catalog/schema.json` documents the
+shape and `tests/catalog.test.js` pins the capability set, so any change to it is
+deliberate.
 
-Three fields exist to replace hardcodes that used to live in the UI:
+Three fields exist so that clients do not have to hardcode behaviour:
 
-- `selectedByDefault` — previously the UI's `category === 'core'` check.
-- `authServices` — previously a bespoke auth-service lookup map.
-- `provides` — previously a hardcoded devcontainer → SonarCloud language mapping.
-
-`src/catalog/schema.json` documents the shape; `tests/catalog.test.js` pins the
-capability set so any change to it is deliberate.
+- `selectedByDefault` — which capabilities are pre-selected.
+- `authServices` — which external services a capability needs credentials for.
+- `provides` — what a capability implies downstream, such as a language runtime.
 
 ## The generator
 
-`src/generator/` holds the generator core, moved verbatim from `ftn`'s
-`webapp/src/lib/{utils,server}`:
+`src/generator/` holds the generator core:
 
 - `file-generator.js` — the template engine and the per-capability file builders.
 - `capability-template-utils.js` — the template data builders (`{{key}}` values).
@@ -70,20 +71,15 @@ capability set so any change to it is deliberate.
 - `preview-generator.js` — assembles the file tree and external-service changes.
 - `genproj-errors.js`, `genproj-overwrite.js` — error types and merge policy.
 
-Templates live in `src/generator/templates/`. `ftn` inlined them with Vite's
-`?raw` import suffix; Workers bundle with esbuild, so `scripts/build-templates.mjs`
-materialises them into `src/generator/templates.generated.js`, which is committed
-and rebuilt on `pretest`/`prebuild`.
+Wiring a capability to the files it emits lives in
+`src/generator/capability-templates.js`, not in the catalog, so the public
+catalog stays free of file paths.
 
-Two former disagreements with `ftn` are resolved here:
-
-- The generator used to resolve dependencies against a **second, stale registry**
-  (`utils/capabilities.js`) whose IDs no longer matched the catalog, so dependency
-  and conflict resolution silently did nothing for most capabilities.
-  `capability-resolver.js` now resolves against the catalog itself.
-- The capability → template wiring that lived alongside the metadata in
-  `config/capabilities.js` moved to `src/generator/capability-templates.js`, so
-  the public catalog stays free of file paths.
+Templates live in `src/generator/templates/`. Workers bundle with esbuild, which
+has no equivalent of Vite's `?raw` import suffix, so
+`scripts/build-templates.mjs` materialises them into
+`src/generator/templates.generated.js` — committed, and rebuilt on
+`pretest`/`prebuild`.
 
 ## Development
 
@@ -98,22 +94,21 @@ npm run lint         # prettier --check && eslint
 
 ## Deployment
 
-CI is Buildkite (`.buildkite/pipeline.yml`), triggered by a GitHub webhook: build
-and test on every push, and deploy to production on `main`. The deploy step
-resolves the Cloudflare credentials from Doppler (`common`/`dev`), generates
-`wrangler.jsonc` from `wrangler.template.jsonc`, **syncs the project's Doppler
-secrets, and only then runs `wrangler deploy`**.
+CI is Buildkite (`.buildkite/pipeline.yml`): build and test on every push, deploy
+to production on `main`. The deploy step resolves the Cloudflare credentials from
+Doppler, generates `wrangler.jsonc` from `wrangler.template.jsonc`, **syncs the
+project's Doppler secrets, and only then runs `wrangler deploy`**.
 
 That order matters. `sync-doppler-secrets.sh` uses `wrangler versions secret
 bulk`, which creates a new version carrying the secrets without putting it on
 production traffic; `wrangler deploy` carries the current version's bindings
 forward (`keep_vars` defaults to true), so it is what actually puts them live.
-Syncing afterwards strands the secrets in a version nobody serves, the step
-still reports success, and the Worker keeps running without them.
+Syncing afterwards strands the secrets in a version nobody serves, the step still
+reports success, and the Worker keeps running without them.
 
 ## Doppler
 
-This project uses Doppler for secrets in its own `genproj` project:
+Secrets come from the `genproj` Doppler project:
 
 ```bash
 doppler setup --project genproj --config dev
