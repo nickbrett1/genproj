@@ -4,7 +4,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildCatalog,
-  catalogVersion,
   capabilities,
   getCapabilitiesByCategory,
   getCapabilityById,
@@ -50,10 +49,6 @@ describe("catalog metadata", () => {
     expect(capabilities.map((capability) => capability.id)).toEqual(
       EXPECTED_IDS,
     );
-  });
-
-  it("has a content-hash version", () => {
-    expect(catalogVersion).toMatch(/^[0-9a-f]{12}$/);
   });
 
   it("describes every capability", () => {
@@ -136,7 +131,6 @@ describe("catalog metadata", () => {
 
   it("builds a catalog envelope with a count", () => {
     const catalog = buildCatalog();
-    expect(catalog.catalogVersion).toBe(catalogVersion);
     expect(catalog.count).toBe(EXPECTED_IDS.length);
     expect(catalog.capabilities).toBe(capabilities);
   });

@@ -4,17 +4,12 @@
   "title": "genproj capability catalog",
   "description": "The capability catalog served at GET /v1/catalog. Describes every capability the generator can apply to a project. Metadata only: the templates and files a capability emits are internal to the generator.",
   "type": "object",
-  "required": ["catalogVersion", "capabilities"],
+  "required": ["capabilities"],
   "additionalProperties": false,
   "properties": {
     "$schema": {
       "type": "string",
       "description": "Relative path to this schema."
-    },
-    "catalogVersion": {
-      "type": "string",
-      "pattern": "^[0-9a-f]{12}$",
-      "description": "Content hash of the capability list. Served as the endpoint's ETag."
     },
     "count": {
       "type": "integer",

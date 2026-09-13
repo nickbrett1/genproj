@@ -9,9 +9,9 @@
  *
  * Routes:
  *   GET /healthz                liveness, for Buildkite and the deploy check
- *   GET /v1/catalog             the capability catalog (public, ETag, cacheable)
+ *   GET /v1/catalog             the capability catalog (public, cacheable)
  *   GET /v1/catalog/schema.json JSON Schema for the catalog
- *   GET /v1/version             service version and catalog version
+ *   GET /v1/version             service version
  *   POST /v1/preview            generated file set (no auth, no side effects)
  *   POST /v1/generate           create/update a project (PAT-authenticated)
  *   POST /v1/conflicts          report files that would conflict (PAT)
@@ -19,9 +19,9 @@
  *   GET  /                      endpoint index
  */
 
-import { buildCatalog, catalogVersion, capabilities } from "./catalog/index.js";
+import { buildCatalog, capabilities } from "./catalog/index.js";
 import catalogSchema from "./catalog/schema.json" with { type: "json" };
-import { buildInfo, CORS_HEADERS, error, json, jsonWithEtag } from "./http.js";
+import { buildInfo, CORS_HEADERS, error, json } from "./http.js";
 import { handlePreview } from "./handlers/preview.js";
 import { handleGenerate } from "./handlers/generate.js";
 import { handleConflicts } from "./handlers/conflicts.js";
@@ -34,7 +34,6 @@ function healthz() {
   return json({
     status: "ok",
     ...buildInfo(),
-    catalogVersion,
     capabilities: capabilities.length,
   });
 }
@@ -42,7 +41,6 @@ function healthz() {
 function version() {
   return json({
     ...buildInfo(),
-    catalogVersion,
     capabilities: capabilities.length,
   });
 }
@@ -107,14 +105,12 @@ export function handleRequest(request, env = {}) {
     case "/v1/version":
       return version();
     case "/v1/catalog":
-      return jsonWithEtag(request, buildCatalog(), {
-        etag: catalogVersion,
-        maxAge: CATALOG_MAX_AGE,
+      return json(buildCatalog(), {
+        headers: { "cache-control": `public, max-age=${CATALOG_MAX_AGE}` },
       });
     case "/v1/catalog/schema.json":
-      return jsonWithEtag(request, catalogSchema, {
-        etag: `schema-${catalogVersion}`,
-        maxAge: CATALOG_MAX_AGE,
+      return json(catalogSchema, {
+        headers: { "cache-control": `public, max-age=${CATALOG_MAX_AGE}` },
       });
     default:
       return error(404, `No route for ${pathname}.`);

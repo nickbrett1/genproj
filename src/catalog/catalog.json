@@ -1,6 +1,5 @@
 {
   "$schema": "./schema.json",
-  "catalogVersion": "2b96617761f7",
   "capabilities": [
     {
       "id": "coding-agents",

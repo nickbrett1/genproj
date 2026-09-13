@@ -174,9 +174,14 @@ The build step's `artifact_paths:` follow the language's usual output directory:
 
 No client and no generation-time side effect (§3).
 
-### A note on `catalogVersion`
+### `catalogVersion` was removed, not maintained
 
-`catalogVersion` claimed to be "a content hash of the capability list". It was not maintained by anything, and it hashed the capability entries without hashing the templates those entries generate — so it could report "unchanged" for a change that altered generated content. It was removed rather than given a recompute script: clients fetch the catalog rarely and are already served with a short shared cache, so the field bought nothing. `/v1/catalog` is now served with `Cache-Control` and no validator.
+This spec originally recorded that `catalogVersion` "does not recompute itself" and that the value was bumped by hand (`bf736d10a27a` → `2b96617761f7`). The conclusion drawn from that was not "add the missing script" but "this field earns its keep nowhere":
+
+- the catalog is cheap to fetch and changes rarely, so there is little to save by caching it conditionally;
+- nothing could ever keep the hash honest. It hashed capability metadata only, so a template edit changed generated output without changing the version — a client could sit on a stale copy and never know.
+
+So the field, its `ETag`/`304` machinery (`jsonWithEtag`, `matchesEtag`) and its `schema.json` entry were deleted, and `/v1/catalog` is now cached by `Cache-Control: public, max-age=300` alone. That is a separate change from this capability and is not part of it.
 
 ---
 
