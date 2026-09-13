@@ -18,6 +18,7 @@
 import { buildCatalog, catalogVersion, capabilities } from "./catalog/index.js";
 import catalogSchema from "./catalog/schema.json" with { type: "json" };
 import { buildInfo, CORS_HEADERS, error, json, jsonWithEtag } from "./http.js";
+import { handlePreview } from "./handlers/preview.js";
 
 /** Seconds the catalog may be cached by a shared cache. */
 const CATALOG_MAX_AGE = 300;
@@ -47,6 +48,7 @@ function index() {
       "/v1/version",
       "/v1/catalog",
       "/v1/catalog/schema.json",
+      "POST /v1/preview",
     ],
   });
 }
@@ -54,18 +56,24 @@ function index() {
 /**
  * Routes a request.
  * @param {Request} request Incoming request.
- * @returns {Response} The response.
+ * @returns {Response | Promise<Response>} The response.
  */
 export function handleRequest(request) {
+  const { pathname } = new URL(request.url);
+
   if (request.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: CORS_HEADERS });
+  }
+
+  if (pathname === "/v1/preview" && request.method === "POST") {
+    return handlePreview(request);
   }
 
   if (request.method !== "GET") {
     return error(405, `Method ${request.method} not allowed.`);
   }
 
-  switch (new URL(request.url).pathname) {
+  switch (pathname) {
     case "/":
       return index();
     case "/healthz":
@@ -83,7 +91,7 @@ export function handleRequest(request) {
         maxAge: CATALOG_MAX_AGE,
       });
     default:
-      return error(404, `No route for ${new URL(request.url).pathname}.`);
+      return error(404, `No route for ${pathname}.`);
   }
 }
 

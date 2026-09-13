@@ -4,9 +4,9 @@ The genproj service: the capability catalog and project generator, extracted fro
 [`ftn`](https://github.com/nickbrett1/ftn) so that `ftn`'s UI can be a thin,
 data-driven client of it.
 
-The extraction runs in phases. This repository currently serves **phase 0**: the
-read-only surface. Generation, the MCP server and the capability templates move
-here in later phases.
+The extraction runs in phases. This repository currently serves **phase 2a**: the
+read-only catalog surface plus the generator (preview). Generation against
+GitHub, the MCP server and the `ftn` proxy routes follow.
 
 ## Endpoints
 
@@ -16,10 +16,13 @@ here in later phases.
 | `GET /v1/catalog`             | none | The capability catalog. `ETag` + `Cache-Control: public, max-age=300`. |
 | `GET /v1/catalog/schema.json` | none | JSON Schema for the catalog.                                           |
 | `GET /v1/version`             | none | Service version and catalog version.                                   |
+| `POST /v1/preview`            | none | Preview the files a configuration would generate.                      |
 
 The catalog is deliberately public — the UI renders it before anyone signs in.
-_Generating_ code requires authentication, as it always has; that lives on the
-`/v1/generate` route in a later phase.
+Preview is public too: it renders the same file set generation would produce
+without touching GitHub or any external service. _Generating_ code requires
+authentication, as it always has; that lives on the `/v1/generate` route in the
+next phase.
 
 `catalogVersion` is a content hash of the capability list, so a client can tell
 whether its cached copy is stale. `/v1/catalog` returns it as a strong `ETag` and
@@ -40,6 +43,32 @@ Three fields exist to replace hardcodes that used to live in the UI:
 
 `src/catalog/schema.json` documents the shape; `tests/catalog.test.js` pins the
 capability set so any change to it is deliberate.
+
+## The generator
+
+`src/generator/` holds the generator core, moved verbatim from `ftn`'s
+`webapp/src/lib/{utils,server}`:
+
+- `file-generator.js` — the template engine and the per-capability file builders.
+- `capability-template-utils.js` — the template data builders (`{{key}}` values).
+- `capability-resolver.js` — dependency, conflict and ordering resolution.
+- `preview-generator.js` — assembles the file tree and external-service changes.
+- `genproj-errors.js`, `genproj-overwrite.js` — error types and merge policy.
+
+Templates live in `src/generator/templates/`. `ftn` inlined them with Vite's
+`?raw` import suffix; Workers bundle with esbuild, so `scripts/build-templates.mjs`
+materialises them into `src/generator/templates.generated.js`, which is committed
+and rebuilt on `pretest`/`prebuild`.
+
+Two former disagreements with `ftn` are resolved here:
+
+- The generator used to resolve dependencies against a **second, stale registry**
+  (`utils/capabilities.js`) whose IDs no longer matched the catalog, so dependency
+  and conflict resolution silently did nothing for most capabilities.
+  `capability-resolver.js` now resolves against the catalog itself.
+- The capability → template wiring that lived alongside the metadata in
+  `config/capabilities.js` moved to `src/generator/capability-templates.js`, so
+  the public catalog stays free of file paths.
 
 ## Development
 

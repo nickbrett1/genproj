@@ -16,6 +16,10 @@ export default defineConfig({
         "**/*.test.{js,ts}",
         "**/*.spec.{js,ts}",
         "**/*.config.{js,ts}",
+        // Generated/data modules: the inlined templates and the capability →
+        // template wiring are data, not logic.
+        "src/generator/templates.generated.js",
+        "src/generator/capability-templates.js",
       ],
       include: ["src/**/*.js"],
       // Enforce a minimum coverage gate in CI (matches the old SonarCloud >80% rule).

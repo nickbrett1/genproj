@@ -7,8 +7,11 @@
   "scripts": {
     "prepare": "simple-git-hooks",
     "dev": "wrangler dev",
+    "build:templates": "node scripts/build-templates.mjs",
+    "pretest": "npm run build:templates",
     "test": "vitest --coverage",
     "test:once": "npx vitest run --changed",
+    "prebuild": "npm run build:templates",
     "build": "echo 'No build step required'",
     "deploy": "wrangler deploy",
     "lint": "prettier --check . && eslint ."

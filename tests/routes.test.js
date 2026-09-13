@@ -93,8 +93,44 @@ describe("GET /", () => {
         "/v1/version",
         "/v1/catalog",
         "/v1/catalog/schema.json",
+        "POST /v1/preview",
       ],
     });
+  });
+});
+
+describe("POST /v1/preview", () => {
+  const post = (path, body) =>
+    handleRequest(
+      new Request(`https://genproj.example${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: typeof body === "string" ? body : JSON.stringify(body),
+      }),
+    );
+
+  it("generates a preview for a valid selection", async () => {
+    const response = await post("/v1/preview", {
+      name: "preview-demo",
+      selectedCapabilities: ["shell-tools", "devcontainer-node"],
+      configuration: {},
+    });
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(Array.isArray(body.files)).toBe(true);
+    expect(body.files.length).toBeGreaterThan(0);
+    expect(body.summary.projectName).toBe("preview-demo");
+  });
+
+  it("rejects a body without selectedCapabilities", async () => {
+    const response = await post("/v1/preview", { projectName: "nope" });
+    expect(response.status).toBe(400);
+    expect((await response.json()).error).toMatch(/selectedCapabilities/);
+  });
+
+  it("rejects a malformed JSON body", async () => {
+    const response = await post("/v1/preview", "{not json");
+    expect(response.status).toBe(400);
   });
 });
 
