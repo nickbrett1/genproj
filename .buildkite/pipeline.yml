@@ -79,5 +79,17 @@ steps:
         export CLOUDFLARE_ACCOUNT_ID="$$(doppler secrets get CLOUDFLARE_ACCOUNT_ID --project common --config dev --plain)"
       - ./scripts/setup-wrangler-config.sh "dev"
       - npm run build --if-present
+      - |
+        # Secrets are synced BEFORE the deploy, and the order is load-bearing.
+        # sync-doppler-secrets.sh uses `wrangler versions secret bulk`, which
+        # creates a new version carrying the secrets but does not put it on
+        # production traffic; `wrangler deploy` (keep_vars defaults to true)
+        # then carries them forward into the version it does deploy. Run it the
+        # other way round and the secrets are stranded in a version nobody
+        # serves, while the Worker keeps running without them.
+        #
+        # This is how SERVICE_SECRET went missing on the first deploy after it
+        # was added: the sync ran last, reported success, and the running Worker
+        # answered "SERVICE_SECRET is not configured".
+        ./scripts/sync-doppler-secrets.sh --project genproj --config dev --env default
       - npx --yes wrangler deploy
-      - ./scripts/sync-doppler-secrets.sh --project genproj --config dev --env default
