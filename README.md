@@ -86,8 +86,15 @@ npm run lint         # prettier --check && eslint
 CI is Buildkite (`.buildkite/pipeline.yml`), triggered by a GitHub webhook: build
 and test on every push, and deploy to production on `main`. The deploy step
 resolves the Cloudflare credentials from Doppler (`common`/`dev`), generates
-`wrangler.jsonc` from `wrangler.template.jsonc`, runs `wrangler deploy`, then
-syncs the project's Doppler secrets.
+`wrangler.jsonc` from `wrangler.template.jsonc`, **syncs the project's Doppler
+secrets, and only then runs `wrangler deploy`**.
+
+That order matters. `sync-doppler-secrets.sh` uses `wrangler versions secret
+bulk`, which creates a new version carrying the secrets without putting it on
+production traffic; `wrangler deploy` carries the current version's bindings
+forward (`keep_vars` defaults to true), so it is what actually puts them live.
+Syncing afterwards strands the secrets in a version nobody serves, the step
+still reports success, and the Worker keeps running without them.
 
 ## Doppler
 
