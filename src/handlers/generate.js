@@ -9,13 +9,12 @@
  *
  * Authentication differs from the route it replaces: ftn resolved a session
  * cookie to a user and read per-user OAuth tokens for the external services.
- * genproj authenticates the request with a PAT (validated against ftn's shared
- * `API_KEYS_DB` store) and takes the identity from the token owner; the external
- * services use the deployment's own tokens. The JSON response shape is
+ * Here the caller is authenticated as *ftn* by a shared secret, and the
+ * external services use the deployment's own tokens. The JSON response shape is
  * unchanged, so ftn's old route can proxy straight through.
  */
 
-import { authenticatePat } from "../auth/pat.js";
+import { requireService } from "../auth/service-secret.js";
 import { json } from "../http.js";
 import { ProjectGeneratorService } from "../generator/project-generator.js";
 import {
@@ -47,20 +46,9 @@ export async function handleGenerate(request, env = {}) {
     return json({ message: "Missing required fields" }, { status: 400 });
   }
 
-  let identity;
-  try {
-    identity = await authenticatePat(request, env);
-  } catch (caught) {
-    if (caught.message === "Rate limit exceeded") {
-      return json({ message: caught.message }, { status: 429 });
-    }
-    return json(
-      { message: caught.message || "Internal Server Error" },
-      { status: 500 },
-    );
-  }
-  if (!identity) {
-    return json({ message: "Unauthorized" }, { status: 401 });
+  const { identity, response } = await requireService(request, env);
+  if (response) {
+    return response;
   }
 
   try {
