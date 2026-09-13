@@ -1,0 +1,476 @@
+/**
+ * GitHub API Service
+ *
+ * Provides integration with GitHub API for repository creation, file management,
+ * and webhook configuration in the genproj tool.
+ *
+ * @fileoverview Server-side GitHub API integration service
+ */
+
+/**
+ * @typedef {Object} GitHubRepository
+ * @property {string} name - Repository name
+ * @property {string} fullName - Full repository name (owner/repo)
+ * @property {string} cloneUrl - Clone URL
+ * @property {string} htmlUrl - GitHub web URL
+ * @property {boolean} private - Whether repository is private
+ */
+
+/**
+ * @typedef {Object} GitHubFile
+ * @property {string} path - File path in repository
+ * @property {string} content - File content (base64 encoded)
+ * @property {string} message - Commit message
+ * @property {string} [branch] - Branch name (default: main)
+ */
+
+import { BaseAPIService } from "./base-api-service.js";
+import _sodium from "libsodium-wrappers";
+
+/**
+ * GitHub API service class
+ */
+export class GitHubAPIService extends BaseAPIService {
+  /**
+   * Creates a new GitHub API service instance
+   * @param {string} token - GitHub access token
+   */
+  constructor(token) {
+    super(
+      token,
+      "https://api.github.com",
+      {
+        Authorization: `token ${token}`,
+        Accept: "application/vnd.github.v3+json",
+        "User-Agent": "genproj-tool",
+      },
+      "GitHub",
+    );
+  }
+
+  /**
+   * Gets the authenticated user's information
+   * @returns {Promise<Object>} User information
+   */
+  async getUserInfo() {
+    const response = await this.makeRequest("/user");
+    return response.json();
+  }
+
+  /**
+   * Creates a new repository
+   * @param {string} name - Repository name
+   * @param {string} description - Repository description
+   * @param {boolean} [private=false] - Whether repository should be private
+   * @param {boolean} [autoInit=true] - Whether to initialize with README
+   * @returns {Promise<GitHubRepository>} Created repository information
+   */
+  async createRepository(
+    name,
+    description,
+    isPrivate = false,
+    autoInit = true,
+  ) {
+    console.log(`🔄 Creating GitHub repository: ${name}`);
+
+    const repositoryData = {
+      name,
+      description,
+      private: isPrivate,
+      auto_init: autoInit,
+      gitignore_template: "Node",
+      license_template: "mit",
+    };
+
+    let response;
+    try {
+      response = await this.makeRequest("/user/repos", {
+        method: "POST",
+        body: JSON.stringify(repositoryData),
+      });
+    } catch (error) {
+      if (error.message.includes("name already exists on this account")) {
+        const e = new Error("Repository already exists");
+        // @ts-ignore
+        e.code = "REPOSITORY_EXISTS";
+        throw e;
+      }
+      throw error;
+    }
+
+    const repository = await response.json();
+
+    console.log(`✅ GitHub repository created: ${repository.full_name}`);
+
+    return {
+      name: repository.name,
+      fullName: repository.full_name,
+      cloneUrl: repository.clone_url,
+      htmlUrl: repository.html_url,
+      private: repository.private,
+      defaultBranch: repository.default_branch || "main",
+    };
+  }
+
+  /**
+   * Checks if a repository exists
+   * @param {string} owner - Repository owner
+   * @param {string} repo - Repository name
+   * @returns {Promise<boolean>} Whether repository exists
+   */
+  async repositoryExists(owner, repo) {
+    try {
+      await this.makeRequest(`/repos/${owner}/${repo}`);
+      return true;
+    } catch (error) {
+      if (error.message.includes("404")) {
+        return false;
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Gets the content of a file in the repository
+   * @param {string} owner - Repository owner
+   * @param {string} repo - Repository name
+   * @param {string} path - File path
+   * @returns {Promise<string|null>} File content or null if not found
+   */
+  async getFileContent(owner, repo, path) {
+    try {
+      const response = await this.makeRequest(
+        `/repos/${owner}/${repo}/contents/${path}`,
+      );
+      const data = await response.json();
+      return Buffer.from(data.content, "base64").toString("utf-8");
+    } catch (error) {
+      if (error.message.includes("404")) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Creates or updates a file in the repository
+   * @param {string} owner - Repository owner
+   * @param {string} repo - Repository name
+   * @param {GitHubFile} file - File information
+   * @returns {Promise<Object>} Commit information
+   */
+  async createOrUpdateFile(owner, repo, file) {
+    console.log(`🔄 Creating/updating file: ${file.path} in ${owner}/${repo}`);
+
+    // Get current file SHA if it exists
+    let sha = null;
+    try {
+      const currentFile = await this.makeRequest(
+        `/repos/${owner}/${repo}/contents/${file.path}`,
+      );
+      const currentFileData = await currentFile.json();
+      sha = currentFileData.sha;
+    } catch (error) {
+      // File doesn't exist, which is fine for new files
+      if (!error.message.includes("404")) {
+        throw error;
+      }
+    }
+
+    const fileData = {
+      message: file.message,
+      content: Buffer.from(file.content).toString("base64"),
+      branch: file.branch || "main",
+    };
+
+    if (sha) {
+      fileData.sha = sha;
+    }
+
+    const response = await this.makeRequest(
+      `/repos/${owner}/${repo}/contents/${file.path}`,
+      {
+        method: "PUT",
+        body: JSON.stringify(fileData),
+      },
+    );
+
+    const result = await response.json();
+
+    console.log(`✅ File ${sha ? "updated" : "created"}: ${file.path}`);
+
+    return result;
+  }
+
+  /**
+   * Creates multiple files in a single commit
+   * @param {string} owner - Repository owner
+   * @param {string} repo - Repository name
+   * @param {GitHubFile[]} files - Array of files to create
+   * @param {string} commitMessage - Commit message
+   * @returns {Promise<Object>} Commit information
+   */
+  async createMultipleFiles(
+    owner,
+    repo,
+    files,
+    commitMessage,
+    branch = "main",
+  ) {
+    console.log(
+      `🔄 Creating ${files.length} files in ${owner}/${repo} on branch ${branch}`,
+    );
+
+    // Get the latest commit SHA
+    const referenceResponse = await this.makeRequest(
+      `/repos/${owner}/${repo}/git/refs/heads/${branch}`,
+    );
+    const referenceData = await referenceResponse.json();
+    const latestCommitSha = referenceData.object.sha;
+
+    // Get the tree SHA
+    const commitResponse = await this.makeRequest(
+      `/repos/${owner}/${repo}/git/commits/${latestCommitSha}`,
+    );
+    const commitData = await commitResponse.json();
+    const baseTreeSha = commitData.tree.sha;
+
+    // Create blobs for each file
+    const blobPromises = files.map(async (file) => {
+      const blobResponse = await this.makeRequest(
+        `/repos/${owner}/${repo}/git/blobs`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            content: Buffer.from(file.content).toString("base64"),
+            encoding: "base64",
+          }),
+        },
+      );
+      const blobData = await blobResponse.json();
+      return {
+        path: file.path,
+        mode: file.path.endsWith(".sh") ? "100755" : "100644",
+        type: "blob",
+        sha: blobData.sha,
+      };
+    });
+
+    const treeEntries = await Promise.all(blobPromises);
+
+    // Create new tree
+    const treeResponse = await this.makeRequest(
+      `/repos/${owner}/${repo}/git/trees`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          base_tree: baseTreeSha,
+          tree: treeEntries,
+        }),
+      },
+    );
+    const treeData = await treeResponse.json();
+
+    // Create commit
+    const newCommitResponse = await this.makeRequest(
+      `/repos/${owner}/${repo}/git/commits`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          message: commitMessage,
+          tree: treeData.sha,
+          parents: [latestCommitSha],
+        }),
+      },
+    );
+    const newCommitData = await newCommitResponse.json();
+
+    // Update branch reference
+    await this.makeRequest(`/repos/${owner}/${repo}/git/refs/heads/${branch}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        sha: newCommitData.sha,
+      }),
+    });
+
+    console.log(
+      `✅ Created ${files.length} files in commit: ${newCommitData.sha}`,
+    );
+
+    return newCommitData;
+  }
+
+  /**
+   * Sets up a webhook for the repository
+   * @param {string} owner - Repository owner
+   * @param {string} repo - Repository name
+   * @param {string} webhookUrl - Webhook URL
+   * @param {string[]} events - Events to listen for
+   * @returns {Promise<Object>} Webhook information
+   */
+  async createWebhook(
+    owner,
+    repo,
+    webhookUrl,
+    events = ["push", "pull_request"],
+  ) {
+    console.log(`🔄 Creating webhook for ${owner}/${repo}`);
+
+    const webhookData = {
+      name: "web",
+      active: true,
+      events,
+      config: {
+        url: webhookUrl,
+        content_type: "json",
+      },
+    };
+
+    const response = await this.makeRequest(`/repos/${owner}/${repo}/hooks`, {
+      method: "POST",
+      body: JSON.stringify(webhookData),
+    });
+
+    const webhook = await response.json();
+
+    console.log(`✅ Webhook created: ${webhook.id}`);
+
+    return webhook;
+  }
+
+  /**
+   * Lists the webhooks configured on a repository.
+   *
+   * Used by genproj to verify that CircleCI has actually installed its push
+   * webhook (`https://circleci.com/hooks/github`) on a freshly-created repo.
+   * CircleCI installs this webhook when it indexes a repo, so its absence is a
+   * reliable signal that CircleCI cannot see the new repository yet.
+   * @param {string} owner - Repository owner
+   * @param {string} repo - Repository name
+   * @returns {Promise<Object[]>} Array of webhook objects
+   */
+  async listWebhooks(owner, repo) {
+    const response = await this.makeRequest(`/repos/${owner}/${repo}/hooks`);
+    return response.json();
+  }
+
+  /**
+   * Gets repository information
+   * @param {string} owner - Repository owner
+   * @param {string} repo - Repository name
+   * @returns {Promise<Object>} Repository information
+   */
+  async getRepository(owner, repo) {
+    const response = await this.makeRequest(`/repos/${owner}/${repo}`);
+    const repository = await response.json();
+    return {
+      name: repository.name,
+      fullName: repository.full_name,
+      cloneUrl: repository.clone_url,
+      htmlUrl: repository.html_url,
+      private: repository.private,
+      defaultBranch: repository.default_branch || "main",
+    };
+  }
+
+  /**
+   * Lists user's repositories
+   * @param {string} [type='all'] - Repository type (all, owner, public, private)
+   * @param {string} [sort='updated'] - Sort order (created, updated, pushed, full_name)
+   * @param {number} [perPage=30] - Number of repositories per page
+   * @returns {Promise<Object[]>} Array of repositories
+   */
+  async listRepositories(type = "all", sort = "updated", perPage = 30) {
+    const parameters = new URLSearchParams({
+      type,
+      sort,
+      per_page: perPage.toString(),
+    });
+
+    const response = await this.makeRequest(
+      `/user/repos?${parameters.toString()}`,
+    );
+    return response.json();
+  }
+
+  /**
+   * Creates or updates a repository secret
+   * @param {string} owner - Repository owner
+   * @param {string} repo - Repository name
+   * @param {string} secretName - Name of the secret
+   * @param {string} secretValue - Unencrypted value of the secret
+   * @returns {Promise<void>}
+   */
+  async createRepositorySecret(owner, repo, secretName, secretValue) {
+    console.log(
+      `🔄 Creating/updating secret ${secretName} for ${owner}/${repo}`,
+    );
+
+    // 1. Get the repository public key
+    const keyResponse = await this.makeRequest(
+      `/repos/${owner}/${repo}/actions/secrets/public-key`,
+    );
+    const { key, key_id } = await keyResponse.json();
+
+    // 2. Encrypt the secret using libsodium
+    await _sodium.ready;
+    const sodium = _sodium;
+
+    // Convert strings to Uint8Arrays
+    const binkey = sodium.from_base64(key, sodium.base64_variants.ORIGINAL);
+    const binsec = sodium.from_string(secretValue);
+
+    // Encrypt the secret
+    const encBytes = sodium.crypto_box_seal(binsec, binkey);
+
+    // Convert to base64
+    const encryptedValue = sodium.to_base64(
+      encBytes,
+      sodium.base64_variants.ORIGINAL,
+    );
+
+    // 3. Create or update the secret
+    await this.makeRequest(
+      `/repos/${owner}/${repo}/actions/secrets/${secretName}`,
+      {
+        method: "PUT",
+        body: JSON.stringify({
+          encrypted_value: encryptedValue,
+          key_id: key_id,
+        }),
+      },
+    );
+
+    console.log(`✅ Secret ${secretName} created/updated successfully`);
+  }
+
+  /**
+   * Deletes a repository
+   * @param {string} owner - Repository owner
+   * @param {string} repo - Repository name
+   * @returns {Promise<void>}
+   */
+  async deleteRepository(owner, repo) {
+    console.log(`🔄 Deleting repository: ${owner}/${repo}`);
+
+    await this.makeRequest(`/repos/${owner}/${repo}`, {
+      method: "DELETE",
+    });
+
+    console.log(`✅ Repository deleted: ${owner}/${repo}`);
+  }
+
+  /**
+   * Validates the GitHub token by making a test API call
+   * @returns {Promise<boolean>} Whether the token is valid
+   */
+  async validateToken() {
+    try {
+      await this.getUserInfo();
+      return true;
+    } catch (error) {
+      console.error(`❌ GitHub token validation failed: ${error.message}`);
+      return false;
+    }
+  }
+}

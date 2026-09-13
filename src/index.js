@@ -12,6 +12,9 @@
  *   GET /v1/catalog             the capability catalog (public, ETag, cacheable)
  *   GET /v1/catalog/schema.json JSON Schema for the catalog
  *   GET /v1/version             service version and catalog version
+ *   POST /v1/preview            generated file set (no auth, no side effects)
+ *   POST /v1/generate           create/update a project (PAT-authenticated)
+ *   POST /v1/conflicts          report files that would conflict (PAT)
  *   GET /                       endpoint index
  */
 
@@ -19,6 +22,8 @@ import { buildCatalog, catalogVersion, capabilities } from "./catalog/index.js";
 import catalogSchema from "./catalog/schema.json" with { type: "json" };
 import { buildInfo, CORS_HEADERS, error, json, jsonWithEtag } from "./http.js";
 import { handlePreview } from "./handlers/preview.js";
+import { handleGenerate } from "./handlers/generate.js";
+import { handleConflicts } from "./handlers/conflicts.js";
 
 /** Seconds the catalog may be cached by a shared cache. */
 const CATALOG_MAX_AGE = 300;
@@ -49,6 +54,8 @@ function index() {
       "/v1/catalog",
       "/v1/catalog/schema.json",
       "POST /v1/preview",
+      "POST /v1/generate",
+      "POST /v1/conflicts",
     ],
   });
 }
@@ -56,9 +63,10 @@ function index() {
 /**
  * Routes a request.
  * @param {Request} request Incoming request.
+ * @param {Record<string, unknown>} [env] Worker environment bindings.
  * @returns {Response | Promise<Response>} The response.
  */
-export function handleRequest(request) {
+export function handleRequest(request, env = {}) {
   const { pathname } = new URL(request.url);
 
   if (request.method === "OPTIONS") {
@@ -67,6 +75,14 @@ export function handleRequest(request) {
 
   if (pathname === "/v1/preview" && request.method === "POST") {
     return handlePreview(request);
+  }
+
+  if (pathname === "/v1/generate" && request.method === "POST") {
+    return handleGenerate(request, env);
+  }
+
+  if (pathname === "/v1/conflicts" && request.method === "POST") {
+    return handleConflicts(request, env);
   }
 
   if (request.method !== "GET") {
@@ -96,7 +112,7 @@ export function handleRequest(request) {
 }
 
 export default {
-  fetch(request) {
-    return handleRequest(request);
+  fetch(request, env) {
+    return handleRequest(request, env);
   },
 };

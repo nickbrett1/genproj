@@ -43,5 +43,8 @@
     "simple-git-hooks": "^2.13.1",
     "vitest": "^5.0.0",
     "wrangler": "^4.131.0"
+  },
+  "dependencies": {
+    "libsodium-wrappers": "^0.8.4"
   }
 }

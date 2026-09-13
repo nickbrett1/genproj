@@ -1,9 +1,20 @@
 // tests/routes.test.js
 
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+// The generate/conflicts handlers touch the network (GitHub et al.) and the D1
+// PAT store. The 401 tests exercise the real router path down to the handler's
+// guard; the happy paths stub the auth module and the generator service so no
+// request leaves the process.
+vi.mock("../src/auth/pat.js", () => ({ authenticatePat: vi.fn() }));
+vi.mock("../src/generator/project-generator.js", () => ({
+  ProjectGeneratorService: vi.fn(),
+}));
 
 import worker, { handleRequest } from "../src/index.js";
 import { catalogVersion, capabilities } from "../src/catalog/index.js";
+import { authenticatePat } from "../src/auth/pat.js";
+import { ProjectGeneratorService } from "../src/generator/project-generator.js";
 
 const get = (path, init) =>
   handleRequest(new Request(`https://genproj.example${path}`, init));
@@ -94,6 +105,8 @@ describe("GET /", () => {
         "/v1/catalog",
         "/v1/catalog/schema.json",
         "POST /v1/preview",
+        "POST /v1/generate",
+        "POST /v1/conflicts",
       ],
     });
   });
@@ -131,6 +144,256 @@ describe("POST /v1/preview", () => {
   it("rejects a malformed JSON body", async () => {
     const response = await post("/v1/preview", "{not json");
     expect(response.status).toBe(400);
+  });
+});
+
+describe("POST /v1/generate", () => {
+  const post = (body, headers = {}) =>
+    handleRequest(
+      new Request("https://genproj.example/v1/generate", {
+        method: "POST",
+        headers: { "content-type": "application/json", ...headers },
+        body: typeof body === "string" ? body : JSON.stringify(body),
+      }),
+      { API_KEYS_DB: {} },
+    );
+
+  let generateProject;
+
+  beforeEach(() => {
+    generateProject = vi.fn();
+    authenticatePat.mockResolvedValue(null);
+    ProjectGeneratorService.mockImplementation(function () {
+      return { generateProject };
+    });
+  });
+
+  it("rejects a request with no PAT", async () => {
+    const response = await post({
+      name: "demo",
+      selectedCapabilities: ["coding-agents"],
+    });
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ message: "Unauthorized" });
+    expect(generateProject).not.toHaveBeenCalled();
+  });
+
+  it("rejects a malformed JSON body", async () => {
+    const response = await post("{not json");
+    expect(response.status).toBe(400);
+    expect((await response.json()).message).toMatch(/valid JSON/);
+  });
+
+  it("rejects a body without the required fields", async () => {
+    const response = await post({ name: "demo" });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      message: "Missing required fields",
+    });
+  });
+
+  it("generates a project for an authenticated PAT", async () => {
+    authenticatePat.mockResolvedValue({
+      userEmail: "dev@example.com",
+      token: "pat_x",
+    });
+    generateProject.mockResolvedValue({
+      success: true,
+      repository: { htmlUrl: "https://github.com/dev/demo" },
+    });
+
+    const response = await post({
+      name: "demo",
+      selectedCapabilities: ["coding-agents"],
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      message: "Project generated successfully",
+      repositoryUrl: "https://github.com/dev/demo",
+    });
+    expect(generateProject).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectName: "demo",
+        userId: "dev@example.com",
+      }),
+    );
+  });
+
+  it("maps a repository-exists failure to 409", async () => {
+    authenticatePat.mockResolvedValue({
+      userEmail: "dev@example.com",
+      token: "pat_x",
+    });
+    generateProject.mockResolvedValue({
+      success: false,
+      errorCode: "REPOSITORY_EXISTS",
+    });
+
+    const response = await post({
+      name: "demo",
+      selectedCapabilities: ["coding-agents"],
+    });
+
+    expect(response.status).toBe(409);
+    expect((await response.json()).code).toBe("REPOSITORY_EXISTS");
+  });
+
+  it("maps a token failure in the result to 401", async () => {
+    authenticatePat.mockResolvedValue({
+      userEmail: "dev@example.com",
+      token: "pat_x",
+    });
+    generateProject.mockResolvedValue({
+      success: false,
+      error: "GitHub token not found for user",
+    });
+
+    const response = await post({
+      name: "demo",
+      selectedCapabilities: ["coding-agents"],
+    });
+
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({
+      message: "GitHub token not found for user",
+    });
+  });
+
+  it("returns 500 when generation throws", async () => {
+    authenticatePat.mockResolvedValue({
+      userEmail: "dev@example.com",
+      token: "pat_x",
+    });
+    generateProject.mockRejectedValue(new Error("boom"));
+
+    const response = await post({
+      name: "demo",
+      selectedCapabilities: ["coding-agents"],
+    });
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ message: "boom" });
+  });
+
+  it("returns 429 when the PAT is rate limited", async () => {
+    authenticatePat.mockRejectedValue(new Error("Rate limit exceeded"));
+
+    const response = await post({
+      name: "demo",
+      selectedCapabilities: ["coding-agents"],
+    });
+
+    expect(response.status).toBe(429);
+    expect(await response.json()).toEqual({ message: "Rate limit exceeded" });
+  });
+});
+
+describe("POST /v1/conflicts", () => {
+  const post = (body) =>
+    handleRequest(
+      new Request("https://genproj.example/v1/conflicts", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: typeof body === "string" ? body : JSON.stringify(body),
+      }),
+      { API_KEYS_DB: {} },
+    );
+
+  let checkConflicts;
+
+  beforeEach(() => {
+    checkConflicts = vi.fn();
+    authenticatePat.mockResolvedValue(null);
+    ProjectGeneratorService.mockImplementation(function () {
+      return { checkConflicts };
+    });
+  });
+
+  it("rejects a request with no PAT", async () => {
+    const response = await post({
+      name: "demo",
+      selectedCapabilities: ["coding-agents"],
+    });
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ message: "Unauthorized" });
+    expect(checkConflicts).not.toHaveBeenCalled();
+  });
+
+  it("rejects a body without the required fields", async () => {
+    const response = await post({ name: "demo" });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      message: "Missing required fields",
+    });
+  });
+
+  it("returns the conflicts for an authenticated PAT", async () => {
+    authenticatePat.mockResolvedValue({
+      userEmail: "dev@example.com",
+      token: "pat_x",
+    });
+    checkConflicts.mockResolvedValue([
+      { path: "src/app.html", generatedContent: "new", existingContent: "old" },
+    ]);
+
+    const response = await post({
+      name: "demo",
+      selectedCapabilities: ["coding-agents"],
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      conflicts: [
+        {
+          path: "src/app.html",
+          generatedContent: "new",
+          existingContent: "old",
+        },
+      ],
+    });
+    expect(checkConflicts).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectName: "demo",
+        userId: "dev@example.com",
+      }),
+    );
+  });
+
+  it("maps a missing GitHub token to 401", async () => {
+    authenticatePat.mockResolvedValue({
+      userEmail: "dev@example.com",
+      token: "pat_x",
+    });
+    checkConflicts.mockRejectedValue(
+      new Error("GitHub authentication required for conflict checking"),
+    );
+
+    const response = await post({
+      name: "demo",
+      selectedCapabilities: ["coding-agents"],
+    });
+
+    expect(response.status).toBe(401);
+    expect((await response.json()).message).toMatch(
+      /GitHub authentication required/,
+    );
+  });
+
+  it("returns 500 when the check throws", async () => {
+    authenticatePat.mockResolvedValue({
+      userEmail: "dev@example.com",
+      token: "pat_x",
+    });
+    checkConflicts.mockRejectedValue(new Error("boom"));
+
+    const response = await post({
+      name: "demo",
+      selectedCapabilities: ["coding-agents"],
+    });
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ message: "boom" });
   });
 });
 
