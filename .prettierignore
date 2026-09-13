@@ -2,4 +2,9 @@
 .agents/
 coverage/
 wrangler.template.jsonc
+.buildkite/pipeline.yml
 src/generator/templates.generated.js
+
+# Raw generator templates. Their content is data with significant whitespace,
+# and `.template` has no prettier parser.
+src/generator/templates/

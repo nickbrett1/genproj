@@ -133,7 +133,7 @@ function createMergedDevelopmentContainerJson(
 ) {
   const baseId = developmentContainerCapabilities[0];
   const baseCap = capabilities.find((c) => c.id === baseId);
-   
+
   const baseConfig = applyDefaults(
     baseCap,
     projectConfig.configuration?.[baseId] || {},
@@ -173,7 +173,7 @@ function createMergedDevelopmentContainerJson(
     // eslint-disable-next-line security/detect-object-injection
     const capId = developmentContainerCapabilities[index];
     const cap = capabilities.find((c) => c.id === capId);
-     
+
     const capConfig = applyDefaults(
       cap,
       projectConfig.configuration?.[capId] || {},
@@ -236,7 +236,7 @@ function createDevelopmentContainerDockerfile(
 ) {
   const baseId = developmentContainerCapabilities[0];
   const baseCap = capabilities.find((c) => c.id === baseId);
-   
+
   const baseConfig = applyDefaults(
     baseCap,
     projectConfig.configuration?.[baseId] || {},
