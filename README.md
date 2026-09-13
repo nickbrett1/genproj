@@ -1,42 +1,68 @@
 # genproj
 
-A genproj project generated with genproj
+The genproj service: the capability catalog and project generator, extracted from
+[`ftn`](https://github.com/nickbrett1/ftn) so that `ftn`'s UI can be a thin,
+data-driven client of it.
 
-## Capabilities
+The extraction runs in phases. This repository currently serves **phase 0**: the
+read-only surface. Generation, the MCP server and the capability templates move
+here in later phases.
 
-This project includes the following capabilities:
+## Endpoints
 
-- **Docker**: Adds Docker support for containerised builds and tooling.
-- **Node.js DevContainer**: Sets up a VS Code DevContainer with Node.js environment.
-- **ESLint + SonarJS**: Adds fast, zero-configuration code quality linting using eslint-plugin-sonarjs and eslint-plugin-security. Runs in ~5–10s vs 1–2 minutes for SonarCloud.
-- **Buildkite Integration**: Runs CI on a self-hosted Buildkite agent (Apple silicon) instead of a metered cloud fleet. The pipeline and its GitHub webhook are created during generation, so there is no manual "set up project" step. Can run alongside CircleCI, so a repository can migrate without a flag day.
-- **Doppler Secrets Management**: Integrates Doppler for secure secrets management. Enables the various MCP servers that rely on privileged tokens to access their services (e.g. CircleCI, GitHub, SonarQube).
-- **Cloudflare Wrangler**: Configures project for deployment to Cloudflare Workers.
-- **Dependabot**: Configures Dependabot for automated dependency updates.
-- **Editor Configuration**: Shared VS Code extensions and workspace settings for consistent tooling across the team.
-- **Shell & Terminal**: Zsh shell with the Powerlevel10k prompt and productivity plugins.
-- **AI Coding Agents**: Sets up the AI coding agents in the devcontainer: goose (config, MCP servers and spec-first recipes) plus the Cursor and Antigravity CLIs.
-- **SpecKit**: GitHub's spec-kit: a spec-driven development workflow (specify, plan, tasks, implement) for AI coding agents.
+| Route                         | Auth | Description                                                            |
+| ----------------------------- | ---- | ---------------------------------------------------------------------- |
+| `GET /healthz`                | none | Liveness, service version and the catalog version.                     |
+| `GET /v1/catalog`             | none | The capability catalog. `ETag` + `Cache-Control: public, max-age=300`. |
+| `GET /v1/catalog/schema.json` | none | JSON Schema for the catalog.                                           |
+| `GET /v1/version`             | none | Service version and catalog version.                                   |
 
-## Setup
+The catalog is deliberately public — the UI renders it before anyone signs in.
+_Generating_ code requires authentication, as it always has; that lives on the
+`/v1/generate` route in a later phase.
 
-1. Clone the repository
-2. Install dependencies:
+`catalogVersion` is a content hash of the capability list, so a client can tell
+whether its cached copy is stale. `/v1/catalog` returns it as a strong `ETag` and
+answers `304 Not Modified` to `If-None-Match`.
 
-   ```bash
-   npm install
-   ```
+## The catalog
 
-3. Run the dev server:
+`src/catalog/catalog.json` is the single source of truth for the capabilities the
+generator can apply, and it is what the UI renders. It was ported from `ftn`'s
+`webapp/src/lib/config/capabilities.js` — metadata only; the server-side
+`templates[]`/`templateId` entries belong to the generator and move here with it.
 
-   ```bash
-   npm run dev
-   ```
+Three fields exist to replace hardcodes that used to live in the UI:
+
+- `selectedByDefault` — previously the UI's `category === 'core'` check.
+- `authServices` — previously a bespoke auth-service lookup map.
+- `provides` — previously a hardcoded devcontainer → SonarCloud language mapping.
+
+`src/catalog/schema.json` documents the shape; `tests/catalog.test.js` pins the
+capability set so any change to it is deliberate.
+
+## Development
+
+```bash
+npm install
+npm run dev          # wrangler dev
+npm test             # vitest, with coverage gates (statements/functions/lines 80%, branches 75%)
+npm run lint         # prettier --check && eslint
+./scripts/cloud_login.sh          # authenticate Cloudflare + Doppler
+./scripts/setup-wrangler-config.sh dev   # wrangler.template.jsonc -> wrangler.jsonc
+```
+
+## Deployment
+
+CI is Buildkite (`.buildkite/pipeline.yml`), triggered by a GitHub webhook: build
+and test on every push, and deploy to production on `main`. The deploy step
+resolves the Cloudflare credentials from Doppler (`common`/`dev`), generates
+`wrangler.jsonc` from `wrangler.template.jsonc`, runs `wrangler deploy`, then
+syncs the project's Doppler secrets.
 
 ## Doppler
 
-This project uses Doppler for secrets in its own `genproj` project.
-First use (links the project and `dev` config):
+This project uses Doppler for secrets in its own `genproj` project:
 
 ```bash
 doppler setup --project genproj --config dev
@@ -49,26 +75,18 @@ doppler projects create genproj
 doppler configs create dev --project genproj
 ```
 
-The Doppler CLI is installed in the devcontainer — it must be on PATH for the
-VS Code extension and `doppler run` to work. Auth is persisted via the host
-`~/.doppler` bind-mount.
-
 ### Env-var precedence (read this if `doppler run` hits the wrong project)
 
 Doppler resolves its target as **environment variables > `doppler.yaml` >
-`~/.doppler` scoped config**. If your shell — or the session that launched
-the devcontainer (e.g. an agent runtime) — exports `DOPPLER_PROJECT` /
-`DOPPLER_CONFIG` / `DOPPLER_ENVIRONMENT`, those silently override this
-repo's `doppler.yaml` and every `doppler` command targets the wrong
-project. The devcontainer's post-create setup pins this repo's context
-(`genproj`/`dev`) in `~/.bashrc` and `~/.zshrc` and warns at
-setup if resolution still mismatches. To force the correct context manually:
+`~/.doppler` scoped config**. If your shell — or the session that launched the
+devcontainer (e.g. an agent runtime) — exports `DOPPLER_PROJECT` /
+`DOPPLER_CONFIG` / `DOPPLER_ENVIRONMENT`, those silently override this repo's
+`doppler.yaml` and every `doppler` command targets the wrong project. The
+devcontainer's post-create setup pins this repo's context (`genproj`/`dev`) in
+`~/.bashrc` and `~/.zshrc` and warns at setup if resolution still mismatches. To
+force the correct context manually:
 
 ```bash
 unset DOPPLER_PROJECT DOPPLER_CONFIG DOPPLER_ENVIRONMENT
 doppler setup --no-interactive --project genproj --config dev
 ```
-
-## Generated by genproj
-
-This project was generated using the genproj tool.
