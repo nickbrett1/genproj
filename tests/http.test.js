@@ -124,6 +124,8 @@ describe("buildInfo", () => {
 
   it("uses permissive CORS headers for the public surface", () => {
     expect(CORS_HEADERS["access-control-allow-origin"]).toBe("*");
-    expect(CORS_HEADERS["access-control-allow-methods"]).toBe("GET, OPTIONS");
+    expect(CORS_HEADERS["access-control-allow-methods"]).toBe(
+      "GET, POST, OPTIONS",
+    );
   });
 });

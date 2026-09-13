@@ -2,3 +2,4 @@
 .agents/
 coverage/
 wrangler.template.jsonc
+src/generator/templates.generated.js

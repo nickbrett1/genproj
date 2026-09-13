@@ -1,0 +1,3 @@
+setup:
+  project: {{dopplerProject}}
+  config: dev
