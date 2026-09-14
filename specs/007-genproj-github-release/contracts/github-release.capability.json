@@ -2,7 +2,7 @@
   "id": "github-release",
   "name": "GitHub Releases",
   "description": "Publishes a GitHub Release with attached artifacts when a version is cut. The release step lives in the Buildkite pipeline, so it runs only after build and test passed on that commit: the version is bumped from the last tag, the tag is created by CI, the artifacts named by the project's own scripts/release-artifacts.sh are attached, and the release is published with generated notes. No version bookkeeping, and no PAT for a human to paste in.",
-  "category": "ci-cd",
+  "category": "deployment",
   "dependencies": ["buildkite"],
   "conflicts": [],
   "requiresAuth": [],
