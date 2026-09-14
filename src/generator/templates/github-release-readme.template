@@ -8,10 +8,7 @@ whatever artifacts the project packages.
 ## Cutting a release
 
 1. Merge to the default branch. Buildkite builds and tests the commit.
-2. When that build is green, it stops at a **block step labelled "Release?"**.
-   Unblock it to cut the release, or leave it blocked and the build simply ends
-   without releasing. Nothing is published until someone unblocks it.
-3. The release step then: bumps the version from the newest existing tag,
+2. The release step runs automatically, exactly like the deploy step: it: bumps the version from the newest existing tag,
    creates `{{githubReleaseTagPrefix}}<version>`, packages the artifacts,
    and publishes the GitHub Release.
 

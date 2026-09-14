@@ -30,7 +30,6 @@ describe("GitHub release file generation", () => {
 
     // The tag is created by CI, after build+test passed on that commit, and
     // only on the default branch.
-    expect(yaml).toContain("key: release_approval");
     expect(yaml).toContain("key: release");
     expect(yaml).toContain('if: build.branch == "main"');
     expect(yaml).toContain("git tag -a");

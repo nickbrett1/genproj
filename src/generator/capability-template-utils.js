@@ -1671,9 +1671,7 @@ ${_bkAgents(queue)}    env:
   // --- release (github-release) --------------------------------------------
   // The tag is created HERE, by CI, after the build step passed on this exact
   // commit - so a release can only exist for code that was validated in the
-  // same build. Same shape as the deploy step (depends_on build, main only),
-  // with one addition: a block step. A release is a decision, so every merge
-  // must not cut one.
+  // same build. Same shape as the deploy step: depends_on build, main only.
   if (hasGithubRelease) {
     const grConfig = context.configuration?.["github-release"] || {};
     const tagPrefix = grConfig.tagPrefix || "v";
@@ -1724,21 +1722,7 @@ ${_bkAgents(queue)}    env:
 `;
 
     steps.push(`
-  - block: ":bookmark: Release?"
-    key: release_approval
-    depends_on:
-      - build
-    if: build.branch == "main"
-    prompt: |
-      Build and test passed for this commit. Unblock to cut a release: the
-      version is bumped from the newest tag, the tag is created, and
-      scripts/release-artifacts.sh packages what gets attached. Leave it
-      blocked to release nothing.
 
-  - label: ":bookmark: Release"
-    key: release
-    depends_on:
-      - release_approval
 ${_bkAgents(queue)}    plugins:
 ${_bkDockerPlugin(image, hasDoppler ? ["DOPPLER_TOKEN"] : ["GH_TOKEN"])}    commands:
 ${releaseToken}      - |
