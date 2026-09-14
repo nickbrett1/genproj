@@ -106,22 +106,20 @@ describe("GitHub release file generation", () => {
     expect(release).toContain("the release will carry notes only");
   });
 
-  it("renders a non-default configuration", async () => {
+  it("takes the tag prefix from configuration and fixes the release flags", async () => {
     const files = await generate(["buildkite", "github-release", "doppler"], {
-      "github-release": {
-        tagPrefix: "release-",
-        generateNotes: false,
-        draft: true,
-        prerelease: true,
-      },
+      "github-release": { tagPrefix: "release-" },
     });
-    const yaml = pipeline(files);
+    const release = releaseSection(pipeline(files));
 
-    expect(yaml).toContain("git tag --list 'release-*'");
-    expect(yaml).toContain("--notes-from-tag");
-    expect(yaml).toContain("--draft");
-    expect(yaml).toContain("--prerelease");
-    expect(pipeline(files)).not.toContain("--generate-notes");
+    expect(release).toContain("git tag --list 'release-*'");
+    // Notes are always generated and the release is always published: the
+    // parameters that used to choose this were removed, so nothing a project
+    // can configure here turns them off.
+    expect(release).toContain("--generate-notes");
+    expect(release).not.toContain("--notes-from-tag");
+    expect(release).not.toContain("--draft");
+    expect(release).not.toContain("--prerelease");
   });
 
   it("leaves the pipeline alone without the capability", async () => {

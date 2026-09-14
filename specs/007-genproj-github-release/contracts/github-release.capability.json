@@ -15,21 +15,6 @@
         "type": "string",
         "default": "v",
         "description": "Prefix for the tags CI creates: the release tag is <prefix><major>.<minor>.<patch>, starting at 0.1.0 and then a patch bump of the newest existing tag."
-      },
-      "generateNotes": {
-        "type": "boolean",
-        "default": true,
-        "description": "Build the release notes from the merged pull requests in the release (--generate-notes), classified by .github/release.yml. Set false to use the annotated tag's message instead."
-      },
-      "draft": {
-        "type": "boolean",
-        "default": false,
-        "description": "Create the release as a draft rather than publishing it immediately. A draft is not offered as \"latest\", so a launcher that fetches releases/latest/download/<asset> will not see it."
-      },
-      "prerelease": {
-        "type": "boolean",
-        "default": false,
-        "description": "Mark every release as a pre-release: not offered as \"latest\", not the default download."
       }
     }
   },
