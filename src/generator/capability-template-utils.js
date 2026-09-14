@@ -1333,9 +1333,15 @@ function _bkAgents(queue) {
  * @param {string} image - Container image
  * @param {string[]} [envNames] - Environment variable names to forward
  * @param {string} [commandYaml] - Optional `command:` in exec form
+ * @param {string} [extraYaml] - Additional plugin options (e.g. mount-buildkite-agent)
  * @returns {string} YAML fragment
  */
-function _bkDockerPlugin(image, envNames = [], commandYaml = "") {
+function _bkDockerPlugin(
+  image,
+  envNames = [],
+  commandYaml = "",
+  extraYaml = "",
+) {
   const envBlock = envNames.length
     ? `          environment:
 ${envNames.map((name) => `            - ${name}`).join("\n")}
@@ -1348,7 +1354,7 @@ ${envNames.map((name) => `            - ${name}`).join("\n")}
           # a warning, and native modules built for the wrong architecture).
           platform: linux/arm64
           workdir: /workdir
-${envBlock}${commandYaml}`;
+${extraYaml}${envBlock}${commandYaml}`;
 }
 
 /**
@@ -1379,6 +1385,23 @@ function getBuildkiteTemplateData(context) {
   const hasLighthouse = caps.includes("lighthouse-ci");
   const hasWrangler = caps.includes("cloudflare-wrangler");
   const hasDockerContainer = caps.includes("docker-container");
+  const hasGithubRelease = caps.includes("github-release");
+
+  // What the build step hands to the release step. Buildkite artifacts are the
+  // channel one step reads another step's output through, and using them is
+  // what lets the release step attach the exact bytes this build compiled and
+  // tested rather than compiling them a second time. The paths are the one
+  // project-specific detail in the mechanism: they follow the language's usual
+  // output directory, and `buildkite-agent artifact upload` does not fail when
+  // a pattern matches nothing, so a build that outputs elsewhere costs nothing
+  // until it is corrected. Change them here and the matching download in the
+  // release step together.
+  const releaseArtifactPaths =
+    language === "node"
+      ? ["dist/**"]
+      : language === "rust"
+        ? ["target/release/**"]
+        : [];
 
   const images = {
     node: "node:22-bookworm",
@@ -1475,10 +1498,20 @@ ${_bkDockerPlugin(
   const buildCommands = commands[language]
     .map((c) => `      - ${c}`)
     .join("\n");
+  // A release is the only thing that reads this step's output, so the upload
+  // exists only when the capability is selected.
+  const buildArtifacts =
+    hasGithubRelease && releaseArtifactPaths.length
+      ? `    # Uploaded so the release step can attach what this build produced and
+    # tested instead of rebuilding it.
+    artifact_paths:
+${releaseArtifactPaths.map((p) => `      - "${p}"`).join("\n")}
+`
+      : "";
   steps.push(`
   - label: ":hammer: Build and test (${language})"
     key: build
-${hasGitGuardian ? "    depends_on:\n      - secret_scan\n" : ""}${_bkAgents(queue)}    plugins:
+${hasGitGuardian ? "    depends_on:\n      - secret_scan\n" : ""}${_bkAgents(queue)}${buildArtifacts}    plugins:
 ${_bkDockerPlugin(image)}    commands:
 ${buildCommands}
 `);
@@ -1667,6 +1700,153 @@ ${_bkAgents(queue)}    env:
 `);
   }
 
+  // --- release (github-release) --------------------------------------------
+  // The tag is created HERE, by CI, after the build step passed on this exact
+  // commit - so a release can only exist for code that was validated in the
+  // same build. Same shape as the deploy step: depends_on build, main only.
+  if (hasGithubRelease) {
+    const grConfig = context.configuration?.["github-release"] || {};
+    const tagPrefix = grConfig.tagPrefix || "v";
+    const releaseFlags = [
+      grConfig.generateNotes !== false
+        ? "--generate-notes"
+        : "--notes-from-tag",
+      ...(grConfig.draft === true ? ["--draft"] : []),
+      ...(grConfig.prerelease === true ? ["--prerelease"] : []),
+      "--verify-tag",
+    ].join(" ");
+    // The release step runs in its own container, so the build output is not
+    // there - but it does not have to be rebuilt either. The build step
+    // uploaded what it compiled and tested, and this step fetches those exact
+    // bytes back: one build per commit, and the release attaches what the tests
+    // actually ran against rather than a second compile of the same tree.
+    //
+    // `artifact download` exits non-zero when nothing matches, which is the
+    // normal case for a project whose build outputs somewhere other than the
+    // default, so a miss is reported as "notes only" rather than failing the
+    // release.
+    const releaseArtifacts = releaseArtifactPaths.length
+      ? `      - |
+        # The build step uploaded what it compiled and the tests ran against;
+        # this fetches those exact bytes back rather than rebuilding the tree.
+${releaseArtifactPaths
+  .map(
+    (pattern) =>
+      `        buildkite-agent artifact download "${pattern}" . || echo "No ${pattern} artifacts to attach - the release will carry notes only."`,
+  )
+  .join("\n")}
+`
+      : `      - |
+        # This language has no default artifact paths, so there is nothing to
+        # fetch. Add artifact_paths to the build step and a download here to
+        # ship files with the release.
+        echo "No artifact paths configured - the release will carry notes only."
+`;
+    // The generated language images ship the toolchain, not the GitHub CLI, and
+    // `gh release create` is how the release is published, so it is installed
+    // on demand. The official apt repository is used rather than a pinned
+    // tarball because it is the one source that keeps working as the image
+    // moves.
+    const installGh = `      - |
+        if ! command -v gh >/dev/null 2>&1; then
+          apt-get update
+          apt-get install -y --no-install-recommends curl ca-certificates gnupg
+          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/githubcli-archive-keyring.gpg
+          chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
+          echo "deb [arch=$$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list
+          apt-get update
+          apt-get install -y --no-install-recommends gh
+        fi
+`;
+    const releaseToken = hasDoppler
+      ? `      - |
+        if ! command -v doppler >/dev/null 2>&1; then
+          apt-get update && apt-get install -y --no-install-recommends curl ca-certificates
+          curl -Ls --tlsv1.2 --proto "=https" --retry 3 https://cli.doppler.com/install.sh | sh
+        fi
+      - |
+        # Resolved at run time, never stored in the repository and never in the
+        # agent's environment hook, where every job on the fleet could read it.
+        export GH_TOKEN="$$(doppler secrets get GITHUB_RELEASE_TOKEN --project common --config prd --plain)"
+        if [ -z "$$GH_TOKEN" ]; then
+          echo "GITHUB_RELEASE_TOKEN is missing from Doppler (common/prd) - cannot release." >&2
+          exit 1
+        fi
+`
+      : `      - |
+        # No doppler capability: the token has to come from the agent
+        # environment, the same fleet-side contract the deploy step uses for
+        # CLOUDFLARE_*. It needs Contents: read and write on this repository.
+        if [ -z "$$GH_TOKEN" ]; then
+          echo "GH_TOKEN is not set on the agent - cannot create a tag or a release." >&2
+          exit 1
+        fi
+`;
+
+    steps.push(`
+  - label: ":bookmark: Release"
+    key: release
+    depends_on:
+      - build
+    if: build.branch == "main"
+${_bkAgents(queue)}    plugins:
+${_bkDockerPlugin(
+  image,
+  hasDoppler ? ["DOPPLER_TOKEN"] : ["GH_TOKEN"],
+  "",
+  `          # buildkite-agent is a host binary and artifact download is a
+          # buildkite-agent call: without this mount it is not in the container
+          # and the step has no way to read what the build step uploaded.
+          mount-buildkite-agent: true
+`,
+)}    commands:
+${installGh}${releaseToken}      - |
+        # The version is a patch bump of the newest existing tag, so there is no
+        # version file to keep in sync and no bookkeeping to forget.
+        git fetch --quiet --force --tags
+        LATEST="$$(git tag --list '${tagPrefix}*' --sort=-v:refname | head -1)"
+        if [ -z "$$LATEST" ]; then
+          VERSION="0.1.0"
+        else
+          VERSION="$$(echo "$$LATEST" | sed -e 's/^${tagPrefix}//' | awk -F. '{printf "%d.%d.%d", $$1, $$2, $$3 + 1}')"
+        fi
+        TAG="${tagPrefix}$$VERSION"
+        # Retried or re-run builds must not fail on a tag that already exists.
+        if git ls-remote --exit-code --tags origin "refs/tags/$$TAG" >/dev/null 2>&1; then
+          echo "$$TAG already exists on origin - nothing to release."
+          exit 0
+        fi
+        echo "$$VERSION" > .release-version
+        echo "$$TAG" > .release-tag
+      - |
+        # The tag is pushed with the release token explicitly, so this does not
+        # depend on whatever credentials the agent happened to clone with. The
+        # helper keeps the token out of the remote URL, where it would end up in
+        # logs and in .git/config.
+        TAG="$$(cat .release-tag)"
+        git config user.name "genproj-release"
+        git config user.email "genproj-release@users.noreply.github.com"
+        git config --local credential.helper '!f() { echo username=x-access-token; echo password="$$GH_TOKEN"; }; f'
+        git tag -a "$$TAG" -m "Release $$TAG"
+        git push origin "refs/tags/$$TAG"
+${releaseArtifacts}      - |
+        VERSION="$$(cat .release-version)"
+        TAG="$$(cat .release-tag)"
+        if [ -f scripts/release-artifacts.sh ]; then
+          bash scripts/release-artifacts.sh "$$VERSION"
+        else
+          echo "No scripts/release-artifacts.sh - releasing notes only."
+        fi
+        # Uploaded in the create call so the release is never briefly visible
+        # without its assets - a launcher reading releases/latest/download/...
+        # must not race the upload.
+        if [ -n "$$(ls -A release)" ]; then
+          gh release create "$$TAG" --title "$$TAG" ${releaseFlags} release/*
+        else
+          gh release create "$$TAG" --title "$$TAG" ${releaseFlags}
+        fi`);
+  }
+
   return {
     buildkiteQueue: queue,
     buildkiteImage: image,
@@ -1677,6 +1857,30 @@ ${_bkAgents(queue)}    env:
     // line. (Prettier strips a blank line there, and the generated project
     // lints itself with `prettier --check`.)
     buildkiteSteps: steps.join("").replace(/^\n/, ""),
+  };
+}
+
+/**
+ * Builds the generated project's GitHub Release workflow.
+ *
+ * A tag is the release trigger: the workflow runs on `push: tags`, so there is
+ * no manual "draft a release" step and nothing reports on a branch — Buildkite
+ * stays the only validator. The release is created with the repository's own
+ * `GITHUB_TOKEN`, so there is no PAT to provision and nothing for a user to
+ * paste in.
+ *
+ * @param {Object} context - Template context (capabilities, configuration)
+ * @returns {Object} GitHub Release template data
+ */
+function getGithubReleaseTemplateData(context) {
+  const config = context.configuration?.["github-release"] || {};
+  const tagPrefix = config.tagPrefix || "v";
+  const generateNotes = config.generateNotes !== false;
+  return {
+    githubReleaseTagPrefix: tagPrefix,
+    githubReleaseNotesSource: generateNotes
+      ? "Generated by GitHub from the pull requests in the release, classified by `.github/release.yml` (`--generate-notes`)."
+      : "The annotated tag's message (`--notes-from-tag`), because `generateNotes` is disabled.",
   };
 }
 
@@ -1753,6 +1957,7 @@ export function getCapabilityTemplateData(capabilityId, context) {
     sonarcloud: getSonarCloudTemplateData,
     circleci: getCircleCiTemplateData,
     buildkite: getBuildkiteTemplateData,
+    "github-release": getGithubReleaseTemplateData,
     dependabot: getDependabotTemplateData,
     "docker-container": getDockerContainerTemplateData,
     doppler: (ctx) => {

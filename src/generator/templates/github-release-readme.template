@@ -1,0 +1,78 @@
+# Releasing {{projectName}}
+
+A release is cut by CI. There is no version file to bump, no tag to push by
+hand, and no release to draft: the version is derived from the last tag, the
+tag is created by the release step, and the release is published with notes and
+whatever artifacts the project packages.
+
+## Cutting a release
+
+1. Merge to the default branch. Buildkite builds and tests the commit.
+2. The release step runs automatically, exactly like the deploy step: it bumps
+   the version from the newest existing tag, creates
+   `{{githubReleaseTagPrefix}}<version>`, attaches the build's artifacts, and
+   publishes the GitHub Release.
+
+Watch it under the repository's **Buildkite** build, not its Actions tab —
+there is no GitHub Actions workflow here.
+
+## What is in the release
+
+| Piece | Comes from |
+| ----- | ---------- |
+| Tag `{{githubReleaseTagPrefix}}<version>` | Created by the release step. The first release is `{{githubReleaseTagPrefix}}0.1.0`; after that it is a patch bump of the newest tag |
+| Release notes | {{githubReleaseNotesSource}} |
+| Assets | Uploaded by the build step as Buildkite artifacts, downloaded by the release step, and named by `scripts/release-artifacts.sh` |
+
+The release is created only after build and test passed **on that commit**, in
+that same build, because the release step depends on the build step. A release
+cannot exist for code that did not pass.
+
+## How the artifacts get from the build to the release
+
+Each Buildkite step runs in its own container, so the release step never sees
+the build step's working tree. It does not rebuild it either: the build step
+uploads its output (`artifact_paths:` in `.buildkite/pipeline.yml`) and the
+release step downloads those exact bytes back with
+`buildkite-agent artifact download`. One compile per commit, and the release
+attaches what the tests actually ran against.
+
+## Changing what is shipped
+
+Two places, depending on what you are changing.
+
+**Which files are carried between the steps** lives in `.buildkite/pipeline.yml`:
+the `artifact_paths:` list on the build step and the matching
+`artifact download` in the release step. That file is genproj's and is rewritten
+on every regeneration, so treat it as generated — change the project's saved
+configuration instead, or expect to re-apply the edit. `artifact_paths:`
+does not fail when a pattern matches nothing, so a build that outputs somewhere
+else releases notes only until the patterns are corrected.
+
+**What is attached to the release** is `scripts/release-artifacts.sh`, which is
+yours. It is seeded by genproj once and is never overwritten on regeneration (it
+lives under `scripts/`, which is app-owned). Edit it to change the artifact
+names, ship one file per platform, sign or notarise, or add a launcher manifest.
+It packages `dist/` by default, and produces no assets if there is nothing
+there.
+
+Asset **names** are a contract: anything fetching
+`releases/latest/download/<name>` depends on the exact string, so treat a name
+as frozen once something consumes it.
+
+## Prerequisites
+
+- A release-write token, resolved at run time and never stored in the
+  repository: with the `doppler` capability selected, the release step reads
+  `GITHUB_RELEASE_TOKEN` from the `common` Doppler project (`prd` config); the
+  agent forwards only `DOPPLER_TOKEN` into the container.
+- Without `doppler`, the step expects `GH_TOKEN` in the agent's environment —
+  the same fleet-side contract the deploy step uses for `CLOUDFLARE_*`.
+
+## What this does not do
+
+- **It is not a validator.** Buildkite is the only validator; the release step
+  reads that verdict rather than producing one of its own.
+- **It does not choose the version.** Versions are patch bumps from the last
+  tag, so there are no major/minor releases. Tag a version by hand once, and CI
+  will continue from there.

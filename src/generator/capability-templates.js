@@ -239,6 +239,23 @@ export const capabilityTemplates = {
       templateId: "buildkite-readme",
     },
   ],
+  "github-release": [
+    {
+      id: "github-release-notes",
+      filePath: ".github/release.yml",
+      templateId: "github-release-notes",
+    },
+    {
+      id: "github-release-readme",
+      filePath: "RELEASING.md",
+      templateId: "github-release-readme",
+    },
+    {
+      id: "github-release-artifacts",
+      filePath: "scripts/release-artifacts.sh",
+      templateId: "github-release-artifacts",
+    },
+  ],
   doppler: [
     {
       id: "doppler-yaml",

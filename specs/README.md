@@ -7,6 +7,7 @@ Design documents for this service, in the order they were written:
 | [`001-genproj`](001-genproj/spec.md)                                   | The service itself: catalog, generation, conflicts, the API contract (`contracts/api.yaml`). |
 | [`003-genproj-docker-container`](003-genproj-docker-container/spec.md) | The `docker-container` capability and its contract.                                          |
 | [`006-genproj-buildkite`](006-genproj-buildkite/spec.md)               | The `buildkite` capability and its contract.                                                 |
+| [`007-genproj-github-release`](007-genproj-github-release/spec.md)     | The `github-release` capability and its contract.                                            |
 
 They were written while the generator lived inside the front-end repository and
 moved here with the code. Read them as the reasoning behind the current shape,
