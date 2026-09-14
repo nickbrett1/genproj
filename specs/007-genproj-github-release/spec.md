@@ -19,16 +19,16 @@ The goal is narrow and mechanical: **merge to the default branch → CI builds, 
 
 Machine-readable contract: `contracts/github-release.capability.json`. Summary:
 
-| field                 | value                                                    |
-| --------------------- | -------------------------------------------------------- |
-| `id`                  | `github-release`                                         |
-| `category`            | `ci-cd`                                                  |
-| `dependencies`        | `["buildkite"]` — the release is a step in that pipeline |
-| `conflicts`           | `[]`                                                     |
-| `requiresAuth`        | `[]`                                                     |
-| `authServices`        | `[]`                                                     |
-| `externalServices`    | `[]` — no generation-time GitHub call is made (see §4)   |
-| `configurationSchema` | `tagPrefix`, `generateNotes`, `draft`, `prerelease`      |
+| field                 | value                                                                                           |
+| --------------------- | ----------------------------------------------------------------------------------------------- |
+| `id`                  | `github-release`                                                                                |
+| `category`            | `deployment` — it publishes an artifact, alongside `docker-container` and `cloudflare-wrangler` |
+| `dependencies`        | `["buildkite"]` — the release is a step in that pipeline                                        |
+| `conflicts`           | `[]`                                                                                            |
+| `requiresAuth`        | `[]`                                                                                            |
+| `authServices`        | `[]`                                                                                            |
+| `externalServices`    | `[]` — no generation-time GitHub call is made (see §4)                                          |
+| `configurationSchema` | `tagPrefix`, `generateNotes`, `draft`, `prerelease`                                             |
 
 The capability contributes no file of its own for the mechanism — the release _is_ pipeline content, produced by `getBuildkiteTemplateData`. It contributes three files that configure and document it:
 
@@ -156,7 +156,11 @@ The build step's `artifact_paths:` follow the language's usual output directory:
 
 ## 6. UI touchpoints
 
-`CapabilitySelector` renders from the catalog, so the capability appears with no UI code. The `ci-cd` category reads as CI-shaped; the entry's `description`/`benefits` state that this is a release mechanism that runs as a step in the Buildkite pipeline, not a second CI provider.
+`CapabilitySelector` renders from the catalog, so the capability appears with no UI code.
+
+It sits in **`deployment`**, next to the other capabilities whose output is a published build artifact: `docker-container` pushes an image to GHCR, `cloudflare-wrangler` pushes a Worker, and this pushes a GitHub Release. `ci-cd` was the first choice and is wrong for the picker — that heading is read as "which CI provider", and this capability is explicitly not one (it _requires_ `buildkite`). Grouping it with the deploy targets is also where someone looking for "how does this project ship?" will look.
+
+Two cosmetic gaps live in the client, not here: `CapabilitySelector` has hardcoded icon and colour maps keyed by capability id, so `github-release` falls back to a generic globe and grey until an entry is added.
 
 ---
 
