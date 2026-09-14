@@ -28,7 +28,7 @@ Machine-readable contract: `contracts/github-release.capability.json`. Summary:
 | `requiresAuth`        | `[]`                                                                                            |
 | `authServices`        | `[]`                                                                                            |
 | `externalServices`    | `[]` — no generation-time GitHub call is made (see §4)                                          |
-| `configurationSchema` | `tagPrefix`, `generateNotes`, `draft`, `prerelease`                                             |
+| `configurationSchema` | `tagPrefix` — the only knob; everything else about the release is fixed                         |
 
 The capability contributes no file of its own for the mechanism — the release _is_ pipeline content, produced by `getBuildkiteTemplateData`. It contributes three files that configure and document it:
 
@@ -102,16 +102,15 @@ The cost of that choice is the thing to watch: generation cannot _prove_ the rel
 
 ### The `gh release create` flag set
 
-The rendered command is assembled from the configuration:
+The rendered command is fixed:
 
-| configuration   | effect on the command                                                    |
-| --------------- | ------------------------------------------------------------------------ |
-| `generateNotes` | `--generate-notes` (default) or `--notes-from-tag`                       |
-| `draft`         | adds `--draft`                                                           |
-| `prerelease`    | adds `--prerelease`                                                      |
-| `tagPrefix`     | the tag prefix quoted in `RELEASING.md` and used for `<prefix>*` lookups |
+```
+gh release create "$TAG" --title "$TAG" --generate-notes --verify-tag [release/*]
+```
 
-`--notes-from-tag` is the non-interactive alternative to `--generate-notes`: `gh release create` opens an editor when given neither flag, which hangs in CI. There is deliberately no third "no notes" mode.
+Notes always come from the release's merged pull requests, classified by `.github/release.yml` (`--generate-notes`); the release is always published, never a draft and never flagged pre-release; `--verify-tag` fails the step if the tag was not created rather than publishing a release anchored to nothing. `--generate-notes` is also the flag that keeps the step non-interactive — `gh release create` opens an editor when given no notes flag, which hangs in CI.
+
+`generateNotes`, `draft` and `prerelease` were configuration parameters at first. They were removed because their defaults (`true`, `false`, `false`) suit every project genproj has generated: a project that wants a draft or a pre-release can re-expose them later. `tagPrefix` stays configurable because it is the one genuinely project-specific choice — it is quoted in `RELEASING.md` and used for the `<prefix>*` lookups that derive the next version.
 
 ### The artifact hand-off
 
@@ -132,12 +131,12 @@ The build step's `artifact_paths:` follow the language's usual output directory:
 `tests/generator/file-generator-github-release.test.js` asserts, against the rendered `.buildkite/pipeline.yml`:
 
 - the release step exists with `key: release`, `depends_on: - build` and `if: build.branch == "main"`;
-- it creates the tag (`git tag -a`, `git push origin "refs/tags/$TAG"`) and publishes (`gh release create`, `--generate-notes` by default, no `--draft`);
+- it creates the tag (`git tag -a`, `git push origin "refs/tags/$TAG"`) and publishes (`gh release create`, always `--generate-notes`, never `--draft`, `--prerelease` or `--notes-from-tag`);
 - it resolves the token at run time and never writes it to the repository;
 - the build step uploads `artifact_paths` and the release step downloads the same patterns, with `mount-buildkite-agent: true` so `buildkite-agent` is callable in the container;
 - the release step contains no `npm install`, `npm run build` or `cargo build` — the no-rebuild property, asserted by slicing the release step out of the file so the build step's own `npm run build` does not satisfy it;
 - the paths follow the language, and a language with no known output releases notes only;
-- a non-default configuration (`tagPrefix: "release-"`, `generateNotes: false`, `draft: true`, `prerelease: true`) renders correctly;
+- a non-default tag prefix (`tagPrefix: "release-"`) renders `<prefix>*` lookups correctly, while the release flags stay fixed;
 - without the capability, neither the step nor `artifact_paths` appears and the hook is not emitted.
 
 ### End-to-end verification
