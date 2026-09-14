@@ -1379,6 +1379,7 @@ function getBuildkiteTemplateData(context) {
   const hasLighthouse = caps.includes("lighthouse-ci");
   const hasWrangler = caps.includes("cloudflare-wrangler");
   const hasDockerContainer = caps.includes("docker-container");
+  const hasGithubRelease = caps.includes("github-release");
 
   const images = {
     node: "node:22-bookworm",
@@ -1667,6 +1668,128 @@ ${_bkAgents(queue)}    env:
 `);
   }
 
+  // --- release (github-release) --------------------------------------------
+  // The tag is created HERE, by CI, after the build step passed on this exact
+  // commit - so a release can only exist for code that was validated in the
+  // same build. Same shape as the deploy step (depends_on build, main only),
+  // with one addition: a block step. A release is a decision, so every merge
+  // must not cut one.
+  if (hasGithubRelease) {
+    const grConfig = context.configuration?.["github-release"] || {};
+    const tagPrefix = grConfig.tagPrefix || "v";
+    const releaseFlags = [
+      grConfig.generateNotes !== false
+        ? "--generate-notes"
+        : "--notes-from-tag",
+      ...(grConfig.draft === true ? ["--draft"] : []),
+      ...(grConfig.prerelease === true ? ["--prerelease"] : []),
+      "--verify-tag",
+    ].join(" ");
+    // The release step runs in its own container, so the build output is not
+    // there: mirror the deploy step and build it again. Same commit, same tree
+    // - the tests that gated this release ran on it a step earlier.
+    const releaseBuild =
+      language === "node"
+        ? `      - ${npmActivate}
+      - ${npmInstall}
+      - npm run build --if-present
+`
+        : language === "rust"
+          ? `      - cargo build --locked
+`
+          : "";
+    const releaseToken = hasDoppler
+      ? `      - |
+        if ! command -v doppler >/dev/null 2>&1; then
+          apt-get update && apt-get install -y --no-install-recommends curl ca-certificates
+          curl -Ls --tlsv1.2 --proto "=https" --retry 3 https://cli.doppler.com/install.sh | sh
+        fi
+      - |
+        # Resolved at run time, never stored in the repository and never in the
+        # agent's environment hook, where every job on the fleet could read it.
+        export GH_TOKEN="$$(doppler secrets get GITHUB_RELEASE_TOKEN --project common --config prd --plain)"
+        if [ -z "$$GH_TOKEN" ]; then
+          echo "GITHUB_RELEASE_TOKEN is missing from Doppler (common/prd) - cannot release." >&2
+          exit 1
+        fi
+`
+      : `      - |
+        # No doppler capability: the token has to come from the agent
+        # environment, the same fleet-side contract the deploy step uses for
+        # CLOUDFLARE_*. It needs Contents: read and write on this repository.
+        if [ -z "$$GH_TOKEN" ]; then
+          echo "GH_TOKEN is not set on the agent - cannot create a tag or a release." >&2
+          exit 1
+        fi
+`;
+
+    steps.push(`
+  - block: ":bookmark: Release?"
+    key: release_approval
+    depends_on:
+      - build
+    if: build.branch == "main"
+    prompt: |
+      Build and test passed for this commit. Unblock to cut a release: the
+      version is bumped from the newest tag, the tag is created, and
+      scripts/release-artifacts.sh packages what gets attached. Leave it
+      blocked to release nothing.
+
+  - label: ":bookmark: Release"
+    key: release
+    depends_on:
+      - release_approval
+${_bkAgents(queue)}    plugins:
+${_bkDockerPlugin(image, hasDoppler ? ["DOPPLER_TOKEN"] : ["GH_TOKEN"])}    commands:
+${releaseToken}      - |
+        # The version is a patch bump of the newest existing tag, so there is no
+        # version file to keep in sync and no bookkeeping to forget.
+        git fetch --quiet --force --tags
+        LATEST="$$(git tag --list '${tagPrefix}*' --sort=-v:refname | head -1)"
+        if [ -z "$$LATEST" ]; then
+          VERSION="0.1.0"
+        else
+          VERSION="$$(echo "$$LATEST" | sed -e 's/^${tagPrefix}//' | awk -F. '{printf "%d.%d.%d", $$1, $$2, $$3 + 1}')"
+        fi
+        TAG="${tagPrefix}$$VERSION"
+        # Retried or re-run builds must not fail on a tag that already exists.
+        if git ls-remote --exit-code --tags origin "refs/tags/$$TAG" >/dev/null 2>&1; then
+          echo "$$TAG already exists on origin - nothing to release."
+          exit 0
+        fi
+        echo "$$VERSION" > .release-version
+        echo "$$TAG" > .release-tag
+      - |
+        # The tag is pushed with the release token explicitly, so this does not
+        # depend on whatever credentials the agent happened to clone with. The
+        # helper keeps the token out of the remote URL, where it would end up in
+        # logs and in .git/config.
+        TAG="$$(cat .release-tag)"
+        git config user.name "genproj-release"
+        git config user.email "genproj-release@users.noreply.github.com"
+        git config --local credential.helper '!f() { echo username=x-access-token; echo password="$$GH_TOKEN"; }; f'
+        git tag -a "$$TAG" -m "Release $$TAG"
+        git push origin "refs/tags/$$TAG"
+      - |
+        rm -rf release && mkdir -p release
+${releaseBuild}      - |
+        VERSION="$$(cat .release-version)"
+        TAG="$$(cat .release-tag)"
+        if [ -f scripts/release-artifacts.sh ]; then
+          bash scripts/release-artifacts.sh "$$VERSION"
+        else
+          echo "No scripts/release-artifacts.sh - releasing notes only."
+        fi
+        # Uploaded in the create call so the release is never briefly visible
+        # without its assets - a launcher reading releases/latest/download/...
+        # must not race the upload.
+        if [ -n "$$(ls -A release)" ]; then
+          gh release create "$$TAG" --title "$$TAG" ${releaseFlags} release/*
+        else
+          gh release create "$$TAG" --title "$$TAG" ${releaseFlags}
+        fi`);
+  }
+
   return {
     buildkiteQueue: queue,
     buildkiteImage: image,
@@ -1694,35 +1817,13 @@ ${_bkAgents(queue)}    env:
  */
 function getGithubReleaseTemplateData(context) {
   const config = context.configuration?.["github-release"] || {};
-  const tagPattern = config.tagPattern || "v*";
-  // GitHub-generated notes are the default. The alternative is the annotated
-  // tag's message, which is the only non-interactive fallback: `gh release
-  // create` opens an editor when neither flag is given, and that hangs in CI.
+  const tagPrefix = config.tagPrefix || "v";
   const generateNotes = config.generateNotes !== false;
-  const draft = config.draft === true;
-  const prerelease = config.prerelease === true;
-
-  // One flag per line, each continued with a backslash, so a non-default
-  // combination stays legible in the rendered workflow.
-  const flags = [
-    '--title "$GITHUB_REF_NAME"',
-    generateNotes ? "--generate-notes" : "--notes-from-tag",
-    ...(draft ? ["--draft"] : []),
-    ...(prerelease ? ["--prerelease"] : []),
-    "--verify-tag",
-  ];
-  const githubReleaseCreateScript = [
-    'gh release create "$GITHUB_REF_NAME" \\',
-    ...flags.map(
-      (flag, index) => `  ${flag}${index === flags.length - 1 ? "" : " \\"}`,
-    ),
-  ]
-    .map((line) => `          ${line}`)
-    .join("\n");
-
   return {
-    githubReleaseTagPattern: tagPattern,
-    githubReleaseCreateScript,
+    githubReleaseTagPrefix: tagPrefix,
+    githubReleaseNotesSource: generateNotes
+      ? "Generated by GitHub from the pull requests in the release, classified by `.github/release.yml` (`--generate-notes`)."
+      : "The annotated tag's message (`--notes-from-tag`), because `generateNotes` is disabled.",
   };
 }
 

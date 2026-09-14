@@ -496,7 +496,7 @@
       },
       "vscodeExtensions": [],
       "benefits": [
-        "Runs on your own hardware — no per-minute metering",
+        "Runs on your own hardware \u2014 no per-minute metering",
         "No manual setup: the pipeline and its push webhook are provisioned for you",
         "Installs dependencies once per build rather than once per step"
       ],
@@ -506,11 +506,11 @@
     {
       "id": "github-release",
       "name": "GitHub Releases",
-      "description": "Publishes a GitHub Release when a version tag is pushed. The tag is the trigger, the generated workflow creates and publishes the release with notes, and the release is created with the repository's own token — there is no manual \"draft a release\" step and no PAT to provision. Independent of CI: Buildkite stays the only validator, and this workflow runs on tags only.",
+      "description": "Publishes a GitHub Release with attached artifacts when a version is cut. The release step lives in the Buildkite pipeline, so it runs only after build and test passed on that commit: the version is bumped from the last tag, the tag is created by CI, the artifacts named by the project's own scripts/release-artifacts.sh are attached, and the release is published with generated notes. No version bookkeeping, and no PAT for a human to paste in.",
       "category": "ci-cd",
       "selectedByDefault": false,
       "provides": [],
-      "dependencies": [],
+      "dependencies": ["buildkite"],
       "conflicts": [],
       "requiresAuth": [],
       "authServices": [],
@@ -518,34 +518,34 @@
       "configurationSchema": {
         "type": "object",
         "properties": {
-          "tagPattern": {
+          "tagPrefix": {
             "type": "string",
-            "default": "v*",
-            "description": "Git tag glob that triggers a release. The default publishes any tag starting with \"v\" (v1.2.3, v2.0.0-rc1)."
+            "default": "v",
+            "description": "Prefix for the tags CI creates: the release tag is <prefix><major>.<minor>.<patch>, starting at 0.1.0 and then a patch bump of the newest existing tag."
           },
           "generateNotes": {
             "type": "boolean",
             "default": true,
-            "description": "Build the release notes from the pull requests and commits in the release (--generate-notes), classified by .github/release.yml. Set to false to use the annotated tag's message as the notes instead."
+            "description": "Build the release notes from the merged pull requests in the release (--generate-notes), classified by .github/release.yml. Set false to use the annotated tag's message instead."
           },
           "draft": {
             "type": "boolean",
             "default": false,
-            "description": "Create the release as a draft rather than publishing it immediately, so it can be reviewed before it is visible. Set to false to publish on the tag."
+            "description": "Create the release as a draft rather than publishing it immediately. A draft is not offered as \"latest\", so a launcher that fetches releases/latest/download/<asset> will not see it."
           },
           "prerelease": {
             "type": "boolean",
             "default": false,
-            "description": "Mark every release as a pre-release: it is not offered as \"latest\" and not the default download."
+            "description": "Mark every release as a pre-release: not offered as \"latest\", not the default download."
           }
         }
       },
       "vscodeExtensions": [],
       "benefits": [
-        "A tag publishes the release — no manual release drafting",
-        "Release notes are generated from the merged pull requests",
-        "Uses the repository's own token; no PAT to provision or rotate",
-        "CI stays on Buildkite — the workflow runs on tags only"
+        "Cutting a version is one click - CI tags, packages and publishes",
+        "The release can only exist for a commit that passed build and test in Buildkite",
+        "Versions bump from the last tag; no version file to keep in sync",
+        "Artifacts are named by scripts/release-artifacts.sh, which regeneration never overwrites"
       ],
       "links": [],
       "website": "https://docs.github.com/en/repositories/releasing-projects-on-github/managing-releases-in-a-repository"
@@ -590,7 +590,7 @@
             "type": "string",
             "enum": ["common", "new"],
             "default": "common",
-            "description": "Where this repo's secrets live: \"common\" reuses the shared common project (default — no new Doppler project is created); \"new\" creates a dedicated Doppler project for this repo."
+            "description": "Where this repo's secrets live: \"common\" reuses the shared common project (default \u2014 no new Doppler project is created); \"new\" creates a dedicated Doppler project for this repo."
           }
         }
       },
@@ -693,7 +693,7 @@
     {
       "id": "code-quality",
       "name": "ESLint + SonarJS",
-      "description": "Adds fast, zero-configuration code quality linting using eslint-plugin-sonarjs and eslint-plugin-security. Runs in ~5–10s vs 1–2 minutes for SonarCloud.",
+      "description": "Adds fast, zero-configuration code quality linting using eslint-plugin-sonarjs and eslint-plugin-security. Runs in ~5\u201310s vs 1\u20132 minutes for SonarCloud.",
       "category": "code-quality",
       "selectedByDefault": false,
       "provides": [],
@@ -882,7 +882,7 @@
           },
           "publishPort": {
             "type": "string",
-            "description": "Compose port binding, e.g. \"3000:3000\" or \"127.0.0.1:3000:3000\" for a private (Tailscale-only) service. The left-hand side is the published HOST port — Homepage href/widget URLs use it, so \"127.0.0.1:3002:3000\" yields http://<hostname>:3002/.",
+            "description": "Compose port binding, e.g. \"3000:3000\" or \"127.0.0.1:3000:3000\" for a private (Tailscale-only) service. The left-hand side is the published HOST port \u2014 Homepage href/widget URLs use it, so \"127.0.0.1:3002:3000\" yields http://<hostname>:3002/.",
             "default": "3000:3000"
           },
           "baseImage": {
@@ -979,13 +979,13 @@
           "armBuilds": {
             "type": "boolean",
             "default": false,
-            "description": "Also build and publish linux/arm64 images. Defaults to false (x86_64 / linux/amd64 only) — set true when a deploy host (e.g. an ARM NAS or Raspberry Pi) needs arm64 images."
+            "description": "Also build and publish linux/arm64 images. Defaults to false (x86_64 / linux/amd64 only) \u2014 set true when a deploy host (e.g. an ARM NAS or Raspberry Pi) needs arm64 images."
           }
         }
       },
       "vscodeExtensions": [],
       "benefits": [
-        "Deploy to any Docker host (Synology, Unraid, TrueNAS, VPS) — not tied to a cloud vendor",
+        "Deploy to any Docker host (Synology, Unraid, TrueNAS, VPS) \u2014 not tied to a cloud vendor",
         "Auto-updates via Watchtower polling the registry",
         "Surfaced in Homepage dashboard with a health widget",
         "Full local/private control of the container"

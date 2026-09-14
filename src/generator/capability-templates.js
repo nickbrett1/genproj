@@ -241,11 +241,6 @@ export const capabilityTemplates = {
   ],
   "github-release": [
     {
-      id: "github-release-workflow",
-      filePath: ".github/workflows/release.yml",
-      templateId: "github-release-workflow",
-    },
-    {
       id: "github-release-notes",
       filePath: ".github/release.yml",
       templateId: "github-release-notes",
@@ -254,6 +249,11 @@ export const capabilityTemplates = {
       id: "github-release-readme",
       filePath: "RELEASING.md",
       templateId: "github-release-readme",
+    },
+    {
+      id: "github-release-artifacts",
+      filePath: "scripts/release-artifacts.sh",
+      templateId: "github-release-artifacts",
     },
   ],
   doppler: [

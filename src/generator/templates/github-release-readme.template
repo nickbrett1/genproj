@@ -1,36 +1,59 @@
 # Releasing {{projectName}}
 
-A tag is the release trigger. Pushing a tag that matches
-`{{githubReleaseTagPattern}}` runs the
-[release workflow](.github/workflows/release.yml), which publishes a GitHub
-Release for that tag. There is no manual "draft a release" step.
+A release is cut by CI. There is no version file to bump, no tag to push by
+hand, and no release to draft: the version is derived from the last tag, the
+tag is created by the release step, and the release is published with notes and
+whatever artifacts the project packages.
 
 ## Cutting a release
 
-1. Make sure the default branch is green in Buildkite.
-2. Tag the commit and push the tag:
+1. Merge to the default branch. Buildkite builds and tests the commit.
+2. When that build is green, it stops at a **block step labelled "Release?"**.
+   Unblock it to cut the release, or leave it blocked and the build simply ends
+   without releasing. Nothing is published until someone unblocks it.
+3. The release step then: bumps the version from the newest existing tag,
+   creates `{{githubReleaseTagPrefix}}<version>`, packages the artifacts,
+   and publishes the GitHub Release.
 
-   ```sh
-   git tag v1.2.3
-   git push origin v1.2.3
-   ```
+Watch it under the repository's **Buildkite** build, not its Actions tab —
+there is no GitHub Actions workflow here.
 
-3. The release workflow runs on the tag and publishes the Release. Watch it
-   under the repository's **Actions** tab.
+## What is in the release
 
-## How it works
+| Piece | Comes from |
+| ----- | ---------- |
+| Tag `{{githubReleaseTagPrefix}}<version>` | Created by the release step. The first release is `{{githubReleaseTagPrefix}}0.1.0`; after that it is a patch bump of the newest tag |
+| Release notes | {{githubReleaseNotesSource}} |
+| Assets | Whatever `scripts/release-artifacts.sh` writes into `release/` |
 
-- The workflow is triggered by `push` on tags matching
-  `{{githubReleaseTagPattern}}` — never by a branch push.
-- The Release is created with the run's own `GITHUB_TOKEN`
-  (`permissions: contents: write`). There is no PAT to provision.
-- Notes are generated from the pull requests and commits in the release,
-  classified by [`.github/release.yml`](.github/release.yml).
+The release is created only after build and test passed **on that commit**, in
+that same build, because the release step depends on the build step. A release
+cannot exist for code that did not pass.
+
+## Changing what is shipped
+
+`scripts/release-artifacts.sh` is yours. It is seeded by genproj once and is
+never overwritten on regeneration (it lives under `scripts/`, which is
+app-owned). Edit it to change the artifact names, ship one file per platform,
+sign or notarise, or add a launcher manifest. It produces no assets by default.
+
+Asset **names** are a contract: anything fetching
+`releases/latest/download/<name>` depends on the exact string, so treat a name
+as frozen once something consumes it.
+
+## Prerequisites
+
+- A release-write token, resolved at run time and never stored in the
+  repository: with the `doppler` capability selected, the release step reads
+  `GITHUB_RELEASE_TOKEN` from the `common` Doppler project (`prd` config); the
+  agent forwards only `DOPPLER_TOKEN` into the container.
+- Without `doppler`, the step expects `GH_TOKEN` in the agent's environment —
+  the same fleet-side contract the deploy step uses for `CLOUDFLARE_*`.
 
 ## What this does not do
 
-- **It is not a validator.** Buildkite is the only validator for pushes and
-  pull requests; this workflow runs on tags only, so it can never report on a
-  branch.
-- **It does not build or attach release assets.** The release is a tag and its
-  notes. Packaging artifacts is a separate concern.
+- **It is not a validator.** Buildkite is the only validator; the release step
+  reads that verdict rather than producing one of its own.
+- **It does not choose the version.** Versions are patch bumps from the last
+  tag, so there are no major/minor releases. Tag a version by hand once, and CI
+  will continue from there.

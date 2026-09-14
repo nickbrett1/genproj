@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+#
+# Produces the files that get attached to the GitHub Release.
+#
+# genproj seeds this file once; after that it is yours. `scripts/` is app-owned,
+# so regeneration never overwrites it — unlike .buildkite/pipeline.yml, which is
+# genproj's and is rewritten on every regeneration.
+#
+# Contract: write the files to attach into $OUT_DIR (default: release/). The
+# release step uploads every file it finds there and nothing else. Producing no
+# files is valid: the release then carries notes and no assets.
+#
+# Called as: bash scripts/release-artifacts.sh <version>
+# The version is the tag without its prefix, e.g. "1.2.4" for tag v1.2.4.
+set -euo pipefail
+
+VERSION="${1:?usage: release-artifacts.sh <version>}"
+OUT_DIR="${OUT_DIR:-release}"
+
+rm -rf "$OUT_DIR"
+mkdir -p "$OUT_DIR"
+
+# --- default: ship whatever the build produced -------------------------------
+# Asset names are a contract with whoever consumes them: something fetching
+# releases/latest/download/<name> depends on the exact string, so treat a name
+# as frozen once anything relies on it.
+if [ -d dist ]; then
+  tar -czf "$OUT_DIR/{{projectName}}-$VERSION.tar.gz" -C dist .
+  echo "packaged dist/ as {{projectName}}-$VERSION.tar.gz"
+else
+  echo "No dist/ directory, so this release carries notes and no assets." >&2
+  echo "Edit scripts/release-artifacts.sh once this project builds something to ship." >&2
+fi
+
+# --- one artifact per platform, when you need it -----------------------------
+# Multi-platform, signing, installers and launcher manifests all belong here,
+# one file per target, each named explicitly, e.g.
+#
+#   for target in linux-arm64 darwin-arm64; do
+#     tar -czf "$OUT_DIR/{{projectName}}-$VERSION-$target.tar.gz" -C "build/$target" .
+#   done
+#
+# If you would rather attach the *exact* bytes the build step tested, upload
+# them from that step (Buildkite's `artifact_paths:`) and download them here
+# with `buildkite-agent artifact download` instead of packaging again.

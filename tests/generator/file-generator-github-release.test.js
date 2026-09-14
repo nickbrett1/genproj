@@ -7,56 +7,67 @@ const generate = (capabilities, configuration = {}) =>
 const byPath = (files, filePath) =>
   files.find((file) => file.filePath === filePath);
 
+const pipeline = (files) => byPath(files, ".buildkite/pipeline.yml").content;
+
 describe("GitHub release file generation", () => {
-  it("emits the workflow, the notes config and the README by default", async () => {
+  it("emits the notes config, the README and the artifact hook", async () => {
     const files = await generate(["github-release", "devcontainer-node"], {});
 
-    const workflow = byPath(files, ".github/workflows/release.yml");
-    expect(workflow).toBeDefined();
     expect(byPath(files, ".github/release.yml")).toBeDefined();
     expect(byPath(files, "RELEASING.md")).toBeDefined();
+    expect(byPath(files, "scripts/release-artifacts.sh")).toBeDefined();
+    // The release is a CI step, not a GitHub Actions workflow: there is no
+    // second CI system in the repository.
+    expect(byPath(files, ".github/workflows/release.yml")).toBeUndefined();
+  });
 
-    // A tag is the trigger; nothing else reaches this workflow.
-    expect(workflow.content).toContain("tags:");
-    expect(workflow.content).toContain('- "v*"');
-    // The release is created with the run's own token, not a PAT.
-    expect(workflow.content).toContain("contents: write");
-    expect(workflow.content).toContain("${{ github.token }}");
-    expect(workflow.content).toContain('gh release create "$GITHUB_REF_NAME"');
-    expect(workflow.content).toContain("--generate-notes");
-    expect(workflow.content).not.toContain("--draft");
-    expect(workflow.content).not.toContain("--prerelease");
+  it("puts the release in the Buildkite pipeline, gated on the build", async () => {
+    const files = await generate(
+      ["buildkite", "github-release", "doppler"],
+      {},
+    );
+    const yaml = pipeline(files);
+
+    // The tag is created by CI, after build+test passed on that commit, and
+    // only on the default branch.
+    expect(yaml).toContain("key: release_approval");
+    expect(yaml).toContain("key: release");
+    expect(yaml).toContain('if: build.branch == "main"');
+    expect(yaml).toContain("git tag -a");
+    expect(yaml).toContain('git push origin "refs/tags/$$TAG"');
+    expect(yaml).toContain("gh release create");
+    expect(yaml).toContain("--generate-notes");
+    expect(yaml).not.toContain("--draft");
+    // The token is resolved at run time, never stored in the repository.
+    expect(yaml).toContain(
+      "doppler secrets get GITHUB_RELEASE_TOKEN --project common --config prd",
+    );
+    // The artifact hook is what names what gets attached.
+    expect(yaml).toContain("bash scripts/release-artifacts.sh");
   });
 
   it("renders a non-default configuration", async () => {
-    const files = await generate(["github-release", "devcontainer-node"], {
+    const files = await generate(["buildkite", "github-release", "doppler"], {
       "github-release": {
-        tagPattern: "release-*",
+        tagPrefix: "release-",
         generateNotes: false,
         draft: true,
         prerelease: true,
       },
     });
+    const yaml = pipeline(files);
 
-    const workflow = byPath(files, ".github/workflows/release.yml");
-    expect(workflow.content).toContain('- "release-*"');
-    expect(workflow.content).not.toContain('- "v*"');
-    // Notes fall back to the annotated tag's message...
-    expect(workflow.content).toContain("--notes-from-tag");
-    expect(workflow.content).not.toContain("--generate-notes");
-    // ...and the release is a draft pre-release.
-    expect(workflow.content).toContain("--draft");
-    expect(workflow.content).toContain("--prerelease");
-
-    const readme = byPath(files, "RELEASING.md");
-    expect(readme.content).toContain("`release-*`");
+    expect(yaml).toContain("git tag --list 'release-*'");
+    expect(yaml).toContain("--notes-from-tag");
+    expect(yaml).toContain("--draft");
+    expect(yaml).toContain("--prerelease");
+    expect(pipeline(files)).not.toContain("--generate-notes");
   });
 
-  it("generates nothing when the capability is not selected", async () => {
-    const files = await generate(["devcontainer-node"], {});
+  it("leaves the pipeline alone without the capability", async () => {
+    const files = await generate(["buildkite", "doppler"], {});
 
-    expect(byPath(files, ".github/workflows/release.yml")).toBeUndefined();
-    expect(byPath(files, ".github/release.yml")).toBeUndefined();
-    expect(byPath(files, "RELEASING.md")).toBeUndefined();
+    expect(pipeline(files)).not.toContain("key: release");
+    expect(byPath(files, "scripts/release-artifacts.sh")).toBeUndefined();
   });
 });
