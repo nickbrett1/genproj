@@ -16,49 +16,46 @@ vi.mock("../src/generator/project-generator.js", () => ({
 vi.mock("agents/mcp", () => ({ createMcpHandler: vi.fn() }));
 
 import worker, { handleRequest } from "../src/index.js";
-import { catalogVersion, capabilities } from "../src/catalog/index.js";
+import { capabilities } from "../src/catalog/index.js";
 import { ProjectGeneratorService } from "../src/generator/project-generator.js";
 
 const get = (path, init) =>
   handleRequest(new Request(`https://genproj.example${path}`, init));
 
 describe("GET /healthz", () => {
-  it("reports liveness and the catalog version", async () => {
+  it("reports liveness", async () => {
     const response = get("/healthz");
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
       status: "ok",
       service: "genproj",
       version: "1.0.0",
-      catalogVersion,
       capabilities: capabilities.length,
     });
   });
 });
 
 describe("GET /v1/version", () => {
-  it("reports the service and catalog versions", async () => {
+  it("reports the service version", async () => {
     const response = get("/v1/version");
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
       service: "genproj",
       version: "1.0.0",
-      catalogVersion,
       capabilities: capabilities.length,
     });
   });
 });
 
 describe("GET /v1/catalog", () => {
-  it("serves the public catalog with an ETag and a shared cache", async () => {
+  it("serves the public catalog with a shared cache", async () => {
     const response = get("/v1/catalog");
     expect(response.status).toBe(200);
-    expect(response.headers.get("etag")).toBe(`"${catalogVersion}"`);
     expect(response.headers.get("cache-control")).toBe("public, max-age=300");
     expect(response.headers.get("access-control-allow-origin")).toBe("*");
+    expect(response.headers.get("etag")).toBeNull();
 
     const body = await response.json();
-    expect(body.catalogVersion).toBe(catalogVersion);
     expect(body.count).toBe(capabilities.length);
     expect(body.capabilities.map((capability) => capability.id)).toEqual(
       capabilities.map((capability) => capability.id),
@@ -69,25 +66,10 @@ describe("GET /v1/catalog", () => {
     expect(get("/v1/catalog").status).toBe(200);
   });
 
-  it("answers 304 when the client already has this version", async () => {
-    const response = get("/v1/catalog", {
-      headers: { "if-none-match": `"${catalogVersion}"` },
-    });
-    expect(response.status).toBe(304);
-    expect(await response.text()).toBe("");
-  });
-
-  it("serves the body for an out-of-date client", async () => {
-    const response = get("/v1/catalog", {
-      headers: { "if-none-match": '"stale"' },
-    });
-    expect(response.status).toBe(200);
-  });
-
-  it("serves the JSON Schema at a distinct ETag", async () => {
+  it("serves the JSON Schema", async () => {
     const response = get("/v1/catalog/schema.json");
     expect(response.status).toBe(200);
-    expect(response.headers.get("etag")).toBe(`"schema-${catalogVersion}"`);
+    expect(response.headers.get("cache-control")).toBe("public, max-age=300");
 
     const schema = await response.json();
     expect(schema.title).toBe("genproj capability catalog");

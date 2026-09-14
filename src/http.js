@@ -12,8 +12,7 @@ const JSON_TYPE = "application/json; charset=utf-8";
 export const CORS_HEADERS = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET, POST, OPTIONS",
-  "access-control-allow-headers": "content-type, if-none-match",
-  "expose-headers": "etag",
+  "access-control-allow-headers": "content-type",
 };
 
 /**
@@ -37,54 +36,6 @@ export function json(body, init = {}) {
  */
 export function error(status, message) {
   return json({ error: message, status, service: SERVICE }, { status });
-}
-
-/**
- * Strips a weak-validator prefix so `W/"x"` and `"x"` compare equal.
- * @param {string | null} value An If-None-Match header value.
- * @returns {string | null} The tag without its weak prefix.
- */
-function normaliseTag(value) {
-  return value?.trim().replace(/^W\//, "") ?? null;
-}
-
-/**
- * Evaluates an If-None-Match header against an ETag.
- * @param {string | null} header The If-None-Match header value.
- * @param {string} etag The current ETag, quoted.
- * @returns {boolean} True when the client's copy is still current.
- */
-export function matchesEtag(header, etag) {
-  if (!header) {
-    return false;
-  }
-  return header
-    .split(",")
-    .map((candidate) => normaliseTag(candidate))
-    .some((candidate) => candidate === "*" || candidate === etag);
-}
-
-/**
- * Serves a payload with a strong ETag and a short shared cache, answering 304
- * to matching conditional requests.
- * @param {Request} request Incoming request.
- * @param {unknown} body The payload.
- * @param {{ etag: string, maxAge?: number }} options ETag and cache lifetime.
- * @returns {Response} 200 with the body, or 304 without it.
- */
-export function jsonWithEtag(request, body, { etag, maxAge = 300 }) {
-  const quoted = `"${etag}"`;
-  const headers = {
-    etag: quoted,
-    "cache-control": `public, max-age=${maxAge}`,
-  };
-  if (matchesEtag(request.headers.get("if-none-match"), quoted)) {
-    return new Response(null, {
-      status: 304,
-      headers: { ...headers, ...CORS_HEADERS },
-    });
-  }
-  return json(body, { headers });
 }
 
 /**

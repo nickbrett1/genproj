@@ -10,24 +10,25 @@ that catalog into files and side effects, and is a service, not a library.
 
 ## Endpoints
 
-| Route                         | Auth   | Description                                                            |
-| ----------------------------- | ------ | ---------------------------------------------------------------------- |
-| `GET /healthz`                | none   | Liveness, service version and the catalog version.                     |
-| `GET /v1/catalog`             | none   | The capability catalog. `ETag` + `Cache-Control: public, max-age=300`. |
-| `GET /v1/catalog/schema.json` | none   | JSON Schema for the catalog.                                           |
-| `GET /v1/version`             | none   | Service version and catalog version.                                   |
-| `POST /v1/preview`            | none   | Preview the files a configuration would generate.                      |
-| `POST /v1/generate`           | secret | Create or update a repository.                                         |
-| `POST /v1/conflicts`          | secret | Report files that would conflict with existing ones.                   |
-| `POST /mcp`                   | PAT    | MCP server: `list_genproj_capabilities`, `generate_project`.           |
+| Route                         | Auth   | Description                                                   |
+| ----------------------------- | ------ | ------------------------------------------------------------- |
+| `GET /healthz`                | none   | Liveness and the service version.                             |
+| `GET /v1/catalog`             | none   | The capability catalog. `Cache-Control: public, max-age=300`. |
+| `GET /v1/catalog/schema.json` | none   | JSON Schema for the catalog.                                  |
+| `GET /v1/version`             | none   | Service version.                                              |
+| `POST /v1/preview`            | none   | Preview the files a configuration would generate.             |
+| `POST /v1/generate`           | secret | Create or update a repository.                                |
+| `POST /v1/conflicts`          | secret | Report files that would conflict with existing ones.          |
+| `POST /mcp`                   | PAT    | MCP server: `list_genproj_capabilities`, `generate_project`.  |
 
 The catalog is deliberately public: it is what a UI renders before anyone signs
 in. Preview is public too — it renders the same file set generation would
 produce without touching GitHub or any external service.
 
-`catalogVersion` is a content hash of the capability list, so a client can tell
-whether its cached copy is stale. `/v1/catalog` returns it as a strong `ETag` and
-answers `304 Not Modified` to `If-None-Match`.
+The catalog is bundled into the Worker, so changing it means a deploy.
+`/v1/catalog` is served with a short shared cache and no validator: a client that
+wants to know whether its copy is stale re-fetches it. There is no catalog
+version to compare against.
 
 ## How callers are trusted
 

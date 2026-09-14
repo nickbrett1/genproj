@@ -14,9 +14,6 @@
  *   - `authServices`      — previously a bespoke auth-service lookup map.
  *   - `provides`          — previously a hardcoded devcontainer→SonarCloud
  *                           language mapping (`getSonarCloudLanguageForDevcontainer`).
- *
- * `catalogVersion` is a content hash of the capability list, so clients can
- * detect drift with a cheap comparison (and the endpoint serves it as an ETag).
  */
 
 import catalog from "./catalog.json" with { type: "json" };
@@ -24,9 +21,6 @@ import catalog from "./catalog.json" with { type: "json" };
 /** @typedef {typeof catalog.capabilities[number]} Capability */
 
 export const capabilities = catalog.capabilities;
-
-/** Content hash of the capability list. Changes whenever the catalog changes. */
-export const catalogVersion = catalog.catalogVersion;
 
 /** The catalog as served over HTTP. */
 export function buildCatalog() {
