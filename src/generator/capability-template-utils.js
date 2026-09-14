@@ -1333,9 +1333,15 @@ function _bkAgents(queue) {
  * @param {string} image - Container image
  * @param {string[]} [envNames] - Environment variable names to forward
  * @param {string} [commandYaml] - Optional `command:` in exec form
+ * @param {string} [extraYaml] - Additional plugin options (e.g. mount-buildkite-agent)
  * @returns {string} YAML fragment
  */
-function _bkDockerPlugin(image, envNames = [], commandYaml = "") {
+function _bkDockerPlugin(
+  image,
+  envNames = [],
+  commandYaml = "",
+  extraYaml = "",
+) {
   const envBlock = envNames.length
     ? `          environment:
 ${envNames.map((name) => `            - ${name}`).join("\n")}
@@ -1348,7 +1354,7 @@ ${envNames.map((name) => `            - ${name}`).join("\n")}
           # a warning, and native modules built for the wrong architecture).
           platform: linux/arm64
           workdir: /workdir
-${envBlock}${commandYaml}`;
+${extraYaml}${envBlock}${commandYaml}`;
 }
 
 /**
@@ -1380,6 +1386,22 @@ function getBuildkiteTemplateData(context) {
   const hasWrangler = caps.includes("cloudflare-wrangler");
   const hasDockerContainer = caps.includes("docker-container");
   const hasGithubRelease = caps.includes("github-release");
+
+  // What the build step hands to the release step. Buildkite artifacts are the
+  // channel one step reads another step's output through, and using them is
+  // what lets the release step attach the exact bytes this build compiled and
+  // tested rather than compiling them a second time. The paths are the one
+  // project-specific detail in the mechanism: they follow the language's usual
+  // output directory, and `buildkite-agent artifact upload` does not fail when
+  // a pattern matches nothing, so a build that outputs elsewhere costs nothing
+  // until it is corrected. Change them here and the matching download in the
+  // release step together.
+  const releaseArtifactPaths =
+    language === "node"
+      ? ["dist/**"]
+      : language === "rust"
+        ? ["target/release/**"]
+        : [];
 
   const images = {
     node: "node:22-bookworm",
@@ -1476,10 +1498,20 @@ ${_bkDockerPlugin(
   const buildCommands = commands[language]
     .map((c) => `      - ${c}`)
     .join("\n");
+  // A release is the only thing that reads this step's output, so the upload
+  // exists only when the capability is selected.
+  const buildArtifacts =
+    hasGithubRelease && releaseArtifactPaths.length
+      ? `    # Uploaded so the release step can attach what this build produced and
+    # tested instead of rebuilding it.
+    artifact_paths:
+${releaseArtifactPaths.map((p) => `      - "${p}"`).join("\n")}
+`
+      : "";
   steps.push(`
   - label: ":hammer: Build and test (${language})"
     key: build
-${hasGitGuardian ? "    depends_on:\n      - secret_scan\n" : ""}${_bkAgents(queue)}    plugins:
+${hasGitGuardian ? "    depends_on:\n      - secret_scan\n" : ""}${_bkAgents(queue)}${buildArtifacts}    plugins:
 ${_bkDockerPlugin(image)}    commands:
 ${buildCommands}
 `);
@@ -1684,18 +1716,48 @@ ${_bkAgents(queue)}    env:
       "--verify-tag",
     ].join(" ");
     // The release step runs in its own container, so the build output is not
-    // there: mirror the deploy step and build it again. Same commit, same tree
-    // - the tests that gated this release ran on it a step earlier.
-    const releaseBuild =
-      language === "node"
-        ? `      - ${npmActivate}
-      - ${npmInstall}
-      - npm run build --if-present
+    // there - but it does not have to be rebuilt either. The build step
+    // uploaded what it compiled and tested, and this step fetches those exact
+    // bytes back: one build per commit, and the release attaches what the tests
+    // actually ran against rather than a second compile of the same tree.
+    //
+    // `artifact download` exits non-zero when nothing matches, which is the
+    // normal case for a project whose build outputs somewhere other than the
+    // default, so a miss is reported as "notes only" rather than failing the
+    // release.
+    const releaseArtifacts = releaseArtifactPaths.length
+      ? `      - |
+        # The build step uploaded what it compiled and the tests ran against;
+        # this fetches those exact bytes back rather than rebuilding the tree.
+${releaseArtifactPaths
+  .map(
+    (pattern) =>
+      `        buildkite-agent artifact download "${pattern}" . || echo "No ${pattern} artifacts to attach - the release will carry notes only."`,
+  )
+  .join("\n")}
 `
-        : language === "rust"
-          ? `      - cargo build --locked
-`
-          : "";
+      : `      - |
+        # This language has no default artifact paths, so there is nothing to
+        # fetch. Add artifact_paths to the build step and a download here to
+        # ship files with the release.
+        echo "No artifact paths configured - the release will carry notes only."
+`;
+    // The generated language images ship the toolchain, not the GitHub CLI, and
+    // `gh release create` is how the release is published, so it is installed
+    // on demand. The official apt repository is used rather than a pinned
+    // tarball because it is the one source that keeps working as the image
+    // moves.
+    const installGh = `      - |
+        if ! command -v gh >/dev/null 2>&1; then
+          apt-get update
+          apt-get install -y --no-install-recommends curl ca-certificates gnupg
+          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/githubcli-archive-keyring.gpg
+          chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
+          echo "deb [arch=$$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list
+          apt-get update
+          apt-get install -y --no-install-recommends gh
+        fi
+`;
     const releaseToken = hasDoppler
       ? `      - |
         if ! command -v doppler >/dev/null 2>&1; then
@@ -1722,10 +1784,23 @@ ${_bkAgents(queue)}    env:
 `;
 
     steps.push(`
-
+  - label: ":bookmark: Release"
+    key: release
+    depends_on:
+      - build
+    if: build.branch == "main"
 ${_bkAgents(queue)}    plugins:
-${_bkDockerPlugin(image, hasDoppler ? ["DOPPLER_TOKEN"] : ["GH_TOKEN"])}    commands:
-${releaseToken}      - |
+${_bkDockerPlugin(
+  image,
+  hasDoppler ? ["DOPPLER_TOKEN"] : ["GH_TOKEN"],
+  "",
+  `          # buildkite-agent is a host binary and artifact download is a
+          # buildkite-agent call: without this mount it is not in the container
+          # and the step has no way to read what the build step uploaded.
+          mount-buildkite-agent: true
+`,
+)}    commands:
+${installGh}${releaseToken}      - |
         # The version is a patch bump of the newest existing tag, so there is no
         # version file to keep in sync and no bookkeeping to forget.
         git fetch --quiet --force --tags
@@ -1754,9 +1829,7 @@ ${releaseToken}      - |
         git config --local credential.helper '!f() { echo username=x-access-token; echo password="$$GH_TOKEN"; }; f'
         git tag -a "$$TAG" -m "Release $$TAG"
         git push origin "refs/tags/$$TAG"
-      - |
-        rm -rf release && mkdir -p release
-${releaseBuild}      - |
+${releaseArtifacts}      - |
         VERSION="$$(cat .release-version)"
         TAG="$$(cat .release-tag)"
         if [ -f scripts/release-artifacts.sh ]; then

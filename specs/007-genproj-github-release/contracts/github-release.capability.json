@@ -1,69 +1,78 @@
 {
   "id": "github-release",
   "name": "GitHub Releases",
-  "description": "Publishes a GitHub Release when a version tag is pushed. The tag is the trigger, the generated workflow creates and publishes the release with notes, and the release is created with the repository's own token — no manual \"draft a release\" step and no PAT to provision. Independent of CI: Buildkite stays the only validator, and this workflow runs on tags only.",
+  "description": "Publishes a GitHub Release with attached artifacts when a version is cut. The release step lives in the Buildkite pipeline, so it runs only after build and test passed on that commit: the version is bumped from the last tag, the tag is created by CI, the artifacts named by the project's own scripts/release-artifacts.sh are attached, and the release is published with generated notes. No version bookkeeping, and no PAT for a human to paste in.",
   "category": "ci-cd",
-  "dependencies": [],
+  "dependencies": ["buildkite"],
   "conflicts": [],
   "requiresAuth": [],
+  "authServices": [],
+  "externalServices": [],
   "configurationSchema": {
     "type": "object",
     "properties": {
-      "tagPattern": {
+      "tagPrefix": {
         "type": "string",
-        "default": "v*",
-        "description": "Git tag glob that triggers a release. The default publishes any tag starting with \"v\" (v1.2.3, v2.0.0-rc1)."
+        "default": "v",
+        "description": "Prefix for the tags CI creates: the release tag is <prefix><major>.<minor>.<patch>, starting at 0.1.0 and then a patch bump of the newest existing tag."
       },
       "generateNotes": {
         "type": "boolean",
         "default": true,
-        "description": "Build the release notes from the pull requests and commits in the release (--generate-notes), classified by .github/release.yml. Set to false to use the annotated tag's message as the notes instead."
+        "description": "Build the release notes from the merged pull requests in the release (--generate-notes), classified by .github/release.yml. Set false to use the annotated tag's message instead."
       },
       "draft": {
         "type": "boolean",
         "default": false,
-        "description": "Create the release as a draft rather than publishing it immediately, so it can be reviewed before it is visible. Set to false to publish on the tag."
+        "description": "Create the release as a draft rather than publishing it immediately. A draft is not offered as \"latest\", so a launcher that fetches releases/latest/download/<asset> will not see it."
       },
       "prerelease": {
         "type": "boolean",
         "default": false,
-        "description": "Mark every release as a pre-release: it is not offered as \"latest\" and not the default download."
+        "description": "Mark every release as a pre-release: not offered as \"latest\", not the default download."
       }
     }
   },
   "benefits": [
-    "A tag publishes the release — no manual release drafting",
-    "Release notes are generated from the merged pull requests",
-    "Uses the repository's own token; no PAT to provision or rotate",
-    "CI stays on Buildkite — the workflow runs on tags only"
+    "Cutting a version is one click - CI tags, packages and publishes",
+    "The release can only exist for a commit that passed build and test in Buildkite",
+    "Versions bump from the last tag; no version file to keep in sync",
+    "Artifacts are named by scripts/release-artifacts.sh, which regeneration never overwrites"
   ],
-  "templates": [
-    {
-      "id": "github-release-workflow",
-      "filePath": ".github/workflows/release.yml",
-      "templateId": "github-release-workflow"
-    },
+  "links": [],
+  "website": "https://docs.github.com/en/repositories/releasing-projects-on-github/managing-releases-in-a-repository",
+  "emittedFiles": [
     {
       "id": "github-release-notes",
       "filePath": ".github/release.yml",
-      "templateId": "github-release-notes"
+      "owner": "genproj",
+      "purpose": "Release-notes classification (Features / Fixes / Dependencies / Other), consumed by --generate-notes."
     },
     {
       "id": "github-release-readme",
       "filePath": "RELEASING.md",
-      "templateId": "github-release-readme"
-    }
-  ],
-  "externalServices": [],
-  "links": [
+      "owner": "genproj",
+      "purpose": "The tag prefix, how artifacts travel from the build step, what is genproj-owned vs app-owned, prerequisites, and that the release is not a validator."
+    },
     {
-      "label": "GitHub Releases",
-      "url": "https://docs.github.com/en/repositories/releasing-projects-on-github/managing-releases-in-a-repository"
+      "id": "github-release-artifacts",
+      "filePath": "scripts/release-artifacts.sh",
+      "owner": "app",
+      "purpose": "Seeded once and never overwritten: names and packages what gets attached (dist/ by default)."
     }
   ],
+  "pipelineContribution": {
+    "releaseWhen": "buildkite is selected and the branch is the default branch",
+    "step": {
+      "key": "release",
+      "dependsOn": ["build"],
+      "condition": "build.branch == \"main\"",
+      "notes": "Composed by getBuildkiteTemplateData in src/generator/capability-template-utils.js; the build step gains artifact_paths: in the same function."
+    }
+  },
   "notInV1": [
-    "Release assets: the workflow creates the release and its notes but does not build or attach artifacts",
-    "A generation-time GitHub action (there is nothing to provision — the tag push is the trigger; this is why externalServices is empty)",
-    "Deciding whether the release should be cut from a Buildkite step instead of a GitHub Actions workflow (see the open question in spec.md)"
+    "Giving the release step a manual approval gate: it is automatic, like the deploy step",
+    "Making the artifact paths a capability configuration option (they follow the language's output directory; see spec.md §4)",
+    "A generation-time GitHub action (there is nothing to provision - the release step is committed as pipeline content; this is why externalServices is empty)"
   ]
 }

@@ -21,7 +21,9 @@ rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR"
 
 # --- default: ship whatever the build produced -------------------------------
-# Asset names are a contract with whoever consumes them: something fetching
+# The release step downloads what the build step uploaded before calling this,
+# so `dist/` here is the exact directory the tests ran against. Asset names are
+# a contract with whoever consumes them: something fetching
 # releases/latest/download/<name> depends on the exact string, so treat a name
 # as frozen once anything relies on it.
 if [ -d dist ]; then
@@ -40,6 +42,6 @@ fi
 #     tar -czf "$OUT_DIR/{{projectName}}-$VERSION-$target.tar.gz" -C "build/$target" .
 #   done
 #
-# If you would rather attach the *exact* bytes the build step tested, upload
-# them from that step (Buildkite's `artifact_paths:`) and download them here
-# with `buildkite-agent artifact download` instead of packaging again.
+# A build that outputs somewhere other than dist/ needs the `artifact_paths:` on
+# the build step and the `artifact download` in the release step updated to
+# match, in .buildkite/pipeline.yml.

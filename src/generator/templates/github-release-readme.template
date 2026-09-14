@@ -8,9 +8,10 @@ whatever artifacts the project packages.
 ## Cutting a release
 
 1. Merge to the default branch. Buildkite builds and tests the commit.
-2. The release step runs automatically, exactly like the deploy step: it: bumps the version from the newest existing tag,
-   creates `{{githubReleaseTagPrefix}}<version>`, packages the artifacts,
-   and publishes the GitHub Release.
+2. The release step runs automatically, exactly like the deploy step: it bumps
+   the version from the newest existing tag, creates
+   `{{githubReleaseTagPrefix}}<version>`, attaches the build's artifacts, and
+   publishes the GitHub Release.
 
 Watch it under the repository's **Buildkite** build, not its Actions tab —
 there is no GitHub Actions workflow here.
@@ -21,18 +22,39 @@ there is no GitHub Actions workflow here.
 | ----- | ---------- |
 | Tag `{{githubReleaseTagPrefix}}<version>` | Created by the release step. The first release is `{{githubReleaseTagPrefix}}0.1.0`; after that it is a patch bump of the newest tag |
 | Release notes | {{githubReleaseNotesSource}} |
-| Assets | Whatever `scripts/release-artifacts.sh` writes into `release/` |
+| Assets | Uploaded by the build step as Buildkite artifacts, downloaded by the release step, and named by `scripts/release-artifacts.sh` |
 
 The release is created only after build and test passed **on that commit**, in
 that same build, because the release step depends on the build step. A release
 cannot exist for code that did not pass.
 
+## How the artifacts get from the build to the release
+
+Each Buildkite step runs in its own container, so the release step never sees
+the build step's working tree. It does not rebuild it either: the build step
+uploads its output (`artifact_paths:` in `.buildkite/pipeline.yml`) and the
+release step downloads those exact bytes back with
+`buildkite-agent artifact download`. One compile per commit, and the release
+attaches what the tests actually ran against.
+
 ## Changing what is shipped
 
-`scripts/release-artifacts.sh` is yours. It is seeded by genproj once and is
-never overwritten on regeneration (it lives under `scripts/`, which is
-app-owned). Edit it to change the artifact names, ship one file per platform,
-sign or notarise, or add a launcher manifest. It produces no assets by default.
+Two places, depending on what you are changing.
+
+**Which files are carried between the steps** lives in `.buildkite/pipeline.yml`:
+the `artifact_paths:` list on the build step and the matching
+`artifact download` in the release step. That file is genproj's and is rewritten
+on every regeneration, so treat it as generated — change the project's saved
+configuration instead, or expect to re-apply the edit. `artifact_paths:`
+does not fail when a pattern matches nothing, so a build that outputs somewhere
+else releases notes only until the patterns are corrected.
+
+**What is attached to the release** is `scripts/release-artifacts.sh`, which is
+yours. It is seeded by genproj once and is never overwritten on regeneration (it
+lives under `scripts/`, which is app-owned). Edit it to change the artifact
+names, ship one file per platform, sign or notarise, or add a launcher manifest.
+It packages `dist/` by default, and produces no assets if there is nothing
+there.
 
 Asset **names** are a contract: anything fetching
 `releases/latest/download/<name>` depends on the exact string, so treat a name
