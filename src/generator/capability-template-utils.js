@@ -1415,12 +1415,36 @@ ${extraYaml}${envBlock}${commandYaml}`;
 }
 
 /**
+ * The queue fleet jobs run on, and the only queue a darwin target may use.
+ *
+ * Two roles, one value, deliberately: every generated step is dispatched here
+ * unless the project names another queue, and a darwin target is dispatched
+ * here *whatever* the project names, because the two reasons a queue is chosen
+ * are not the same reason. A project changes `buildkite.queue` to control where
+ * its containers run - the queue is a container-running decision - and a darwin
+ * step is not a container. Left to follow the project's queue it would be sent
+ * to a Linux-only queue and hang, or worse, be handed to an agent that starts
+ * `cargo` and cannot link a Mach-O binary.
+ *
+ * The name is misleading on purpose, and worth stating: `mac-studio-linux`
+ * names the *containers* the queue's steps run in, not its hosts. Those hosts
+ * are Macs (darwin/arm64), and a step with no docker plugin runs natively on
+ * them - which is the whole reason a darwin target works here at all.
+ *
+ * Kept a constant rather than a `buildkite.macosQueue` setting: this is a fact
+ * about the fleet, not a per-project choice, and the one fleet is declared here
+ * rather than restated per capability.
+ */
+const MACOS_QUEUE = "mac-studio-linux";
+
+/**
  * A darwin target cannot be built in a Linux container: it needs the macOS SDK
  * and the linker that ships with Xcode. Those steps therefore run on the agent
  * HOST, with no docker plugin - which is why the queue's Macs need the
- * toolchain installed on the host and not only in the image. The queue is
- * unchanged because the agent process already runs on macOS; it is the docker
+ * toolchain installed on the host and not only in the image. It is the docker
  * plugin, and only that, which made every other step a Linux container.
+ *
+ * The same predicate decides the queue: see {@link MACOS_QUEUE}.
  *
  * @param {string} target - A release target label
  * @returns {boolean} Whether the target needs a macOS host
@@ -1615,16 +1639,20 @@ ${unit.artifactPaths.map((p) => `      - "${p}"`).join("\n")}
 ${envKeys.map((name) => `      ${name}: ${env[name]}`).join("\n")}
 `
     : "";
-  // No docker plugin for a darwin target: the plugin would run the step in a
-  // Linux container, and a macOS binary cannot be linked there.
-  const buildPlugins = isDarwinTarget(unit.target || "")
+  // One predicate, two consequences. A darwin target is not a container: it
+  // gets no docker plugin (the plugin would run it in a Linux container, where
+  // a macOS binary cannot be linked) and it gets the macOS queue rather than
+  // the project's - a project that moved its containers to a Linux queue must
+  // not take its darwin build with them.
+  const darwin = isDarwinTarget(unit.target || "");
+  const buildPlugins = darwin
     ? ""
     : `    plugins:
 ${_bkDockerPlugin(image)}`;
   return `
   - label: "${unit.label}"
     key: ${unit.key}
-${hasGitGuardian ? "    depends_on:\n      - secret_scan\n" : ""}${_bkAgents(queue)}${buildEnv}${buildArtifacts}${buildPlugins}    commands:
+${hasGitGuardian ? "    depends_on:\n      - secret_scan\n" : ""}${_bkAgents(darwin ? MACOS_QUEUE : queue)}${buildEnv}${buildArtifacts}${buildPlugins}    commands:
 ${buildCommands}
 `;
 }
@@ -1649,7 +1677,7 @@ function getBuildkiteTemplateData(context) {
   const config = context.configuration?.buildkite || {};
   const caps = context.capabilities || [];
   const language = resolveProjectLanguage(context);
-  const queue = config.queue || "mac-studio-linux";
+  const queue = config.queue || MACOS_QUEUE;
   const branchGating = config.branchGating !== false;
   const usesPlaywright = caps.includes("playwright");
   const hasDoppler = caps.includes("doppler");

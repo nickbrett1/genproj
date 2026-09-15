@@ -36,6 +36,10 @@ without it:
    the machine and not only in the image — for a rust target that means `rustup`,
    `cargo` and the Xcode command line tools, reachable from the agent's own
    `PATH` (a job inherits the agent process's environment, not your shell's).
+   That step also ignores `buildkite.queue`: it is dispatched to the macOS queue
+   (`mac-studio-linux`, which names the queue's containers rather than its
+   hosts), because moving `buildkite.queue` to a Linux queue must not move a
+   build that cannot run there.
 4. **Secrets, delivered to the job environment** by the agent's `environment`
    hook. A step-level `env:` value does **not** reach the container — only names
    listed in the docker plugin's `environment:` list do. This is the most common
