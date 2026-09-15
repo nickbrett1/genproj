@@ -179,3 +179,114 @@ describe("release manifest", () => {
     expect(readme).toContain("Primary Language");
   });
 });
+
+describe("per-target release builds", () => {
+  const DARWIN = "aarch64-apple-darwin";
+  const MUSL = "x86_64-unknown-linux-musl";
+
+  const rust = (targets, extra = {}) =>
+    generate(["buildkite", "github-release", "devcontainer-rust"], {
+      language: "rust",
+      ...extra,
+      "github-release": { targets, ...(extra["github-release"] || {}) },
+    });
+
+  // A build step's key is the one marker unique to it, so everything from the
+  // key to the next step is that step.
+  const buildStep = (yaml, target) => {
+    const marker = `key: build_${target.replaceAll(/[.-]/g, "_")}`;
+    const start = yaml.indexOf(marker);
+    expect(start).toBeGreaterThan(-1);
+    const next = yaml.indexOf("\n  - label:", start);
+    return yaml.slice(start, next === -1 ? undefined : next);
+  };
+
+  it("emits one build step per target, each uploading its own payload", async () => {
+    const yaml = pipeline(await rust([DARWIN, MUSL]));
+
+    expect(yaml).toContain("key: build_aarch64_apple_darwin");
+    expect(yaml).toContain("key: build_x86_64_unknown_linux_musl");
+    // The single-step key is gone: a release that depended on it would attach
+    // one target's payload and call the release complete.
+    expect(yaml).not.toContain("key: build\n");
+    expect(buildStep(yaml, DARWIN)).toContain(
+      '- "build/aarch64-apple-darwin/**"',
+    );
+    expect(buildStep(yaml, MUSL)).toContain(
+      '- "build/x86_64-unknown-linux-musl/**"',
+    );
+
+    const release = releaseSection(yaml);
+    expect(release).toContain("      - build_aarch64_apple_darwin");
+    expect(release).toContain("      - build_x86_64_unknown_linux_musl");
+    expect(release).toContain(
+      'buildkite-agent artifact download "build/aarch64-apple-darwin/**" .',
+    );
+  });
+
+  it("builds darwin natively and linux in the toolchain container", async () => {
+    const yaml = pipeline(await rust([DARWIN, MUSL]));
+
+    // A macOS binary cannot be linked in a Linux container: that step runs on
+    // the agent host, so it has no docker plugin at all.
+    const darwin = buildStep(yaml, DARWIN);
+    expect(darwin).not.toContain("docker#v5.13.0");
+    expect(darwin).toContain(
+      `cargo build --release --locked --target "${DARWIN}"`,
+    );
+    expect(darwin).not.toContain("musl-tools");
+
+    const musl = buildStep(yaml, MUSL);
+    expect(musl).toContain("docker#v5.13.0");
+    expect(musl).toContain('rustup target add "x86_64-unknown-linux-musl"');
+    // The musl targets need a musl linker, which the rust image does not ship.
+    expect(musl).toContain("musl-tools");
+  });
+
+  it("runs the tests once, against the host toolchain", async () => {
+    const yaml = pipeline(await rust([DARWIN, MUSL]));
+
+    // A cross-compiled binary cannot be executed by the build host, so only the
+    // first target's step tests.
+    expect(yaml.match(/cargo test --locked/g)).toHaveLength(1);
+    expect(buildStep(yaml, DARWIN)).toContain("cargo test --locked");
+    expect(buildStep(yaml, MUSL)).not.toContain("cargo test --locked");
+  });
+
+  it("names each target for anything the project adds to the step", async () => {
+    const yaml = pipeline(await rust([MUSL]));
+
+    expect(buildStep(yaml, MUSL)).toContain(`RELEASE_TARGET: ${MUSL}`);
+  });
+
+  it("refuses targets on a language that has no native build", async () => {
+    // Otherwise the matrix would emit N identical steps producing the same
+    // architecture-independent output under a triple none of them honours.
+    await expect(
+      generate(["buildkite", "github-release", "devcontainer-node"], {
+        language: "node",
+        "github-release": { targets: [DARWIN] },
+      }),
+    ).rejects.toThrow(/native build triples/);
+  });
+
+  it("packs one asset per target, read from build/<target>/", async () => {
+    const files = await rust([DARWIN, MUSL]);
+    const script = byPath(files, "scripts/release-artifacts.sh").content;
+
+    expect(script).toContain(`for target in ${DARWIN} ${MUSL}; do`);
+    expect(script).toContain('-C "build/$target" .');
+    // Still target-only: a version in the name would make the asset
+    // unlaunchable, because nothing can name the current version in advance.
+    expect(script).not.toContain("$VERSION.tar.gz");
+  });
+
+  it("leaves the single-artifact pipeline alone without targets", async () => {
+    const yaml = pipeline(await rust([]));
+
+    expect(yaml).toContain("key: build\n");
+    expect(yaml).toContain('- "target/release/**"');
+    expect(yaml).not.toContain('"build/');
+    expect(yaml).not.toContain("RELEASE_TARGET");
+  });
+});

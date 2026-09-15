@@ -84,7 +84,10 @@ import {
   getGooseMcpConfig,
   assertNoGooseEnvVarReferences,
 } from "./capability-template-utils.js";
-import { validatePrimaryLanguage } from "./project-validation.js";
+import {
+  validatePrimaryLanguage,
+  validateReleaseTargets,
+} from "./project-validation.js";
 
 // 2.2: health endpoint emitted for docker-container SvelteKit projects.
 // Returns 200 {ok:true} so the container HEALTHCHECK and Homepage widget work
@@ -2116,8 +2119,10 @@ export function normalizeYamlBlankLines(content) {
 
 export async function generateAllFiles(context) {
   // Fail before emitting anything: a project that silently resolves order-
-  // dependently is worse than one that refuses to generate.
+  // dependently is worse than one that refuses to generate, and a build matrix
+  // that cannot produce the artifacts it declares is worse than no matrix.
   validatePrimaryLanguage(context);
+  validateReleaseTargets(context);
 
   const templateEngine = new TemplateEngine();
   await templateEngine.initialize();

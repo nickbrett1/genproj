@@ -1413,6 +1413,157 @@ ${extraYaml}${envBlock}${commandYaml}`;
 }
 
 /**
+ * A darwin target cannot be built in a Linux container: it needs the macOS SDK
+ * and the linker that ships with Xcode. Those steps therefore run on the agent
+ * HOST, with no docker plugin - which is why the queue's Macs need the
+ * toolchain installed on the host and not only in the image. The queue is
+ * unchanged because the agent process already runs on macOS; it is the docker
+ * plugin, and only that, which made every other step a Linux container.
+ *
+ * @param {string} target - A release target label
+ * @returns {boolean} Whether the target needs a macOS host
+ */
+function isDarwinTarget(target) {
+  return target.endsWith("-apple-darwin");
+}
+
+/**
+ * Buildkite step keys allow letters, digits, dashes and underscores; a target
+ * label contains dots or dashes where a triple has a version or a vendor.
+ *
+ * @param {string} target - A release target label
+ * @returns {string} A step key unique to that target
+ */
+function targetStepKey(target) {
+  return `build_${target.replaceAll(/[.-]/g, "_")}`;
+}
+
+/**
+ * The commands for one target's rust build.
+ *
+ * Building for a target that is not the build host's own triple cannot be
+ * followed by running the result, so tests run once - in the first target's step,
+ * against the host toolchain - and the other steps build only. The alternative,
+ * a `cargo test --target <triple>`, fails at the first executed test binary with
+ * "cannot execute binary file".
+ *
+ * @param {string} target - A release target label
+ * @param {boolean} runTests - Whether this step also runs the test suite
+ * @param {string} projectBinaryName - The cargo package/binary name
+ * @returns {string[]} Command blocks for the step
+ */
+function rustTargetCommands(target, runTests, projectBinaryName) {
+  const isMusl = target.endsWith("-linux-musl");
+  return [
+    `|
+        mkdir -p "build/${target}"
+        rustup target add "${target}"
+${isMusl ? "        apt-get update && apt-get install -y --no-install-recommends musl-tools\n" : ""}        cargo build --release --locked --target "${target}"
+        if [ -f "target/${target}/release/${projectBinaryName}" ]; then
+          cp "target/${target}/release/${projectBinaryName}" "build/${target}/"
+        else
+          echo "target/${target}/release/${projectBinaryName} was not produced. Name the cargo package ${projectBinaryName}, or copy your binary into build/${target}/ here." >&2
+        fi`,
+    ...(runTests ? ["cargo test --locked"] : []),
+  ];
+}
+
+/**
+ * The build steps a project's release needs: one per declared target, or the
+ * single default step when it declares none.
+ *
+ * One step per target is what makes `github-release.targets` mean something -
+ * the labels are the same table the release manifest is keyed by, so the
+ * pipeline and whatever consumes the release agree on one vocabulary instead of
+ * the consumer fetching a file the pipeline never built. `build/<target>/` is
+ * the contract between them: the build step writes its payload there, the
+ * release step uploads exactly that path, and scripts/release-artifacts.sh packs
+ * it into `<project>-<target>.tar.gz`.
+ *
+ * @param {Object} params - Build inputs
+ * @param {string} params.language - The primary language
+ * @param {Object} params.commands - The language's default command set
+ * @param {string[]} params.releaseTargets - Declared release targets
+ * @param {string[]} params.singleArtifactPaths - Default artifact paths
+ * @param {string} params.projectBinaryName - The cargo package/binary name
+ * @returns {Object[]} One entry per build step
+ */
+function releaseBuildUnits({
+  language,
+  commands,
+  releaseTargets,
+  singleArtifactPaths,
+  projectBinaryName,
+}) {
+  if (releaseTargets.length === 0) {
+    return [
+      {
+        key: "build",
+        label: `:hammer: Build and test (${language})`,
+        target: null,
+        commands: commands[language],
+        artifactPaths: singleArtifactPaths,
+      },
+    ];
+  }
+
+  return releaseTargets.map((target, index) => ({
+    key: targetStepKey(target),
+    label: `:hammer: Build (${language}, ${target})`,
+    target,
+    commands: rustTargetCommands(target, index === 0, projectBinaryName),
+    artifactPaths: [`build/${target}/**`],
+  }));
+}
+
+/**
+ * Renders one build step.
+ *
+ * @param {Object} unit - A release build unit
+ * @param {Object} options - Step options
+ * @param {string} options.queue - The agent queue
+ * @param {string} options.image - The language's toolchain image
+ * @param {boolean} options.hasGitGuardian - Whether the secret scan gates this
+ * @param {boolean} options.hasGithubRelease - Whether anything consumes the output
+ * @returns {string} The step, as YAML
+ */
+function renderBuildStep(
+  unit,
+  { queue, image, hasGitGuardian, hasGithubRelease },
+) {
+  const buildCommands = unit.commands.map((c) => `      - ${c}`).join("\n");
+  // A release is the only thing that reads this step's output, so the upload
+  // exists only when the capability is selected.
+  const buildArtifacts =
+    hasGithubRelease && unit.artifactPaths.length
+      ? `    # Uploaded so the release step can attach what this build produced and
+    # tested instead of rebuilding it.
+    artifact_paths:
+${unit.artifactPaths.map((p) => `      - "${p}"`).join("\n")}
+`
+      : "";
+  // RELEASE_TARGET names the target for anything the project adds to this step;
+  // the generated commands already have it spelled out literally.
+  const buildEnv = unit.target
+    ? `    env:
+      RELEASE_TARGET: ${unit.target}
+`
+    : "";
+  // No docker plugin for a darwin target: the plugin would run the step in a
+  // Linux container, and a macOS binary cannot be linked there.
+  const buildPlugins = isDarwinTarget(unit.target || "")
+    ? ""
+    : `    plugins:
+${_bkDockerPlugin(image)}`;
+  return `
+  - label: "${unit.label}"
+    key: ${unit.key}
+${hasGitGuardian ? "    depends_on:\n      - secret_scan\n" : ""}${_bkAgents(queue)}${buildEnv}${buildArtifacts}${buildPlugins}    commands:
+${buildCommands}
+`;
+}
+
+/**
  * Builds the generated project's `.buildkite/pipeline.yml`.
  *
  * The step set is **capability-driven**, mirroring the CircleCI template: the
@@ -1451,7 +1602,7 @@ function getBuildkiteTemplateData(context) {
   // a pattern matches nothing, so a build that outputs elsewhere costs nothing
   // until it is corrected. Change them here and the matching download in the
   // release step together.
-  const releaseArtifactPaths =
+  const singleArtifactPaths =
     language === "node"
       ? ["dist/**"]
       : language === "rust"
@@ -1459,6 +1610,29 @@ function getBuildkiteTemplateData(context) {
         : language === "python"
           ? ["dist/**"]
           : [];
+
+  // Per-target release builds (`github-release.targets`). Empty is the
+  // single-artifact case above. With targets declared the build becomes a
+  // matrix - one step per target, each uploading its own payload - because one
+  // artifact is only the right answer for a project that ships one platform,
+  // and because the target labels are the same table the release manifest is
+  // keyed by: the pipeline and whatever consumes the release have to agree on
+  // one vocabulary, or the consumer fetches a file the pipeline never built.
+  //
+  // `build/<target>/` is the contract between the two: the build step writes
+  // its per-target payload there, the release step uploads exactly that path,
+  // and scripts/release-artifacts.sh packs it into `<project>-<target>.tar.gz`.
+  const grConfig = context.configuration?.["github-release"] || {};
+  const releaseTargets = Array.isArray(grConfig.targets)
+    ? grConfig.targets.filter(
+        (target) => typeof target === "string" && target.trim() !== "",
+      )
+    : [];
+  const projectBinaryName = context.projectName || context.name || "my-project";
+
+  const releaseArtifactPaths = releaseTargets.length
+    ? releaseTargets.map((target) => `build/${target}/**`)
+    : singleArtifactPaths;
 
   const images = {
     node: "node:22-bookworm",
@@ -1560,26 +1734,31 @@ ${_bkDockerPlugin(
   }
 
   // --- build + test --------------------------------------------------------
-  const buildCommands = commands[language]
-    .map((c) => `      - ${c}`)
-    .join("\n");
-  // A release is the only thing that reads this step's output, so the upload
-  // exists only when the capability is selected.
-  const buildArtifacts =
-    hasGithubRelease && releaseArtifactPaths.length
-      ? `    # Uploaded so the release step can attach what this build produced and
-    # tested instead of rebuilding it.
-    artifact_paths:
-${releaseArtifactPaths.map((p) => `      - "${p}"`).join("\n")}
-`
-      : "";
-  steps.push(`
-  - label: ":hammer: Build and test (${language})"
-    key: build
-${hasGitGuardian ? "    depends_on:\n      - secret_scan\n" : ""}${_bkAgents(queue)}${buildArtifacts}    plugins:
-${_bkDockerPlugin(image)}    commands:
-${buildCommands}
-`);
+  const buildUnits = releaseBuildUnits({
+    language,
+    commands,
+    releaseTargets,
+    singleArtifactPaths,
+    projectBinaryName,
+  });
+  for (const unit of buildUnits) {
+    steps.push(
+      renderBuildStep(unit, {
+        queue,
+        image,
+        hasGitGuardian,
+        hasGithubRelease,
+      }),
+    );
+  }
+
+  // Every step that consumes the build's output depends on all of its steps,
+  // not just one: with targets declared the build is a matrix, and a release
+  // that depended on a single target's step would attach whatever that one
+  // produced and call the release complete.
+  const buildDependencies = `    depends_on:
+${buildUnits.map((unit) => `      - ${unit.key}`).join("\n")}
+`;
 
   // --- Lighthouse (lighthouse-ci) ------------------------------------------
   // A release-quality gate, so main-only by default - matching CircleCI's job
@@ -1588,9 +1767,7 @@ ${buildCommands}
     steps.push(`
   - label: ":chrome: Lighthouse CI"
     key: lighthouse
-    depends_on:
-      - build
-${branchGating ? '    if: build.branch == "main"\n' : ""}${_bkAgents(queue)}    plugins:
+${buildDependencies}${branchGating ? '    if: build.branch == "main"\n' : ""}${_bkAgents(queue)}    plugins:
 ${_bkDockerPlugin(playwrightImage, ["CHROME_PATH"])}    # CHROME_PATH must be listed as a NAME in the plugin's environment: above.
     # A step-level env: value never enters the container.
     env:
@@ -1688,9 +1865,7 @@ ${_bkDockerPlugin(playwrightImage, ["CHROME_PATH"])}    # CHROME_PATH must be li
     steps.push(`
   - label: ":rocket: Deploy (production)"
     key: deploy
-    depends_on:
-      - build
-    if: build.branch == "main"
+${buildDependencies}    if: build.branch == "main"
 ${_bkAgents(queue)}    plugins:
 ${deployPlugins}    commands:
       - ${npmActivate}
@@ -1704,9 +1879,7 @@ ${installDoppler}${setupWrangler}${buildStep}${deployCommand("default")}${syncSe
       steps.push(`
   - label: ":rocket: Deploy preview"
     key: deploy_preview
-    depends_on:
-      - build
-    if: build.branch != "main" && build.branch !~ /^dependabot\\//
+${buildDependencies}    if: build.branch != "main" && build.branch !~ /^dependabot\\//
 ${_bkAgents(queue)}    plugins:
 ${_bkDockerPlugin(image, [
   ...(hasDoppler ? [] : ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID"]),
@@ -1736,9 +1909,7 @@ ${syncSecrets("preview")}`);
     steps.push(`
   - label: ":docker: Build and publish image (GHCR)"
     key: docker_publish
-    depends_on:
-      - build
-    if: build.branch == "main"
+${buildDependencies}    if: build.branch == "main"
 ${_bkAgents(queue)}    env:
       IMAGE: ${imageRef}
       CACHE_REF: ${cacheRef}
@@ -1855,9 +2026,7 @@ ${releaseArtifactPaths
     steps.push(`
   - label: ":bookmark: Release"
     key: release
-    depends_on:
-      - build
-    if: build.branch == "main"
+${buildDependencies}    if: build.branch == "main"
 ${_bkAgents(queue)}    plugins:
 ${_bkDockerPlugin(
   image,
@@ -1920,7 +2089,6 @@ ${releaseArtifacts}      - |
     buildkiteQueue: queue,
     buildkiteImage: image,
     buildkiteLanguage: language,
-    buildkiteCommands: buildCommands,
     // Each block starts with a newline so they concatenate cleanly; the
     // leading one is dropped because the template already ends its `steps:`
     // line. (Prettier strips a blank line there, and the generated project
@@ -1947,6 +2115,9 @@ function getGithubReleaseTemplateData(context) {
   const targets = Array.isArray(config.targets) ? config.targets : [];
   return {
     githubReleaseTargets: targets,
+    // The per-target loop in release-artifacts.sh iterates this list, so it is
+    // rendered as a shell word list (empty when no targets are declared).
+    githubReleaseTargetsJoined: targets.join(" "),
     // The universal key (see target-labels.js UNIVERSAL_TARGET): the asset name
     // and manifest key for a payload that is not architecture-specific. Kept as
     // a literal here because this module has no imports; a test pins it to the

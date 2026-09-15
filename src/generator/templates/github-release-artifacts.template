@@ -20,42 +20,54 @@ OUT_DIR="${OUT_DIR:-release}"
 rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR"
 
-# --- default: ship whatever the build produced -------------------------------
-# The release step downloads what the build step uploaded before calling this,
-# so `dist/` here is the exact directory the tests ran against. Asset names are
-# a contract with whoever consumes them: something fetching
-# releases/latest/download/<name> depends on the exact string, so treat a name
-# as frozen once anything relies on it.
+# --- the universal payload ---------------------------------------------------
+# `dist/` is the language's conventional output directory and it is architecture
+# independent (a JS bundle, a wheel, a .pyz), so it is published under the
+# universal key rather than under a triple. The release step downloads what the
+# build step uploaded before calling this, so `dist/` here is the exact
+# directory the tests ran against. Asset names are a contract with whoever
+# consumes them: something fetching releases/latest/download/<name> depends on
+# the exact string, so treat a name as frozen once anything relies on it.
 if [ -d dist ]; then
   tar -czf "$OUT_DIR/{{projectName}}-{{githubReleaseUniversalTarget}}.tar.gz" -C dist .
   echo "packaged dist/ as {{projectName}}-{{githubReleaseUniversalTarget}}.tar.gz"
-else
-  echo "No dist/ directory, so this release carries notes and no assets." >&2
-  echo "Edit scripts/release-artifacts.sh once this project builds something to ship." >&2
 fi
 
-# --- one artifact per platform, when you need it -----------------------------
-# Multi-platform, signing, installers and launcher manifests all belong here,
-# one file per target, each named explicitly. Targets are Rust triples — the
-# only release vocabulary, used by the pipeline's build matrix and by a
-# launcher resolving the manifest alike. A short label cannot express musl vs
-# glibc (`x86_64-unknown-linux-musl` and `x86_64-unknown-linux-gnu` are
+# --- one artifact per declared release target --------------------------------
+# `github-release.targets` selects these, and the build step for each one writes
+# its payload to build/<target>/ and uploads exactly that path. Targets are Rust
+# triples — the only release vocabulary, used by the pipeline's build matrix and
+# by a launcher resolving the manifest alike. A short label cannot express musl
+# vs glibc (`x86_64-unknown-linux-musl` and `x86_64-unknown-linux-gnu` are
 # distinct, non-interchangeable binaries that share one `uname`), and a glibc
 # artifact published under a label a musl host will fetch passes its sha256
 # check because the file is intact and simply the wrong file.
-#
-#   for target in aarch64-apple-darwin x86_64-unknown-linux-musl; do
-#     tar -czf "$OUT_DIR/{{projectName}}-$target.tar.gz" -C "build/$target" .
-#   done
 #
 # An asset name that embeds a version is unlaunchable: version and hash belong
 # in the manifest (below), and the asset name carries the target only. That is
 # what makes releases/latest/download/manifest.json fetchable with no version
 # knowledge.
 #
-# A build that outputs somewhere other than dist/ needs the `artifact_paths:` on
-# the build step and the `artifact download` in the release step updated to
-# match, in .buildkite/pipeline.yml.
+# A target with no build/<target>/ is reported and skipped rather than failing
+# the release, so declaring a target before its build produces anything costs
+# nothing — the same fail-open reasoning as the artifact download above. The
+# list is empty for a project that declares no targets, which makes the whole
+# loop a no-op.
+for target in {{githubReleaseTargetsJoined}}; do
+  if [ -d "build/$target" ]; then
+    tar -czf "$OUT_DIR/{{projectName}}-$target.tar.gz" -C "build/$target" .
+    echo "packaged build/$target/ as {{projectName}}-$target.tar.gz"
+  else
+    echo "No build/$target/ directory - nothing to attach for $target." >&2
+  fi
+done
+
+# Nothing at all was produced. Say so here, once, rather than attaching an empty
+# release with no explanation.
+if [ -z "$(ls -A "$OUT_DIR" 2>/dev/null)" ]; then
+  echo "No payloads found, so this release carries notes and no assets." >&2
+  echo "Edit scripts/release-artifacts.sh once this project builds something to ship." >&2
+fi
 
 # --- manifest (a launcher's only stable URL) ---------------------------------
 # releases/latest/download/manifest.json is what something fetching without

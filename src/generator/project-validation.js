@@ -51,3 +51,37 @@ export function validatePrimaryLanguage(context) {
     "language",
   );
 }
+
+/**
+ * Per-target release builds are a *native* compile: one build step per target,
+ * each producing an architecture-specific binary. Only a project whose primary
+ * language is rust has a target to build, so `github-release.targets` on any
+ * other language would emit N identical build steps that all produce the same
+ * architecture-independent output, and N release assets keyed by a triple none
+ * of them honours - a matrix that looks like it does something and does not.
+ *
+ * The guard is the honest version of that: say the vocabulary belongs to a
+ * native build rather than emit steps that pretend.
+ *
+ * @param {Object} context - Generation context (capabilities, configuration)
+ * @throws {ValidationError} When targets are declared for a non-native language
+ */
+export function validateReleaseTargets(context) {
+  const targets = context?.configuration?.["github-release"]?.targets;
+  if (!Array.isArray(targets) || targets.length === 0) return;
+
+  const language = resolveProjectLanguage(context);
+  if (language === "rust") return;
+
+  throw new ValidationError(
+    `This project declares ${targets.length} release ` +
+      `target${targets.length === 1 ? "" : "s"} (${targets.join(", ")}) but its ` +
+      `primary language is "${language}". Targets are native build triples: ` +
+      `they select one build step per platform and are the keys a launcher ` +
+      `resolves the release manifest by. A "${language}" project's output is ` +
+      `architecture independent, so it ships as one asset under the universal ` +
+      `key instead. Declare "language": "rust", or clear ` +
+      `github-release.targets.`,
+    "targets",
+  );
+}
