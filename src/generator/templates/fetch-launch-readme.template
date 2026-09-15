@@ -41,11 +41,14 @@ launcher is the target key — and both read that from one shared table.
 
 The launcher does not derive a target from `uname`. It looks up its **candidate
 list** for `uname -s`/`uname -m` and takes the first entry the manifest actually
-publishes. This is not fussiness: `uname` cannot see libc, so it reports
-`Linux`/`x86_64` for both a musl and a glibc host. Asking the manifest which one
-was published is the only answer that cannot silently fetch the wrong binary —
-and a glibc build under a musl label would pass its checksum check, because the
-file is intact and simply wrong.
+publishes. Assembling a triple by string concatenation is where producer and
+consumer would drift apart, so it never happens: the table is generated from the
+same module the pipeline builds its targets from.
+
+Every list ends with `any`, so a host with no triple of its own — an
+architecture this project does not build for, or a release whose payload is
+architecture-independent — resolves it through the same lookup rather than a
+special case.
 
 A host with no candidate in the manifest is a **supported** condition: it logs,
 starts what is installed, and carries on.

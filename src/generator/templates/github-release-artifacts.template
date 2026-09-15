@@ -40,12 +40,11 @@ fi
 # --- one artifact per declared release target --------------------------------
 # `github-release.targets` selects these, and the build step for each one writes
 # its payload to build/<target>/ and uploads exactly that path. Targets are Rust
-# triples — the only release vocabulary, used by the pipeline's build matrix and
-# by a launcher resolving the manifest alike. A short label cannot express musl
-# vs glibc (`x86_64-unknown-linux-musl` and `x86_64-unknown-linux-gnu` are
-# distinct, non-interchangeable binaries that share one `uname`), and a glibc
-# artifact published under a label a musl host will fetch passes its sha256
-# check because the file is intact and simply the wrong file.
+# triples — the names `cargo --target` takes, shared by the pipeline's build
+# matrix and by a launcher resolving the manifest. One vocabulary, one string:
+# the manifest key, the artifact path and the lookup are the same value, so
+# nothing translates between two spellings. Every Linux target is musl, which
+# links statically, so a single artifact runs on a musl or a glibc host alike.
 #
 # An asset name that embeds a version is unlaunchable: version and hash belong
 # in the manifest (below), and the asset name carries the target only. That is
