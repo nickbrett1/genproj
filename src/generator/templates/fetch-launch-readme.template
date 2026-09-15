@@ -77,6 +77,11 @@ Two consequences worth knowing:
 the payload. That is how a host's own configuration reaches an app that was
 fetched from GitHub: keep secrets in that file on the host, never in the release.
 
+The file is **optional**, and most hosts never create one — a missing file is not
+an event, and neither is a bad one, because the launcher is fail-open here too: a
+file that does not parse is logged and skipped, and a host with no file starts
+with the environment it already had.
+
 ## The payload contract
 
 The tarball for a target unpacks to the payload root, and its entry point is

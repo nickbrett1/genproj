@@ -26,6 +26,11 @@
 #   releases/<version>/     an unpacked payload; the entry point is bin/<name>
 #   current -> releases/<version>
 #
+# ENV_FILE (default: {{fetchLaunchEnvFile}}) is sourced, with `set -a`,
+# immediately before the exec, so host-local configuration reaches an app
+# fetched from GitHub. It is optional and it is not part of a release: keep the
+# host's secrets there, never in the payload.
+#
 # genproj seeds this file once; after that it is yours. `scripts/` is app-owned,
 # so regeneration never overwrites it - unlike .buildkite/pipeline.yml, which is
 # genproj's and is rewritten on every regeneration.
@@ -51,7 +56,35 @@ log() {
   printf '%s fetch-launch: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$*" >&2
 }
 
+# Host-local configuration, sourced (not parsed) and exported to the payload.
+# Optional: most hosts never create this file, so its absence is not an event.
+# Two guards, both fail-open - the file is the host's script, not ours:
+#
+#   - `bash -n` first, because bash *exits* a non-interactive shell on a syntax
+#     error in a sourced file, `set +e` or not. A typo in the host's own env
+#     file must not stop the host from starting.
+#   - `set +u` for the duration, because an unset variable in it would
+#     otherwise be fatal under the `set -u` above.
+source_env_file() {
+  [ -n "${ENV_FILE}" ] && [ -f "${ENV_FILE}" ] || return 0
+  if ! bash -n "${ENV_FILE}" 2>/dev/null; then
+    log "env file ${ENV_FILE} has a syntax error - starting without it"
+    return 0
+  fi
+  set -a
+  set +u
+  # shellcheck source=/dev/null
+  . "${ENV_FILE}"
+  set -u
+  set +a
+}
+
 exec_current() {
+  # The env file belongs to the host, not to the release: it is where *this*
+  # machine's database URL, token or port comes from, and it is read on the way
+  # out so the payload inherits it. Every exit path is an exec, so this is the
+  # one call site.
+  source_env_file
   if [ -x "${CURRENT}/bin/${LAUNCHER_NAME}" ]; then
     exec "${CURRENT}/bin/${LAUNCHER_NAME}" "$@"
   fi

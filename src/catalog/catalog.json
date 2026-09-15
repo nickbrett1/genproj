@@ -568,7 +568,15 @@
                 "x86_64-unknown-linux-gnu",
                 "aarch64-unknown-linux-musl",
                 "aarch64-unknown-linux-gnu"
-              ]
+              ],
+              "enumLabels": {
+                "aarch64-apple-darwin": "macOS (Apple silicon)",
+                "x86_64-apple-darwin": "macOS (Intel)",
+                "x86_64-unknown-linux-musl": "Linux x86-64 (musl)",
+                "x86_64-unknown-linux-gnu": "Linux x86-64 (glibc)",
+                "aarch64-unknown-linux-musl": "Linux arm64 (musl)",
+                "aarch64-unknown-linux-gnu": "Linux arm64 (glibc)"
+              }
             },
             "default": [],
             "description": "Per-target release artifacts, one build per Rust-triple label. Empty means a single artifact for the default target (notes-only when the language has no artifact paths). Labels are the release vocabulary the launcher resolves against, so the pipeline's matrix and the launcher's lookup consume the same table."
@@ -604,15 +612,18 @@
         "properties": {
           "launcherName": {
             "type": "string",
+            "default": "{{projectName}}",
             "description": "Executable the launcher runs at current/bin/<name>, and therefore the name the release payload has to provide. Defaults to the project name."
           },
           "prefix": {
             "type": "string",
+            "default": "{{projectName}}",
             "description": "Directory name under $HOME/.local/share that holds releases/ and the current symlink. Defaults to the project name."
           },
           "envFile": {
             "type": "string",
-            "description": "Env file sourced (with set -a) before the payload starts, so host-local configuration reaches an app fetched from GitHub. Unset means none is sourced. Secrets belong in this file on the host, never in a release."
+            "default": "$HOME/.config/{{projectName}}/env",
+            "description": "Env file sourced (with set -a) before the payload starts, so host-local configuration reaches an app fetched from GitHub. Optional: a host with no file at this path starts with the environment it already has. Secrets belong in this file on the host, never in a release."
           }
         }
       },

@@ -33,6 +33,29 @@ export const TARGET_LABELS = Object.freeze([
 ]);
 
 /**
+ * A human name for each label, for the one audience a triple is wrong for: a
+ * person choosing targets in a form. `aarch64-apple-darwin` is the correct
+ * identifier and stays the value; this is only what a UI prints beside it.
+ *
+ * Kept beside {@link TARGET_LABELS} rather than in the client because the
+ * vocabulary is the thing being named: a client that hardcoded these strings
+ * would need editing the day a target is added, which is the drift the shared
+ * table exists to prevent. The catalog publishes this map, so the client
+ * renders whatever it is given.
+ *
+ * The triple is not replaced by the name anywhere - a release target is a
+ * build input, and "Linux x86-64 (musl)" is not a value any toolchain accepts.
+ */
+export const TARGET_DISPLAY_NAMES = Object.freeze({
+  "aarch64-apple-darwin": "macOS (Apple silicon)",
+  "x86_64-apple-darwin": "macOS (Intel)",
+  "x86_64-unknown-linux-musl": "Linux x86-64 (musl)",
+  "x86_64-unknown-linux-gnu": "Linux x86-64 (glibc)",
+  "aarch64-unknown-linux-musl": "Linux arm64 (musl)",
+  "aarch64-unknown-linux-gnu": "Linux arm64 (glibc)",
+});
+
+/**
  * The universal target key: an artifact that is not architecture-specific (a
  * Node bundle, a pure-python `.pyz`) publishes under this key rather than
  * claiming a triple. It is appended as the **last** candidate in
