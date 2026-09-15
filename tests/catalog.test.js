@@ -30,6 +30,7 @@ const EXPECTED_IDS = [
   "circleci",
   "buildkite",
   "github-release",
+  "fetch-launch",
   "doppler",
   "gitguardian",
   "sonarcloud",
@@ -57,6 +58,11 @@ describe("catalog metadata", () => {
       expect(capability.name).toBeTruthy();
       expect(capability.description).toBeTruthy();
       expect(capability.category).toBeTruthy();
+      // Icon selection is driven from the catalog, not from a client-side map
+      // keyed by capability id: a new capability that reuses a token needs no
+      // UI change.
+      expect(capability.icon).toMatch(/^[a-z]+$/);
+      expect(capability.iconColor).toMatch(/^[a-z]+$/);
       expect(capability.configurationSchema).toMatchObject({ type: "object" });
       expect(typeof capability.selectedByDefault).toBe("boolean");
       expect(Array.isArray(capability.provides)).toBe(true);
@@ -88,6 +94,27 @@ describe("catalog metadata", () => {
     for (const capability of capabilities) {
       expect(capability.selectedByDefault).toBe(capability.category === "core");
     }
+  });
+
+  it("declares the project-level Primary Language", () => {
+    // The primary language is a project fact, not a capability's: it governs
+    // the single-valued outputs (CI, release paths, sonar, devcontainer base).
+    // It must be discoverable from the public descriptor so a UI can render it.
+    const catalog = buildCatalog();
+    const language = catalog.configurationSchema.properties.language;
+    expect(language.enum).toEqual(["python", "node", "java", "rust"]);
+  });
+
+  it("declares the release knobs a project can set, and no tag prefix", () => {
+    // The tag prefix was removed: it is written and read only by the release
+    // step, so it is not a project choice. `targets` is the real knob.
+    const githubRelease = getCapabilityById("github-release");
+    expect(githubRelease.configurationSchema.properties).toHaveProperty(
+      "targets",
+    );
+    expect(githubRelease.configurationSchema.properties).not.toHaveProperty(
+      "tagPrefix",
+    );
   });
 
   it("declares what the devcontainer capabilities provide", () => {

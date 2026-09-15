@@ -1,11 +1,23 @@
 {
   "$schema": "./schema.json",
+  "configurationSchema": {
+    "type": "object",
+    "properties": {
+      "language": {
+        "type": "string",
+        "enum": ["python", "node", "java", "rust"],
+        "description": "Primary Language: the one the project builds, tests and releases. Declared, not inferred. Optional when 0 or 1 devcontainer-* capability is selected (it is implied); required when 2 or more are selected, where selection order would otherwise decide. Devcontainer-* capabilities remain toolboxes: non-primary container code is not built, tested or released."
+      }
+    }
+  },
   "capabilities": [
     {
       "id": "coding-agents",
       "name": "AI Coding Agents",
       "description": "Sets up the AI coding agents in the devcontainer: goose (config, MCP servers and spec-first recipes) plus the Cursor and Antigravity CLIs.",
       "category": "core",
+      "icon": "robot",
+      "iconColor": "blue",
       "selectedByDefault": true,
       "provides": [],
       "dependencies": [],
@@ -56,6 +68,8 @@
       "name": "Xcode Development",
       "description": "Connects an agent to a remote Xcode project over an SSE proxy for AI-assisted iOS/macOS development. Requires Xcode running on a Mac with the Xcode MCP bridge installed.",
       "category": "apple-development",
+      "icon": "code",
+      "iconColor": "gray",
       "selectedByDefault": false,
       "provides": [],
       "dependencies": ["coding-agents"],
@@ -81,6 +95,8 @@
       "name": "Editor Configuration",
       "description": "Shared VS Code extensions and workspace settings for consistent tooling across the team.",
       "category": "core",
+      "icon": "pencil",
+      "iconColor": "blue",
       "selectedByDefault": true,
       "provides": [],
       "dependencies": [],
@@ -130,6 +146,8 @@
       "name": "Shell & Terminal",
       "description": "Zsh shell with the Powerlevel10k prompt and productivity plugins.",
       "category": "core",
+      "icon": "code",
+      "iconColor": "gray",
       "selectedByDefault": true,
       "provides": [],
       "dependencies": [],
@@ -155,6 +173,8 @@
       "name": "SpecKit",
       "description": "GitHub's spec-kit: a spec-driven development workflow (specify, plan, tasks, implement) for AI coding agents.",
       "category": "core",
+      "icon": "file",
+      "iconColor": "pink",
       "selectedByDefault": true,
       "provides": [],
       "dependencies": [],
@@ -180,6 +200,8 @@
       "name": "Docker",
       "description": "Adds Docker support for containerised builds and tooling.",
       "category": "internal",
+      "icon": "docker",
+      "iconColor": "blue",
       "selectedByDefault": false,
       "provides": [],
       "dependencies": [],
@@ -205,6 +227,8 @@
       "name": "Node.js DevContainer",
       "description": "Sets up a VS Code DevContainer with Node.js environment.",
       "category": "devcontainer",
+      "icon": "node",
+      "iconColor": "green",
       "selectedByDefault": false,
       "provides": [
         {
@@ -243,6 +267,8 @@
       "name": "SvelteKit",
       "description": "Initializes a SvelteKit project with Svelte 5.",
       "category": "frameworks",
+      "icon": "globe",
+      "iconColor": "orange",
       "selectedByDefault": false,
       "provides": [],
       "dependencies": ["devcontainer-node"],
@@ -268,6 +294,8 @@
       "name": "Dagster",
       "description": "Configures a Dagster project for data orchestration.",
       "category": "frameworks",
+      "icon": "globe",
+      "iconColor": "purple",
       "selectedByDefault": false,
       "provides": [],
       "dependencies": ["devcontainer-python"],
@@ -293,6 +321,8 @@
       "name": "Python DevContainer",
       "description": "Sets up a VS Code DevContainer with Python environment.",
       "category": "devcontainer",
+      "icon": "python",
+      "iconColor": "yellow",
       "selectedByDefault": false,
       "provides": [
         {
@@ -323,6 +353,8 @@
       "name": "Java DevContainer",
       "description": "Sets up a VS Code DevContainer with Java environment.",
       "category": "devcontainer",
+      "icon": "java",
+      "iconColor": "red",
       "selectedByDefault": false,
       "provides": [
         {
@@ -357,6 +389,8 @@
       "name": "Rust DevContainer",
       "description": "Sets up a VS Code DevContainer with Rust environment.",
       "category": "devcontainer",
+      "icon": "rust",
+      "iconColor": "orange",
       "selectedByDefault": false,
       "provides": [],
       "dependencies": ["docker"],
@@ -385,6 +419,8 @@
       "name": "CircleCI Integration",
       "description": "Configures CircleCI for continuous integration and deployment. Requires Doppler: the CircleCI MCP server needs CircleCI tokens that are only available through Doppler.",
       "category": "ci-cd",
+      "icon": "circle",
+      "iconColor": "green",
       "selectedByDefault": false,
       "provides": [],
       "dependencies": ["doppler"],
@@ -450,6 +486,8 @@
       "name": "Buildkite Integration",
       "description": "Runs CI on a self-hosted Buildkite agent (Apple silicon) instead of a metered cloud fleet. The pipeline and its GitHub webhook are created during generation, so there is no manual \"set up project\" step. Can run alongside CircleCI, so a repository can migrate without a flag day.",
       "category": "ci-cd",
+      "icon": "circle",
+      "iconColor": "green",
       "selectedByDefault": false,
       "provides": [],
       "dependencies": [],
@@ -507,6 +545,8 @@
       "name": "GitHub Releases",
       "description": "Publishes a GitHub Release with attached artifacts when a version is cut. The release step lives in the Buildkite pipeline, so it runs only after build and test passed on that commit: the version is bumped from the last tag, the tag is created by CI, the artifacts named by the project's own scripts/release-artifacts.sh are attached, and the release is published with generated notes. No version bookkeeping, and no PAT for a human to paste in.",
       "category": "deployment",
+      "icon": "github",
+      "iconColor": "gray",
       "selectedByDefault": false,
       "provides": [],
       "dependencies": ["buildkite"],
@@ -517,10 +557,21 @@
       "configurationSchema": {
         "type": "object",
         "properties": {
-          "tagPrefix": {
-            "type": "string",
-            "default": "v",
-            "description": "Prefix for the tags CI creates: the release tag is <prefix><major>.<minor>.<patch>, starting at 0.1.0 and then a patch bump of the newest existing tag."
+          "targets": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "aarch64-apple-darwin",
+                "x86_64-apple-darwin",
+                "x86_64-unknown-linux-musl",
+                "x86_64-unknown-linux-gnu",
+                "aarch64-unknown-linux-musl",
+                "aarch64-unknown-linux-gnu"
+              ]
+            },
+            "default": [],
+            "description": "Per-target release artifacts, one build per Rust-triple label. Empty means a single artifact for the default target (notes-only when the language has no artifact paths). Labels are the release vocabulary the launcher resolves against, so the pipeline's matrix and the launcher's lookup consume the same table."
           }
         }
       },
@@ -535,10 +586,52 @@
       "website": "https://docs.github.com/en/repositories/releasing-projects-on-github/managing-releases-in-a-repository"
     },
     {
+      "id": "fetch-launch",
+      "name": "Fetch and Launch",
+      "description": "Seeds scripts/fetch-launch.sh: a launcher that fetches the newest release for the host, verifies its sha256 against the release manifest, unpacks it and execs it. Fail-open by design - a host never fails to boot because GitHub was unreachable. It consumes the per-target artifacts github-release publishes, so the two are selected together.",
+      "category": "deployment",
+      "icon": "play",
+      "iconColor": "green",
+      "selectedByDefault": false,
+      "provides": [],
+      "dependencies": ["github-release"],
+      "conflicts": ["docker-container"],
+      "requiresAuth": [],
+      "authServices": [],
+      "externalServices": [],
+      "configurationSchema": {
+        "type": "object",
+        "properties": {
+          "launcherName": {
+            "type": "string",
+            "description": "Executable the launcher runs at current/bin/<name>, and therefore the name the release payload has to provide. Defaults to the project name."
+          },
+          "prefix": {
+            "type": "string",
+            "description": "Directory name under $HOME/.local/share that holds releases/ and the current symlink. Defaults to the project name."
+          },
+          "envFile": {
+            "type": "string",
+            "description": "Env file sourced (with set -a) before the payload starts, so host-local configuration reaches an app fetched from GitHub. Unset means none is sourced. Secrets belong in this file on the host, never in a release."
+          }
+        }
+      },
+      "benefits": [
+        "A host starts once and keeps itself on the newest release",
+        "The payload is verified against the manifest's sha256 before it becomes current",
+        "Fail-open: an unreachable GitHub never stops a host from booting",
+        "No daemon, no timer, no rollback - one fetch, one symlink flip, one exec"
+      ],
+      "links": [],
+      "website": "https://docs.github.com/en/repositories/releasing-projects-on-github/linking-to-releases"
+    },
+    {
       "id": "doppler",
       "name": "Doppler Secrets Management",
       "description": "Integrates Doppler for secure secrets management. Enables the various MCP servers that rely on privileged tokens to access their services (e.g. CircleCI, GitHub, SonarQube).",
       "category": "secrets",
+      "icon": "secret",
+      "iconColor": "blue",
       "selectedByDefault": false,
       "provides": [],
       "dependencies": [],
@@ -592,6 +685,8 @@
       "name": "GitGuardian",
       "description": "Automated secrets detection in your CI pipeline.",
       "category": "secrets",
+      "icon": "secret",
+      "iconColor": "blue",
       "selectedByDefault": false,
       "provides": [],
       "dependencies": ["circleci"],
@@ -633,6 +728,8 @@
       "name": "SonarCloud Code Quality",
       "description": "Sets up SonarCloud for static code analysis.",
       "category": "code-quality",
+      "icon": "cloud",
+      "iconColor": "orange",
       "selectedByDefault": false,
       "provides": [],
       "dependencies": [],
@@ -661,7 +758,8 @@
         "properties": {
           "language": {
             "type": "string",
-            "enum": ["JavaScript", "Python", "Java"]
+            "enum": ["JavaScript", "Python", "Java"],
+            "description": "Deprecated: the sonar flavour now follows the project's Primary Language (python -> Python, node -> JavaScript, java -> Java; rust emits no reportPaths line). Set this only to override it for one more release."
           }
         }
       },
@@ -679,6 +777,8 @@
       "name": "ESLint + SonarJS",
       "description": "Adds fast, zero-configuration code quality linting using eslint-plugin-sonarjs and eslint-plugin-security. Runs in ~5\u201310s vs 1\u20132 minutes for SonarCloud.",
       "category": "code-quality",
+      "icon": "code",
+      "iconColor": "green",
       "selectedByDefault": false,
       "provides": [],
       "dependencies": [],
@@ -705,6 +805,8 @@
       "name": "Ruff (Python code quality)",
       "description": "Adds fast, zero-configuration Python linting with Ruff (rules live in pyproject.toml [tool.ruff] and the CI test job runs `ruff check src tests`). Requires a Python devcontainer.",
       "category": "code-quality",
+      "icon": "python",
+      "iconColor": "yellow",
       "selectedByDefault": false,
       "provides": [],
       "dependencies": ["devcontainer-python"],
@@ -731,6 +833,8 @@
       "name": "SonarLint",
       "description": "Configures SonarLint for local code quality analysis.",
       "category": "code-quality",
+      "icon": "code",
+      "iconColor": "red",
       "selectedByDefault": false,
       "provides": [],
       "dependencies": ["sonarcloud", "devcontainer-java"],
@@ -756,6 +860,8 @@
       "name": "Cloudflare Wrangler",
       "description": "Configures project for deployment to Cloudflare Workers.",
       "category": "deployment",
+      "icon": "cloudflare",
+      "iconColor": "orange",
       "selectedByDefault": false,
       "provides": [],
       "dependencies": [],
@@ -787,6 +893,8 @@
       "name": "Google Cloud",
       "description": "Configures project for deployment to Google Cloud.",
       "category": "deployment",
+      "icon": "cloud",
+      "iconColor": "blue",
       "selectedByDefault": false,
       "provides": [],
       "dependencies": [],
@@ -812,10 +920,12 @@
       "name": "Docker Container",
       "description": "Containerize the project and publish to the GitHub Container Registry (GHCR) for deployment to a NAS or self-hosted host via Docker Compose. Mutually exclusive with other deployment systems.",
       "category": "deployment",
+      "icon": "docker",
+      "iconColor": "cyan",
       "selectedByDefault": false,
       "provides": [],
       "dependencies": ["docker"],
-      "conflicts": ["cloudflare-wrangler", "google-cloud"],
+      "conflicts": ["cloudflare-wrangler", "google-cloud", "fetch-launch"],
       "requiresAuth": [],
       "authServices": ["registry"],
       "externalServices": [
@@ -982,6 +1092,8 @@
       "name": "Dependabot",
       "description": "Configures Dependabot for automated dependency updates.",
       "category": "project-structure",
+      "icon": "robot",
+      "iconColor": "blue",
       "selectedByDefault": false,
       "provides": [],
       "dependencies": [],
@@ -1016,6 +1128,8 @@
       "name": "Lighthouse CI",
       "description": "Configures Lighthouse CI for performance monitoring.",
       "category": "monitoring",
+      "icon": "chart",
+      "iconColor": "orange",
       "selectedByDefault": false,
       "provides": [],
       "dependencies": [],
@@ -1053,6 +1167,8 @@
       "name": "Playwright",
       "description": "Configures Playwright for end-to-end testing.",
       "category": "monitoring",
+      "icon": "play",
+      "iconColor": "green",
       "selectedByDefault": false,
       "provides": [],
       "dependencies": [],

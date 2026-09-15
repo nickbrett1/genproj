@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import { parse } from "yaml";
+
 import { generateAllFiles } from "../../src/generator/file-generator.js";
 
 const generate = (capabilities, configuration = {}) =>
@@ -303,5 +305,46 @@ describe("Buildkite file generation", () => {
       buildkite: {},
     });
     expect(pipelineFrom(files).content).toContain("platform: linux/arm64");
+  });
+  it("emits YAML that actually parses, whatever the capability mix", async () => {
+    // The pipeline is the artifact: an unquoted label that starts with a colon
+    // is a parse error Buildkite reports as an opaque upload failure, and the
+    // string-containment tests above cannot see it. Parsing every shape is the
+    // assertion that says "this file is loadable" rather than "this file
+    // contains a substring".
+    const shapes = [
+      [["buildkite", "devcontainer-node"], {}],
+      [
+        ["buildkite", "gitguardian", "docker-container", "devcontainer-rust"],
+        { language: "rust" },
+      ],
+      [
+        [
+          "buildkite",
+          "github-release",
+          "devcontainer-rust",
+          "lighthouse-ci",
+          "cloudflare-wrangler",
+        ],
+        { language: "rust" },
+      ],
+      // The build matrix: several build steps sharing one release step.
+      [
+        ["buildkite", "github-release", "devcontainer-rust"],
+        {
+          language: "rust",
+          "github-release": {
+            targets: ["aarch64-apple-darwin", "x86_64-unknown-linux-musl"],
+          },
+        },
+      ],
+    ];
+
+    for (const [capabilities, configuration] of shapes) {
+      const files = await generate(capabilities, configuration);
+      const doc = parse(pipelineFrom(files).content);
+      expect(Array.isArray(doc.steps)).toBe(true);
+      expect(doc.steps.length).toBeGreaterThan(0);
+    }
   });
 });

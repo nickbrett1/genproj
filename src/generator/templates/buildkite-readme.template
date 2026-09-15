@@ -29,7 +29,13 @@ without it:
    and _every_ step here uses a plugin — omitting it fails the checkout.
 2. **A unique agent `name`** when a machine runs more than one agent
    (`name="<machine>-%spawn"`). Otherwise agents race over the plugin directory.
-3. **Docker**, since almost every step runs in a container.
+3. **Docker.** Almost every step runs in a container. The exception is a
+   `github-release` release target ending in `-apple-darwin`: a macOS binary
+   cannot be linked inside a Linux container, so that step is dispatched with no
+   docker plugin and runs **on the host**. Its toolchain therefore has to be on
+   the machine and not only in the image — for a rust target that means `rustup`,
+   `cargo` and the Xcode command line tools, reachable from the agent's own
+   `PATH` (a job inherits the agent process's environment, not your shell's).
 4. **Secrets, delivered to the job environment** by the agent's `environment`
    hook. A step-level `env:` value does **not** reach the container — only names
    listed in the docker plugin's `environment:` list do. This is the most common
@@ -60,3 +66,7 @@ re-pads markdown tables to its own column widths.
 - The Lighthouse step runs on `main` only by default, and passes its config
   explicitly (`--config .lighthouse.cjs`) because that filename is not one lhci
   discovers on its own.
+- A rust target builds and tests with `--locked`, so the repository has to carry
+  a `Cargo.lock` that matches `Cargo.toml`. A missing or stale lockfile fails
+  those commands rather than silently resolving new versions — which is the
+  point of the flag, and the reason to commit the lockfile with the manifest.

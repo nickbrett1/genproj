@@ -16,6 +16,10 @@
       "minimum": 0,
       "description": "Number of capabilities. Present on the HTTP response only."
     },
+    "configurationSchema": {
+      "type": "object",
+      "description": "JSON Schema for project-level configuration — the fields that describe the project as a whole rather than any one capability. `language` (Primary Language) is the first: it governs the single-valued outputs (CI image and commands, release artifact paths, sonar settings, devcontainer base), so it belongs to the project, not to a capability."
+    },
     "capabilities": {
       "type": "array",
       "items": { "$ref": "#/$defs/capability" }
@@ -29,6 +33,8 @@
         "name",
         "description",
         "category",
+        "icon",
+        "iconColor",
         "selectedByDefault",
         "provides",
         "dependencies",
@@ -61,6 +67,44 @@
             "monitoring",
             "apple-development"
           ]
+        },
+        "icon": {
+          "type": "string",
+          "enum": [
+            "robot",
+            "code",
+            "pencil",
+            "file",
+            "python",
+            "node",
+            "java",
+            "rust",
+            "docker",
+            "circle",
+            "github",
+            "cloudflare",
+            "cloud",
+            "play",
+            "secret",
+            "chart",
+            "globe"
+          ],
+          "description": "Icon token the UI renders for this capability. A client maps the token to a glyph locally, so a new capability that reuses an existing token needs no client change; only a genuinely new glyph does. The token set lives here rather than in the UI so the catalog is the single source of truth."
+        },
+        "iconColor": {
+          "type": "string",
+          "enum": [
+            "blue",
+            "gray",
+            "pink",
+            "yellow",
+            "green",
+            "red",
+            "orange",
+            "cyan",
+            "purple"
+          ],
+          "description": "Accent colour token for `icon`. Mapped to a concrete colour by the client."
         },
         "selectedByDefault": {
           "type": "boolean",

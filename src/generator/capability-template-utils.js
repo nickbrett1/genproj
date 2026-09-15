@@ -1,3 +1,5 @@
+import { UNIVERSAL_TARGET, UNAME_CANDIDATES } from "./target-labels.js";
+
 /**
  * Emits the `.agents/mcp_config.json` block — Cursor / Antigravity target.
  *
@@ -258,9 +260,25 @@ function getGooseMcpConfig(context) {
   };
 }
 
+// The primary language is the single source of truth for the sonar flavour
+// too. Rust has no mapping: emit no `sonar.*.reportPaths` line rather than
+// defaulting to JavaScript, which used to write
+// `sonar.javascript.lcov.reportPaths=...` for a project with no JavaScript in
+// it — the default was a live latent bug for every unset sonarcloud project.
+const SONAR_LANGUAGE_BY_PRIMARY = {
+  python: "Python",
+  node: "JavaScript",
+  java: "Java",
+};
+
 function getSonarCloudTemplateData(context) {
   const config = context.configuration?.sonarcloud || {};
-  const language = config.language || "JavaScript";
+  const primary = resolveProjectLanguage(context);
+  // `sonarcloud.language` is a deprecated explicit override, kept for one
+  // release so an in-flight project does not change behaviour under it. New
+  // projects declare the primary language instead.
+  const language =
+    config.language || SONAR_LANGUAGE_BY_PRIMARY[primary] || undefined;
   let languageSettings = "";
 
   switch (language) {
@@ -271,7 +289,7 @@ function getSonarCloudTemplateData(context) {
     }
     case "Python": {
       languageSettings = "sonar.python.coverage.reportPaths=coverage.xml";
-      if (context.capabilities?.includes("devcontainer-python")) {
+      if (primary === "python") {
         languageSettings += "\nsonar.python.version=3.12";
       }
 
@@ -282,7 +300,7 @@ function getSonarCloudTemplateData(context) {
 
       break;
     }
-    // No default
+    // No default: rust (and anything else) emits no reportPaths line.
   }
 
   const wranglerConfig = context.configuration?.["cloudflare-wrangler"] || {};
@@ -565,7 +583,7 @@ function _applyCloudflareConfig(
  * - Node: ESLint + SonarJS via `npm run lint` (existing behavior).
  */
 function _applyCodeQualityConfig(data, context) {
-  const language = resolveLanguage(context);
+  const language = resolveProjectLanguage(context);
   if (language === "python") {
     if (
       context.capabilities.includes("code-quality-python") ||
@@ -616,14 +634,31 @@ export function resolveDopplerTarget(context) {
 }
 
 /**
- * Resolves the project language from the selected capabilities.
- * The selected `devcontainer-*` capability is the source of truth; an explicit
- * top-level `language` configuration option (`python | node | java | rust`)
- * overrides it. Defaults to `node` for backward compatibility.
+ * Resolves the project's **Primary Language** — the single-valued,
+ * project-level fact that governs the single-valued outputs: the CI image and
+ * commands, `releaseArtifactPaths`, the sonar settings and the devcontainer
+ * base.
+ *
+ * Precedence is **declared > derived**. A top-level `configuration.language`
+ * (`python | node | java | rust`) always wins, even when no `devcontainer-*`
+ * for it is selected — that combination is legal and intentional (e.g. a rust
+ * base image with only python dev tooling). Only when nothing is declared does
+ * the function fall back to the selected `devcontainer-*` capability, and then
+ * to `node` for backward compatibility.
+ *
+ * This replaced two pickers with two different rules — `resolveLanguage`'s
+ * fixed precedence and the devcontainer Dockerfile's
+ * `developmentContainerCapabilities[0]` ("first selected") — which could
+ * disagree and split the devcontainer base from CI in an order-dependent way.
+ * Both now read this one function, so whatever it returns is *the* answer.
+ *
+ * `docker-container.language` is still read as a deprecated alias for one
+ * release; prefer the project-level `language`.
+ *
  * @param {Object} context - Generation context (capabilities, configuration)
- * @returns {'python'|'node'|'java'|'rust'} The resolved language
+ * @returns {'python'|'node'|'java'|'rust'} The resolved primary language
  */
-export function resolveLanguage(context) {
+export function resolveProjectLanguage(context) {
   const explicit =
     context.configuration?.language ??
     context.configuration?.["docker-container"]?.language;
@@ -638,6 +673,28 @@ export function resolveLanguage(context) {
   if (caps.some((c) => c.startsWith("devcontainer-java"))) return "java";
   if (caps.some((c) => c.startsWith("devcontainer-rust"))) return "rust";
   return "node";
+}
+
+/**
+ * Deprecated alias for {@link resolveProjectLanguage}. Kept exported so the
+ * rename does not break callers; remove once nothing imports it.
+ * @param {Object} context - Generation context
+ * @returns {'python'|'node'|'java'|'rust'}
+ */
+export const resolveLanguage = resolveProjectLanguage;
+
+/**
+ * The devcontainer capability that provides the primary language's toolchain —
+ * `devcontainer-${primaryLanguage}`. The devcontainer **base** (Dockerfile and
+ * JSON: remoteUser, features, remoteEnv PATH) follows this rather than the
+ * first-selected `devcontainer-*`, so the base and CI cannot disagree. The
+ * *other* selected devcontainers are still merged in as toolboxes.
+ *
+ * @param {Object} context - Generation context
+ * @returns {string} A devcontainer capability id, e.g. "devcontainer-python"
+ */
+export function primaryDevcontainerCapabilityId(context) {
+  return `devcontainer-${resolveProjectLanguage(context)}`;
 }
 
 /**
@@ -729,7 +786,7 @@ function getHostPort(publishPort, exposePort) {
  */
 function getDockerContainerTemplateData(context) {
   const config = context.configuration?.["docker-container"] || {};
-  const language = resolveLanguage(context);
+  const language = resolveProjectLanguage(context);
   const isPython = language === "python";
   const isNode = language === "node";
   const networkMode = config.networkMode || "bridge";
@@ -1173,7 +1230,7 @@ function getCircleCiTemplateData(context) {
     ? `\n          context: ${contextName}`
     : "";
 
-  const language = resolveLanguage(context);
+  const language = resolveProjectLanguage(context);
   if (language === "python") {
     data.ciOrbs = "";
     data.buildExecutor = "    docker:\n      - image: cimg/python:3.12\n";
@@ -1358,6 +1415,221 @@ ${extraYaml}${envBlock}${commandYaml}`;
 }
 
 /**
+ * A darwin target cannot be built in a Linux container: it needs the macOS SDK
+ * and the linker that ships with Xcode. Those steps therefore run on the agent
+ * HOST, with no docker plugin - which is why the queue's Macs need the
+ * toolchain installed on the host and not only in the image. The queue is
+ * unchanged because the agent process already runs on macOS; it is the docker
+ * plugin, and only that, which made every other step a Linux container.
+ *
+ * @param {string} target - A release target label
+ * @returns {boolean} Whether the target needs a macOS host
+ */
+function isDarwinTarget(target) {
+  return target.endsWith("-apple-darwin");
+}
+
+/**
+ * Buildkite step keys allow letters, digits, dashes and underscores; a target
+ * label contains dots or dashes where a triple has a version or a vendor.
+ *
+ * @param {string} target - A release target label
+ * @returns {string} A step key unique to that target
+ */
+function targetStepKey(target) {
+  return `build_${target.replaceAll(/[.-]/g, "_")}`;
+}
+
+/**
+ * The dpkg architecture name for a target triple.
+ *
+ * Needed because Debian's `musl-tools` is built for the host architecture only:
+ * on the fleet's arm64 containers, `apt-get install musl-tools` installs an
+ * arm64 `musl-gcc`, which cannot link an x86_64 target at all. Asked for with
+ * `:<arch>` it installs the target's own, which is the only useful one.
+ *
+ * @param {string} target - A release target label
+ * @returns {string} The dpkg architecture
+ */
+function debianArchForTarget(target) {
+  const arch = target.split("-")[0];
+  const debian = {
+    x86_64: "amd64",
+    aarch64: "arm64",
+    i686: "i386",
+    armv7: "armhf",
+  };
+  return debian[arch] || arch;
+}
+
+/**
+ * The env var rustc reads to pick a target's linker:
+ * `CARGO_TARGET_<TRIPLE_UPPER_UNDERSCORE>_LINKER`.
+ *
+ * Setting it is what makes a musl build musl. Without it rustc's final link
+ * goes through the host `cc` — `aarch64-linux-gnu-gcc` in the fleet's arm64
+ * containers — so an x86_64 target dies with `cc: error: unrecognized
+ * command-line option '-m64'`, a failure with nothing to do with musl. Note
+ * `CC_x86_64_unknown_linux_musl` is the *wrong* knob: it is read by the `cc`
+ * crate for build scripts, not by rustc's link.
+ *
+ * @param {string} target - A release target label
+ * @returns {string} The linker env var name
+ */
+function targetLinkerEnvVar(target) {
+  return `CARGO_TARGET_${target.toUpperCase().replaceAll("-", "_")}_LINKER`;
+}
+
+/**
+ * The commands for one target's rust build.
+ *
+ * Building for a target that is not the build host's own triple cannot be
+ * followed by running the result, so tests run once - in the first target's step,
+ * against the host toolchain - and the other steps build only. The alternative,
+ * a `cargo test --target <triple>`, fails at the first executed test binary with
+ * "cannot execute binary file".
+ *
+ * @param {string} target - A release target label
+ * @param {boolean} runTests - Whether this step also runs the test suite
+ * @param {string} projectBinaryName - The cargo package/binary name
+ * @returns {string[]} Command blocks for the step
+ */
+function rustTargetCommands(target, runTests, projectBinaryName) {
+  const isMusl = target.endsWith("-linux-musl");
+  return [
+    `|
+        mkdir -p "build/${target}/bin"
+        rustup target add "${target}"
+${
+  isMusl
+    ? `        # The musl C toolchain, for the TARGET's architecture. Debian's
+        # musl-tools is built for the host architecture only, so a plain
+        # install puts an arm64 \`musl-gcc\` on the fleet's arm64 containers -
+        # inert for an x86_64 target. Adding the target's architecture and
+        # installing it multiarch repoints /usr/bin/musl-gcc at that arch's
+        # wrapper, which is what the linker variable in this step's env names.
+        dpkg --add-architecture ${debianArchForTarget(target)}
+        apt-get update && apt-get install -y --no-install-recommends musl-tools:${debianArchForTarget(target)}
+`
+    : ""
+}        cargo build --release --locked --target "${target}"
+        if [ -f "target/${target}/release/${projectBinaryName}" ]; then
+          cp "target/${target}/release/${projectBinaryName}" "build/${target}/bin/"
+        else
+          echo "target/${target}/release/${projectBinaryName} was not produced. Name the cargo package ${projectBinaryName}, or copy your binary into build/${target}/bin/ here." >&2
+        fi`,
+    ...(runTests ? ["cargo test --locked"] : []),
+  ];
+}
+
+/**
+ * The build steps a project's release needs: one per declared target, or the
+ * single default step when it declares none.
+ *
+ * One step per target is what makes `github-release.targets` mean something -
+ * the labels are the same table the release manifest is keyed by, so the
+ * pipeline and whatever consumes the release agree on one vocabulary instead of
+ * the consumer fetching a file the pipeline never built. `build/<target>/` is
+ * the contract between them: the build step writes its payload there, the
+ * release step uploads exactly that path, and scripts/release-artifacts.sh packs
+ * it into `<project>-<target>.tar.gz`.
+ *
+ * @param {Object} params - Build inputs
+ * @param {string} params.language - The primary language
+ * @param {Object} params.commands - The language's default command set
+ * @param {string[]} params.releaseTargets - Declared release targets
+ * @param {string[]} params.singleArtifactPaths - Default artifact paths
+ * @param {string} params.projectBinaryName - The cargo package/binary name
+ * @returns {Object[]} One entry per build step
+ */
+function releaseBuildUnits({
+  language,
+  commands,
+  releaseTargets,
+  singleArtifactPaths,
+  projectBinaryName,
+}) {
+  if (releaseTargets.length === 0) {
+    return [
+      {
+        key: "build",
+        label: `:hammer: Build and test (${language})`,
+        target: null,
+        commands: commands[language],
+        artifactPaths: singleArtifactPaths,
+        env: {},
+      },
+    ];
+  }
+
+  return releaseTargets.map((target, index) => ({
+    key: targetStepKey(target),
+    label: `:hammer: Build (${language}, ${target})`,
+    target,
+    commands: rustTargetCommands(target, index === 0, projectBinaryName),
+    artifactPaths: [`build/${target}/**`],
+    // A musl target needs its own linker named explicitly; see
+    // targetLinkerEnvVar. Nothing else about a target changes the environment.
+    env: target.endsWith("-linux-musl")
+      ? { [targetLinkerEnvVar(target)]: "musl-gcc" }
+      : {},
+  }));
+}
+
+/**
+ * Renders one build step.
+ *
+ * @param {Object} unit - A release build unit
+ * @param {Object} options - Step options
+ * @param {string} options.queue - The agent queue
+ * @param {string} options.image - The language's toolchain image
+ * @param {boolean} options.hasGitGuardian - Whether the secret scan gates this
+ * @param {boolean} options.hasGithubRelease - Whether anything consumes the output
+ * @returns {string} The step, as YAML
+ */
+function renderBuildStep(
+  unit,
+  { queue, image, hasGitGuardian, hasGithubRelease },
+) {
+  const buildCommands = unit.commands.map((c) => `      - ${c}`).join("\n");
+  // A release is the only thing that reads this step's output, so the upload
+  // exists only when the capability is selected.
+  const buildArtifacts =
+    hasGithubRelease && unit.artifactPaths.length
+      ? `    # Uploaded so the release step can attach what this build produced and
+    # tested instead of rebuilding it.
+    artifact_paths:
+${unit.artifactPaths.map((p) => `      - "${p}"`).join("\n")}
+`
+      : "";
+  // RELEASE_TARGET names the target for anything the project adds to this step;
+  // the generated commands already have it spelled out literally. A musl target
+  // adds the linker variable, without which rustc links with the host `cc`.
+  const env = {
+    ...(unit.target ? { RELEASE_TARGET: unit.target } : {}),
+    ...(unit.env || {}),
+  };
+  const envKeys = Object.keys(env);
+  const buildEnv = envKeys.length
+    ? `    env:
+${envKeys.map((name) => `      ${name}: ${env[name]}`).join("\n")}
+`
+    : "";
+  // No docker plugin for a darwin target: the plugin would run the step in a
+  // Linux container, and a macOS binary cannot be linked there.
+  const buildPlugins = isDarwinTarget(unit.target || "")
+    ? ""
+    : `    plugins:
+${_bkDockerPlugin(image)}`;
+  return `
+  - label: "${unit.label}"
+    key: ${unit.key}
+${hasGitGuardian ? "    depends_on:\n      - secret_scan\n" : ""}${_bkAgents(queue)}${buildEnv}${buildArtifacts}${buildPlugins}    commands:
+${buildCommands}
+`;
+}
+
+/**
  * Builds the generated project's `.buildkite/pipeline.yml`.
  *
  * The step set is **capability-driven**, mirroring the CircleCI template: the
@@ -1376,7 +1648,7 @@ ${extraYaml}${envBlock}${commandYaml}`;
 function getBuildkiteTemplateData(context) {
   const config = context.configuration?.buildkite || {};
   const caps = context.capabilities || [];
-  const language = resolveLanguage(context);
+  const language = resolveProjectLanguage(context);
   const queue = config.queue || "mac-studio-linux";
   const branchGating = config.branchGating !== false;
   const usesPlaywright = caps.includes("playwright");
@@ -1396,12 +1668,37 @@ function getBuildkiteTemplateData(context) {
   // a pattern matches nothing, so a build that outputs elsewhere costs nothing
   // until it is corrected. Change them here and the matching download in the
   // release step together.
-  const releaseArtifactPaths =
+  const singleArtifactPaths =
     language === "node"
       ? ["dist/**"]
       : language === "rust"
         ? ["target/release/**"]
-        : [];
+        : language === "python"
+          ? ["dist/**"]
+          : [];
+
+  // Per-target release builds (`github-release.targets`). Empty is the
+  // single-artifact case above. With targets declared the build becomes a
+  // matrix - one step per target, each uploading its own payload - because one
+  // artifact is only the right answer for a project that ships one platform,
+  // and because the target labels are the same table the release manifest is
+  // keyed by: the pipeline and whatever consumes the release have to agree on
+  // one vocabulary, or the consumer fetches a file the pipeline never built.
+  //
+  // `build/<target>/` is the contract between the two: the build step writes
+  // its per-target payload there, the release step uploads exactly that path,
+  // and scripts/release-artifacts.sh packs it into `<project>-<target>.tar.gz`.
+  const grConfig = context.configuration?.["github-release"] || {};
+  const releaseTargets = Array.isArray(grConfig.targets)
+    ? grConfig.targets.filter(
+        (target) => typeof target === "string" && target.trim() !== "",
+      )
+    : [];
+  const projectBinaryName = context.projectName || context.name || "my-project";
+
+  const releaseArtifactPaths = releaseTargets.length
+    ? releaseTargets.map((target) => `build/${target}/**`)
+    : singleArtifactPaths;
 
   const images = {
     node: "node:22-bookworm",
@@ -1460,6 +1757,14 @@ function getBuildkiteTemplateData(context) {
     ],
     python: [
       'python -m pip install --no-cache-dir -e ".[dev]"',
+      // The release attaches what the build produced, so the build has to
+      // produce a distribution: a `dist/` path with nothing creating `dist/`
+      // is the silent-empty-match trap - `artifact upload` does not fail on a
+      // pattern that matches nothing, so the release would silently be
+      // notes-only. `python -m build` makes the wheel + sdist the existing
+      // release-artifacts.sh already knows how to pack.
+      "python -m pip install --no-cache-dir build",
+      "python -m build",
       "ruff check src tests",
       "pytest -q",
     ],
@@ -1495,26 +1800,31 @@ ${_bkDockerPlugin(
   }
 
   // --- build + test --------------------------------------------------------
-  const buildCommands = commands[language]
-    .map((c) => `      - ${c}`)
-    .join("\n");
-  // A release is the only thing that reads this step's output, so the upload
-  // exists only when the capability is selected.
-  const buildArtifacts =
-    hasGithubRelease && releaseArtifactPaths.length
-      ? `    # Uploaded so the release step can attach what this build produced and
-    # tested instead of rebuilding it.
-    artifact_paths:
-${releaseArtifactPaths.map((p) => `      - "${p}"`).join("\n")}
-`
-      : "";
-  steps.push(`
-  - label: ":hammer: Build and test (${language})"
-    key: build
-${hasGitGuardian ? "    depends_on:\n      - secret_scan\n" : ""}${_bkAgents(queue)}${buildArtifacts}    plugins:
-${_bkDockerPlugin(image)}    commands:
-${buildCommands}
-`);
+  const buildUnits = releaseBuildUnits({
+    language,
+    commands,
+    releaseTargets,
+    singleArtifactPaths,
+    projectBinaryName,
+  });
+  for (const unit of buildUnits) {
+    steps.push(
+      renderBuildStep(unit, {
+        queue,
+        image,
+        hasGitGuardian,
+        hasGithubRelease,
+      }),
+    );
+  }
+
+  // Every step that consumes the build's output depends on all of its steps,
+  // not just one: with targets declared the build is a matrix, and a release
+  // that depended on a single target's step would attach whatever that one
+  // produced and call the release complete.
+  const buildDependencies = `    depends_on:
+${buildUnits.map((unit) => `      - ${unit.key}`).join("\n")}
+`;
 
   // --- Lighthouse (lighthouse-ci) ------------------------------------------
   // A release-quality gate, so main-only by default - matching CircleCI's job
@@ -1523,9 +1833,7 @@ ${buildCommands}
     steps.push(`
   - label: ":chrome: Lighthouse CI"
     key: lighthouse
-    depends_on:
-      - build
-${branchGating ? '    if: build.branch == "main"\n' : ""}${_bkAgents(queue)}    plugins:
+${buildDependencies}${branchGating ? '    if: build.branch == "main"\n' : ""}${_bkAgents(queue)}    plugins:
 ${_bkDockerPlugin(playwrightImage, ["CHROME_PATH"])}    # CHROME_PATH must be listed as a NAME in the plugin's environment: above.
     # A step-level env: value never enters the container.
     env:
@@ -1623,9 +1931,7 @@ ${_bkDockerPlugin(playwrightImage, ["CHROME_PATH"])}    # CHROME_PATH must be li
     steps.push(`
   - label: ":rocket: Deploy (production)"
     key: deploy
-    depends_on:
-      - build
-    if: build.branch == "main"
+${buildDependencies}    if: build.branch == "main"
 ${_bkAgents(queue)}    plugins:
 ${deployPlugins}    commands:
       - ${npmActivate}
@@ -1639,9 +1945,7 @@ ${installDoppler}${setupWrangler}${buildStep}${deployCommand("default")}${syncSe
       steps.push(`
   - label: ":rocket: Deploy preview"
     key: deploy_preview
-    depends_on:
-      - build
-    if: build.branch != "main" && build.branch !~ /^dependabot\\//
+${buildDependencies}    if: build.branch != "main" && build.branch !~ /^dependabot\\//
 ${_bkAgents(queue)}    plugins:
 ${_bkDockerPlugin(image, [
   ...(hasDoppler ? [] : ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_ACCOUNT_ID"]),
@@ -1671,9 +1975,7 @@ ${syncSecrets("preview")}`);
     steps.push(`
   - label: ":docker: Build and publish image (GHCR)"
     key: docker_publish
-    depends_on:
-      - build
-    if: build.branch == "main"
+${buildDependencies}    if: build.branch == "main"
 ${_bkAgents(queue)}    env:
       IMAGE: ${imageRef}
       CACHE_REF: ${cacheRef}
@@ -1705,8 +2007,12 @@ ${_bkAgents(queue)}    env:
   // commit - so a release can only exist for code that was validated in the
   // same build. Same shape as the deploy step: depends_on build, main only.
   if (hasGithubRelease) {
-    const grConfig = context.configuration?.["github-release"] || {};
-    const tagPrefix = grConfig.tagPrefix || "v";
+    // The tag prefix is fixed at `v` and is not configurable: it is written and
+    // read only by this step, so a project-specific prefix buys nothing that a
+    // declared choice would not already say. Adopting a repo that already has a
+    // differently-prefixed tag series is the one case it would have served;
+    // that project can re-tag instead of carrying a knob every other project
+    // would never touch.
     // The release flags are fixed: notes always come from the merged pull
     // requests in the release (`--generate-notes`), the release is always
     // published rather than left as a draft or flagged pre-release, and
@@ -1786,9 +2092,7 @@ ${releaseArtifactPaths
     steps.push(`
   - label: ":bookmark: Release"
     key: release
-    depends_on:
-      - build
-    if: build.branch == "main"
+${buildDependencies}    if: build.branch == "main"
 ${_bkAgents(queue)}    plugins:
 ${_bkDockerPlugin(
   image,
@@ -1804,13 +2108,13 @@ ${installGh}${releaseToken}      - |
         # The version is a patch bump of the newest existing tag, so there is no
         # version file to keep in sync and no bookkeeping to forget.
         git fetch --quiet --force --tags
-        LATEST="$$(git tag --list '${tagPrefix}*' --sort=-v:refname | head -1)"
+        LATEST="$$(git tag --list 'v*' --sort=-v:refname | head -1)"
         if [ -z "$$LATEST" ]; then
           VERSION="0.1.0"
         else
-          VERSION="$$(echo "$$LATEST" | sed -e 's/^${tagPrefix}//' | awk -F. '{printf "%d.%d.%d", $$1, $$2, $$3 + 1}')"
+          VERSION="$$(echo "$$LATEST" | sed -e 's/^v//' | awk -F. '{printf "%d.%d.%d", $$1, $$2, $$3 + 1}')"
         fi
-        TAG="${tagPrefix}$$VERSION"
+        TAG="v$$VERSION"
         # Retried or re-run builds must not fail on a tag that already exists.
         if git ls-remote --exit-code --tags origin "refs/tags/$$TAG" >/dev/null 2>&1; then
           echo "$$TAG already exists on origin - nothing to release."
@@ -1851,7 +2155,6 @@ ${releaseArtifacts}      - |
     buildkiteQueue: queue,
     buildkiteImage: image,
     buildkiteLanguage: language,
-    buildkiteCommands: buildCommands,
     // Each block starts with a newline so they concatenate cleanly; the
     // leading one is dropped because the template already ends its `steps:`
     // line. (Prettier strips a blank line there, and the generated project
@@ -1867,21 +2170,67 @@ ${releaseArtifacts}      - |
  * There is no GitHub Actions workflow: the release is a Buildkite step (see
  * `getBuildkiteTemplateData`), so Buildkite stays the only validator and the
  * tag is only ever created for a commit that passed build and test in the same
- * build. The tag prefix is the one remaining knob; the notes and publish
- * behaviour is fixed.
+ * build. The tag prefix is fixed at `v`; the notes and publish behaviour is
+ * fixed too, so nothing here is configurable.
  *
  * @param {Object} context - Template context (capabilities, configuration)
  * @returns {Object} GitHub Release template data
  */
 function getGithubReleaseTemplateData(context) {
   const config = context.configuration?.["github-release"] || {};
-  const tagPrefix = config.tagPrefix || "v";
+  const targets = Array.isArray(config.targets) ? config.targets : [];
   return {
-    githubReleaseTagPrefix: tagPrefix,
+    githubReleaseTargets: targets,
+    // The per-target loop in release-artifacts.sh iterates this list, so it is
+    // rendered as a shell word list (empty when no targets are declared).
+    githubReleaseTargetsJoined: targets.join(" "),
+    // The universal key (see target-labels.js UNIVERSAL_TARGET): the asset name
+    // and manifest key for a payload that is not architecture-specific.
+    githubReleaseUniversalTarget: UNIVERSAL_TARGET,
     // Notes are always generated from the release's merged pull requests and
     // classified by .github/release.yml; that is not configurable.
     githubReleaseNotesSource:
       "Generated by GitHub from the pull requests in the release, classified by `.github/release.yml` (`--generate-notes`).",
+  };
+}
+
+/**
+ * The template data for the launcher, `scripts/fetch-launch.sh`.
+ *
+ * The launcher is a shell script, so the one thing that would otherwise be
+ * duplicated - the `uname` -> candidate-label table - is *rendered* here from
+ * `target-labels.js`, the same module the pipeline builds its targets from. A
+ * shell script cannot import it, but it can be generated from it, which is the
+ * structural version of the same guarantee: one table, two readers.
+ *
+ * @param {Object} context - Template context (capabilities, configuration)
+ * @returns {Object} Launcher template data
+ */
+function getFetchLaunchTemplateData(context) {
+  const config = context.configuration?.["fetch-launch"] || {};
+  const projectName = context.projectName || context.name || "my-project";
+  const owner = context.registryNamespace || "<owner>";
+  const launcherName = config.launcherName || projectName;
+  const envFile = config.envFile || "";
+  const candidates = Object.entries(UNAME_CANDIDATES)
+    .flatMap(([osName, arches]) =>
+      Object.entries(arches).map(
+        ([machine, labels]) =>
+          `    ${osName}/${machine}) echo "${[...labels, UNIVERSAL_TARGET].join(" ")}" ;;`,
+      ),
+    )
+    .join("\n");
+
+  return {
+    fetchLaunchLauncherName: launcherName,
+    fetchLaunchPrefix: config.prefix || projectName,
+    fetchLaunchEnvFile: envFile,
+    fetchLaunchEnvFileDescription: envFile
+      ? `\`${envFile}\``
+      : "unset — no env file is sourced",
+    fetchLaunchManifestUrl: `https://github.com/${owner}/${projectName}/releases/latest/download/manifest.json`,
+    fetchLaunchCandidates: candidates,
+    fetchLaunchUniversalTarget: UNIVERSAL_TARGET,
   };
 }
 
@@ -1959,6 +2308,7 @@ export function getCapabilityTemplateData(capabilityId, context) {
     circleci: getCircleCiTemplateData,
     buildkite: getBuildkiteTemplateData,
     "github-release": getGithubReleaseTemplateData,
+    "fetch-launch": getFetchLaunchTemplateData,
     dependabot: getDependabotTemplateData,
     "docker-container": getDockerContainerTemplateData,
     doppler: (ctx) => {
