@@ -256,6 +256,19 @@ export const capabilityTemplates = {
       templateId: "github-release-artifacts",
     },
   ],
+  "fetch-launch": [
+    {
+      id: "fetch-launch-readme",
+      filePath: "LAUNCHING.md",
+      templateId: "fetch-launch-readme",
+    },
+    {
+      id: "fetch-launch-script",
+      filePath: "scripts/fetch-launch.sh",
+      templateId: "scripts-fetch-launch-sh",
+      isExecutable: true,
+    },
+  ],
   doppler: [
     {
       id: "doppler-yaml",

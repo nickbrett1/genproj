@@ -47,6 +47,8 @@ const mcpStreamableHttpProxyJs =
 const packageJsonTemplate = templateFiles["package-json.template"];
 const wranglerJsonc = templateFiles["wrangler.jsonc.template"];
 const wranglerTemplateJsonc = templateFiles["wrangler.template.jsonc.template"];
+const scriptsFetchLaunchSh = templateFiles["scripts-fetch-launch.sh.template"];
+const fetchLaunchReadme = templateFiles["fetch-launch-readme.template"];
 const scriptsCloudLoginSh = templateFiles["scripts-cloud-login.sh.template"];
 const scriptsRunWranglerDevelopmentSh =
   templateFiles["scripts-run-wrangler-dev-sh.template"];
@@ -85,6 +87,7 @@ import {
   assertNoGooseEnvVarReferences,
 } from "./capability-template-utils.js";
 import {
+  validateFetchLaunch,
   validatePrimaryLanguage,
   validateReleaseTargets,
 } from "./project-validation.js";
@@ -628,6 +631,8 @@ const templateImports = {
   "wrangler-jsonc": wranglerJsonc,
   "wrangler-template-jsonc": wranglerTemplateJsonc,
   "scripts-cloud-login-sh": scriptsCloudLoginSh,
+  "scripts-fetch-launch-sh": scriptsFetchLaunchSh,
+  "fetch-launch-readme": fetchLaunchReadme,
   "scripts-run-wrangler-dev-sh": scriptsRunWranglerDevelopmentSh,
   "scripts-setup-wrangler-config-sh": scriptsSetupWranglerConfigSh,
   "scripts-sync-doppler-secrets-sh": scriptsSyncDopplerSecretsSh,
@@ -2123,6 +2128,7 @@ export async function generateAllFiles(context) {
   // that cannot produce the artifacts it declares is worse than no matrix.
   validatePrimaryLanguage(context);
   validateReleaseTargets(context);
+  validateFetchLaunch(context);
 
   const templateEngine = new TemplateEngine();
   await templateEngine.initialize();

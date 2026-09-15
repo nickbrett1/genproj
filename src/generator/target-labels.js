@@ -55,8 +55,13 @@ export const UNIVERSAL_TARGET = "any";
  *
  * `Darwin`/`x86_64` is listed for completeness only: it is not a fleet target
  * and no queue produces it (there is no Intel Mac runner).
+ *
+ * Exported because the launcher is a shell script: {@link getFetchLaunchTemplateData}
+ * renders this table into its `case` statement rather than restating it, so the
+ * launcher and the pipeline read the same table in the only way a shell script
+ * can.
  */
-const UNAME_CANDIDATES = Object.freeze({
+export const UNAME_CANDIDATES = Object.freeze({
   Darwin: Object.freeze({
     arm64: Object.freeze(["aarch64-apple-darwin"]),
     x86_64: Object.freeze(["x86_64-apple-darwin"]),

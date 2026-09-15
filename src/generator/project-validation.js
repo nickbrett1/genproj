@@ -85,3 +85,58 @@ export function validateReleaseTargets(context) {
     "targets",
   );
 }
+
+/**
+ * The launcher has to be able to resolve *something* for the host it runs on,
+ * and the payload it installs has to be runnable.
+ *
+ * Two conditions break that, and both fail silently if left to generation time:
+ *
+ * 1. **Java.** genproj generates a Java devcontainer and no build system, so a
+ *    java release carries notes and no assets. A launcher for it would boot,
+ *    find nothing, and never be able to update.
+ * 2. **Rust with no targets.** A rust release publishes per-target assets: with
+ *    no targets the build uploads `target/release/**`, nothing packs it into
+ *    `release/`, and the manifest is never written. The launcher would resolve
+ *    no label, forever - the worst outcome, because it looks installed and
+ *    healthy.
+ *
+ * A node or python project is allowed: its release publishes one
+ * architecture-independent asset under the universal key, which the launcher's
+ * candidate list already falls back to. Whether that asset is a *runnable
+ * payload* is the project's business - see LAUNCHING.md - but the launcher can
+ * at least find and install it.
+ *
+ * @param {Object} context - Generation context (capabilities, configuration)
+ * @throws {ValidationError} When the launcher could never resolve a payload
+ */
+export function validateFetchLaunch(context) {
+  const capabilities = context?.capabilities || [];
+  if (!capabilities.includes("fetch-launch")) return;
+
+  const language = resolveProjectLanguage(context);
+
+  if (language === "java") {
+    throw new ValidationError(
+      "This project selects fetch-launch, which installs and runs a release " +
+        "artifact, but its primary language is java: genproj generates a java " +
+        "devcontainer and no build system, so the release carries notes and no " +
+        "assets and the launcher would have nothing to run. Give the project a " +
+        "build that publishes an artifact, or drop fetch-launch.",
+      "fetch-launch",
+    );
+  }
+
+  const targets = context?.configuration?.["github-release"]?.targets;
+  const hasTargets = Array.isArray(targets) && targets.length > 0;
+  if (language === "rust" && !hasTargets) {
+    throw new ValidationError(
+      "This project selects fetch-launch but declares no " +
+        "github-release.targets, so the release would publish no asset for a " +
+        "launcher to resolve and it could never update. Set " +
+        "github-release.targets to the platforms this project ships, for " +
+        'example ["aarch64-apple-darwin", "x86_64-unknown-linux-musl"].',
+      "targets",
+    );
+  }
+}

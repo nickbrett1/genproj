@@ -533,7 +533,7 @@
       },
       "vscodeExtensions": [],
       "benefits": [
-        "Runs on your own hardware — no per-minute metering",
+        "Runs on your own hardware \u2014 no per-minute metering",
         "No manual setup: the pipeline and its push webhook are provisioned for you",
         "Installs dependencies once per build rather than once per step"
       ],
@@ -586,6 +586,46 @@
       "website": "https://docs.github.com/en/repositories/releasing-projects-on-github/managing-releases-in-a-repository"
     },
     {
+      "id": "fetch-launch",
+      "name": "Fetch and Launch",
+      "description": "Seeds scripts/fetch-launch.sh: a launcher that fetches the newest release for the host, verifies its sha256 against the release manifest, unpacks it and execs it. Fail-open by design - a host never fails to boot because GitHub was unreachable. It consumes the per-target artifacts github-release publishes, so the two are selected together.",
+      "category": "deployment",
+      "icon": "play",
+      "iconColor": "green",
+      "selectedByDefault": false,
+      "provides": [],
+      "dependencies": ["github-release"],
+      "conflicts": ["docker-container"],
+      "requiresAuth": [],
+      "authServices": [],
+      "externalServices": [],
+      "configurationSchema": {
+        "type": "object",
+        "properties": {
+          "launcherName": {
+            "type": "string",
+            "description": "Executable the launcher runs at current/bin/<name>, and therefore the name the release payload has to provide. Defaults to the project name."
+          },
+          "prefix": {
+            "type": "string",
+            "description": "Directory name under $HOME/.local/share that holds releases/ and the current symlink. Defaults to the project name."
+          },
+          "envFile": {
+            "type": "string",
+            "description": "Env file sourced (with set -a) before the payload starts, so host-local configuration reaches an app fetched from GitHub. Unset means none is sourced. Secrets belong in this file on the host, never in a release."
+          }
+        }
+      },
+      "benefits": [
+        "A host starts once and keeps itself on the newest release",
+        "The payload is verified against the manifest's sha256 before it becomes current",
+        "Fail-open: an unreachable GitHub never stops a host from booting",
+        "No daemon, no timer, no rollback - one fetch, one symlink flip, one exec"
+      ],
+      "links": [],
+      "website": "https://docs.github.com/en/repositories/releasing-projects-on-github/linking-to-releases"
+    },
+    {
       "id": "doppler",
       "name": "Doppler Secrets Management",
       "description": "Integrates Doppler for secure secrets management. Enables the various MCP servers that rely on privileged tokens to access their services (e.g. CircleCI, GitHub, SonarQube).",
@@ -627,7 +667,7 @@
             "type": "string",
             "enum": ["common", "new"],
             "default": "common",
-            "description": "Where this repo's secrets live: \"common\" reuses the shared common project (default — no new Doppler project is created); \"new\" creates a dedicated Doppler project for this repo."
+            "description": "Where this repo's secrets live: \"common\" reuses the shared common project (default \u2014 no new Doppler project is created); \"new\" creates a dedicated Doppler project for this repo."
           }
         }
       },
@@ -735,7 +775,7 @@
     {
       "id": "code-quality",
       "name": "ESLint + SonarJS",
-      "description": "Adds fast, zero-configuration code quality linting using eslint-plugin-sonarjs and eslint-plugin-security. Runs in ~5–10s vs 1–2 minutes for SonarCloud.",
+      "description": "Adds fast, zero-configuration code quality linting using eslint-plugin-sonarjs and eslint-plugin-security. Runs in ~5\u201310s vs 1\u20132 minutes for SonarCloud.",
       "category": "code-quality",
       "icon": "code",
       "iconColor": "green",
@@ -885,7 +925,7 @@
       "selectedByDefault": false,
       "provides": [],
       "dependencies": ["docker"],
-      "conflicts": ["cloudflare-wrangler", "google-cloud"],
+      "conflicts": ["cloudflare-wrangler", "google-cloud", "fetch-launch"],
       "requiresAuth": [],
       "authServices": ["registry"],
       "externalServices": [
@@ -936,7 +976,7 @@
           },
           "publishPort": {
             "type": "string",
-            "description": "Compose port binding, e.g. \"3000:3000\" or \"127.0.0.1:3000:3000\" for a private (Tailscale-only) service. The left-hand side is the published HOST port — Homepage href/widget URLs use it, so \"127.0.0.1:3002:3000\" yields http://<hostname>:3002/.",
+            "description": "Compose port binding, e.g. \"3000:3000\" or \"127.0.0.1:3000:3000\" for a private (Tailscale-only) service. The left-hand side is the published HOST port \u2014 Homepage href/widget URLs use it, so \"127.0.0.1:3002:3000\" yields http://<hostname>:3002/.",
             "default": "3000:3000"
           },
           "baseImage": {
@@ -1033,13 +1073,13 @@
           "armBuilds": {
             "type": "boolean",
             "default": false,
-            "description": "Also build and publish linux/arm64 images. Defaults to false (x86_64 / linux/amd64 only) — set true when a deploy host (e.g. an ARM NAS or Raspberry Pi) needs arm64 images."
+            "description": "Also build and publish linux/arm64 images. Defaults to false (x86_64 / linux/amd64 only) \u2014 set true when a deploy host (e.g. an ARM NAS or Raspberry Pi) needs arm64 images."
           }
         }
       },
       "vscodeExtensions": [],
       "benefits": [
-        "Deploy to any Docker host (Synology, Unraid, TrueNAS, VPS) — not tied to a cloud vendor",
+        "Deploy to any Docker host (Synology, Unraid, TrueNAS, VPS) \u2014 not tied to a cloud vendor",
         "Auto-updates via Watchtower polling the registry",
         "Surfaced in Homepage dashboard with a health widget",
         "Full local/private control of the container"
