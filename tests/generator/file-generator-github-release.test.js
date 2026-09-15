@@ -147,3 +147,30 @@ describe("GitHub release file generation", () => {
     expect(byPath(files, "scripts/release-artifacts.sh")).toBeUndefined();
   });
 });
+
+describe("release manifest", () => {
+  it("writes a statically-named manifest keyed by target, hashed in place", async () => {
+    const files = await generate(
+      ["buildkite", "github-release", "devcontainer-node"],
+      {},
+    );
+    const script = byPath(files, "scripts/release-artifacts.sh").content;
+
+    // The manifest is the only stable URL a launcher can read.
+    expect(script).toContain("manifest.json");
+    expect(script).toContain("sha256sum");
+    // Version and hash live in the manifest; the asset name carries the target.
+    expect(script).toContain("test-project-any.tar.gz");
+    expect(script).not.toContain("$VERSION.tar.gz");
+  });
+
+  it("RELEASING.md documents the manifest and the one-language rule", async () => {
+    const files = await generate(
+      ["buildkite", "github-release", "devcontainer-node"],
+      {},
+    );
+    const readme = byPath(files, "RELEASING.md").content;
+    expect(readme).toContain("releases/latest/download/manifest.json");
+    expect(readme).toContain("Primary Language");
+  });
+});

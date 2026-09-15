@@ -5,9 +5,11 @@ import { describe, expect, it } from "vitest";
 import { getCapabilityById } from "../../src/catalog/index.js";
 import {
   TARGET_LABELS,
+  UNIVERSAL_TARGET,
   selectTarget,
   targetCandidates,
 } from "../../src/generator/target-labels.js";
+import { getCapabilityTemplateData } from "../../src/generator/capability-template-utils.js";
 
 describe("target label vocabulary", () => {
   it("is Rust triples only — no short labels", () => {
@@ -21,6 +23,15 @@ describe("target label vocabulary", () => {
     expect(TARGET_LABELS).toContain("x86_64-unknown-linux-musl");
     expect(TARGET_LABELS).toContain("x86_64-unknown-linux-gnu");
     expect(TARGET_LABELS).toContain("aarch64-apple-darwin");
+  });
+
+  it("is the universal key the release template publishes under", () => {
+    const data = getCapabilityTemplateData("github-release", {
+      capabilities: [],
+      configuration: {},
+    });
+    expect(data.githubReleaseUniversalTarget).toBe(UNIVERSAL_TARGET);
+    expect(UNIVERSAL_TARGET).toBe("any");
   });
 
   it("is the same table the catalog publishes (one source, two consumers)", () => {
@@ -39,6 +50,7 @@ describe("uname -> candidate labels", () => {
     expect(targetCandidates("Linux", "x86_64")).toEqual([
       "x86_64-unknown-linux-musl",
       "x86_64-unknown-linux-gnu",
+      "any",
     ]);
   });
 
@@ -46,17 +58,21 @@ describe("uname -> candidate labels", () => {
     expect(targetCandidates("Linux", "aarch64")).toEqual([
       "aarch64-unknown-linux-musl",
       "aarch64-unknown-linux-gnu",
+      "any",
     ]);
   });
 
   it("maps Apple silicon", () => {
     expect(targetCandidates("Darwin", "arm64")).toEqual([
       "aarch64-apple-darwin",
+      "any",
     ]);
   });
 
-  it("returns nothing for an unknown host", () => {
-    expect(targetCandidates("FreeBSD", "riscv64")).toEqual([]);
+  it("returns the universal key for an unknown host", () => {
+    // A host we have no triple for still resolves an architecture-independent
+    // payload; it is the same lookup, not a special case.
+    expect(targetCandidates("FreeBSD", "riscv64")).toEqual(["any"]);
   });
 });
 
@@ -78,6 +94,12 @@ describe("manifest lookup (never string construction)", () => {
   it("returns undefined for a host the release does not publish", () => {
     // Fail-open: the launcher logs and execs `current`, it does not fail.
     expect(selectTarget("Linux", "aarch64", [])).toBeUndefined();
+  });
+
+  it("falls back to the universal key", () => {
+    // A pure-JS/python payload publishes under `any`; every host resolves it
+    // through the same candidate list, with no consumer-side special case.
+    expect(selectTarget("Linux", "aarch64", ["any"])).toBe("any");
     expect(
       selectTarget("Darwin", "arm64", ["x86_64-unknown-linux-musl"]),
     ).toBeUndefined();

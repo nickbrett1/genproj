@@ -33,6 +33,16 @@ export const TARGET_LABELS = Object.freeze([
 ]);
 
 /**
+ * The universal target key: an artifact that is not architecture-specific (a
+ * Node bundle, a pure-python `.pyz`) publishes under this key rather than
+ * claiming a triple. It is appended as the **last** candidate in
+ * {@link targetCandidates}, so a launcher resolves it through the same
+ * lookup-and-intersect path as any other key — there is no special case for
+ * `any` in the consumer.
+ */
+export const UNIVERSAL_TARGET = "any";
+
+/**
  * Maps `uname -s` / `uname -m` to the labels a host may be running, in
  * preference order (first present in the manifest wins).
  *
@@ -73,8 +83,12 @@ const UNAME_CANDIDATES = Object.freeze({
  * @returns {string[]} Candidate labels, or [] for a host we have no label for
  */
 export function targetCandidates(unameS, unameM) {
+  // The universal key is the last candidate: prefer a real triple for this
+  // host, fall back to the architecture-independent payload, and only then
+  // fail open. Same lookup, no special case.
   // eslint-disable-next-line security/detect-object-injection
-  return UNAME_CANDIDATES[unameS]?.[unameM] ?? [];
+  const host = UNAME_CANDIDATES[unameS]?.[unameM] ?? [];
+  return [...host, UNIVERSAL_TARGET];
 }
 
 /**

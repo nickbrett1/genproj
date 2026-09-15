@@ -1941,8 +1941,15 @@ ${releaseArtifacts}      - |
 function getGithubReleaseTemplateData(context) {
   const config = context.configuration?.["github-release"] || {};
   const tagPrefix = config.tagPrefix || "v";
+  const targets = Array.isArray(config.targets) ? config.targets : [];
   return {
     githubReleaseTagPrefix: tagPrefix,
+    githubReleaseTargets: targets,
+    // The universal key (see target-labels.js UNIVERSAL_TARGET): the asset name
+    // and manifest key for a payload that is not architecture-specific. Kept as
+    // a literal here because this module has no imports; a test pins it to the
+    // exported constant so the two cannot drift.
+    githubReleaseUniversalTarget: "any",
     // Notes are always generated from the release's merged pull requests and
     // classified by .github/release.yml; that is not configurable.
     githubReleaseNotesSource:
