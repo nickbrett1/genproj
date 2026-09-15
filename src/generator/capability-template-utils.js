@@ -2223,27 +2223,6 @@ function getGithubReleaseTemplateData(context) {
 }
 
 /**
- * Resolves the `{{projectName}}` token a catalog `default` may carry.
- *
- * The catalog is the source of truth for what a form shows, and two of
- * fetch-launch's defaults *are* the project's name, which no JSON Schema can
- * state as a constant. Rather than let the client invent the value (or display
- * an empty box), the catalog declares the token the templates already use and
- * both readers resolve it: the generator here, and a client for display. It is
- * the same string in both places, so a default cannot say one thing and render
- * another.
- *
- * @param {string|undefined} value - A configured value or a catalog default
- * @param {string} projectName - The project's name
- * @returns {string|undefined} The value with the token resolved
- */
-function resolveProjectNameToken(value, projectName) {
-  return typeof value === "string"
-    ? value.replaceAll("{{projectName}}", projectName)
-    : value;
-}
-
-/**
  * The template data for the launcher, `scripts/fetch-launch.sh`.
  *
  * The launcher is a shell script, so the one thing that would otherwise be
@@ -2256,28 +2235,22 @@ function resolveProjectNameToken(value, projectName) {
  * @returns {Object} Launcher template data
  */
 function getFetchLaunchTemplateData(context) {
-  const config = context.configuration?.["fetch-launch"] || {};
   const projectName = context.projectName || context.name || "my-project";
   const owner = context.registryNamespace || "<owner>";
-  // The catalog publishes these defaults as `{{projectName}}`, the same token
-  // the templates use, because two of them are not constants: the launcher is
-  // `bin/<project name>` and the prefix is the project's directory. Resolving
-  // the token here means a client that submits the catalog's default verbatim
-  // still gets the project's name rather than the literal word, and the
-  // catalog's `default` is the effective value rather than a description of it.
-  const launcherName =
-    resolveProjectNameToken(config.launcherName, projectName) || projectName;
-  const prefix =
-    resolveProjectNameToken(config.prefix, projectName) || projectName;
-  // The env file is the one default that is not simply the project name, and
-  // the one that used to be absent: an app fetched from GitHub has nowhere
-  // else to read host-local configuration from, so the launcher looks in the
-  // XDG config directory beside the XDG data directory it already installs
-  // into. Sourcing it is optional, so a host that has never created the file
-  // behaves exactly as before.
-  const envFile =
-    resolveProjectNameToken(config.envFile, projectName) ||
-    `$HOME/.config/${projectName}/env`;
+  // These three were configuration knobs until nothing had ever varied them:
+  // the launcher is always `bin/<project name>`, the prefix is always the
+  // project's directory, and the env file is always the one XDG config path
+  // beside the XDG data directory the launcher installs into. A knob every
+  // project leaves at the default is only a surface that can be set wrong, so
+  // they are derived here instead of published, and can be re-added when a
+  // project needs one.
+  const launcherName = projectName;
+  const prefix = projectName;
+  // The env file is sourced (with set -a) before the payload starts, so
+  // host-local configuration reaches an app fetched from GitHub. Sourcing it
+  // is optional, so a host that has never created the file behaves exactly as
+  // before.
+  const envFile = `$HOME/.config/${projectName}/env`;
   const candidates = Object.entries(UNAME_CANDIDATES)
     .flatMap(([osName, arches]) =>
       Object.entries(arches).map(
