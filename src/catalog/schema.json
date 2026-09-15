@@ -176,7 +176,7 @@
         },
         "configurationSchema": {
           "type": "object",
-          "description": "JSON Schema for the per-capability configuration form."
+          "description": "JSON Schema for the per-capability configuration form. Two conventions sit on top of the standard keywords: `enumLabels` maps each `enum` value to a human name for display (the value stays the identifier a client submits), and a `default` may carry the `{{projectName}}` token, resolved to the project's name by the generator and by a client, for the defaults that cannot be constants."
         },
         "vscodeExtensions": {
           "type": "array",

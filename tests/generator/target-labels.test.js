@@ -43,6 +43,27 @@ describe("target label vocabulary", () => {
       githubRelease.configurationSchema.properties.targets.items.enum,
     ).toEqual([...TARGET_LABELS]);
   });
+
+  it("publishes a human name for every label, for the form that offers them", () => {
+    const githubRelease = getCapabilityById("github-release");
+    const items = githubRelease.configurationSchema.properties.targets.items;
+    const names = items.enumLabels;
+
+    // Keyed by the label, so a label cannot be offered without a name and a
+    // name cannot outlive its label.
+    expect(Object.keys(names)).toEqual([...TARGET_LABELS]);
+    for (const name of Object.values(names)) {
+      expect(name).toMatch(/^(macOS|Linux) /);
+      // A name that contained a triple would just be the label again.
+      expect(name).not.toMatch(/-unknown-|-apple-|x86_64|aarch64|-gnu/);
+    }
+    expect(names["x86_64-apple-darwin"]).toBe("macOS (Intel)");
+    // musl and glibc are the pair a person cannot tell apart from `uname`, so
+    // both are named rather than one being called "Linux".
+    expect(names["x86_64-unknown-linux-musl"]).not.toBe(
+      names["x86_64-unknown-linux-gnu"],
+    );
+  });
 });
 
 describe("uname -> candidate labels", () => {

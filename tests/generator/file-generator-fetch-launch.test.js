@@ -1,7 +1,7 @@
 // tests/generator/file-generator-fetch-launch.test.js
 
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -163,6 +163,71 @@ describe("launcher configuration", () => {
     expect(script).toContain("${HOME}/.local/share/test-project");
   });
 
+  it("defaults the env file to the project's XDG config directory", async () => {
+    const script = await scriptOf();
+
+    // The install directory is XDG data, so the host's own configuration
+    // belongs in the XDG config directory beside it - a host has somewhere
+    // obvious to put it, and the release still carries nothing.
+    expect(script).toContain(
+      'ENV_FILE="${ENV_FILE:-$HOME/.config/test-project/env}"',
+    );
+  });
+
+  it("has a default the catalog publishes, not just one that exists", async () => {
+    // The form's default and the launcher's default are the same value stated
+    // twice, so the catalog's `{{projectName}}` is resolved here rather than
+    // being a description of what happens to be rendered.
+    const fetchLaunch = capabilities.find((c) => c.id === "fetch-launch");
+    const defaults = Object.fromEntries(
+      Object.entries(fetchLaunch.configurationSchema.properties).map(
+        ([field, property]) => [field, property.default],
+      ),
+    );
+    expect(defaults).toEqual({
+      launcherName: "{{projectName}}",
+      prefix: "{{projectName}}",
+      envFile: "$HOME/.config/{{projectName}}/env",
+    });
+
+    const script = await scriptOf();
+    for (const property of Object.values(defaults)) {
+      expect(script).toContain(
+        property.replaceAll("{{projectName}}", "test-project"),
+      );
+    }
+  });
+
+  it("sources the env file, once, on the way to the exec", async () => {
+    const script = await scriptOf();
+
+    // Sourcing it is the whole point of the setting: a launcher that defines
+    // ENV_FILE and never reads it is a setting that does nothing.
+    expect(script).toContain("set -a\n  set +u");
+    expect(script).toContain('. "${ENV_FILE}"');
+    // Every exit path is an exec, so one call site is enough - and it has to be
+    // before the exec, or the payload is the process that does not get it.
+    const call = script.indexOf("source_env_file\n");
+    const exec = script.indexOf('exec "${CURRENT}/bin/${LAUNCHER_NAME}"');
+    expect(call).toBeGreaterThan(-1);
+    expect(call).toBeLessThan(exec);
+    // One call site, not one per exit path.
+    expect(script.match(/^ {2}source_env_file$/gm)).toHaveLength(1);
+  });
+
+  it("stays fail-open for a host's own env file", async () => {
+    const script = await scriptOf();
+
+    // The file is the host's script, not ours. Bash exits a non-interactive
+    // shell on a syntax error in a sourced file, so it is checked first; and an
+    // unset variable in it must not be fatal under `set -u`.
+    expect(script).toContain('bash -n "${ENV_FILE}"');
+    expect(script).toContain("set +u");
+    expect(script).toContain('[ -n "${ENV_FILE}" ] && [ -f "${ENV_FILE}" ]');
+    // A missing file is the normal case, not a log line.
+    expect(script).not.toContain("no env file");
+  });
+
   it("takes the launcher name, prefix and env file from configuration", async () => {
     const script = await scriptOf({
       "fetch-launch": {
@@ -213,6 +278,68 @@ describe("launcher configuration", () => {
     // payload root: the entry point has to be at dist/bin/<name>, and no earlier
     // stage can catch its absence (the sha256 matches a payload that cannot run).
     expect(readme).toContain("dist/bin/test-project");
+  });
+});
+
+describe("the launcher sources the host's env file", () => {
+  // The launcher runs on a host, so the only assertion that proves the setting
+  // works is running it: a payload that prints the variable it was handed.
+  const host = async ({ envFileContent }) => {
+    const dir = mkdtempSync(join(tmpdir(), "fetch-launch-env-"));
+    const payload = join(dir, "current", "bin", "test-project");
+    mkdirSync(join(dir, "current", "bin"), { recursive: true });
+    writeFileSync(
+      payload,
+      '#!/bin/sh\nprintf "%s\\n" "${FROM_ENV_FILE:-<unset>}"\n',
+    );
+    chmodSync(payload, 0o755);
+    const envFile = join(dir, "env");
+    if (envFileContent !== null) {
+      writeFileSync(envFile, envFileContent);
+    }
+    const script = join(dir, "fetch-launch.sh");
+    writeFileSync(script, await scriptOf());
+
+    return spawnSync("bash", [script], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        NO_FETCH: "1",
+        DEPLOY_DIR: dir,
+        ENV_FILE: envFile,
+        LAUNCHER_NAME: "test-project",
+      },
+    });
+  };
+
+  it("exports what the file defines to the payload", async () => {
+    const result = await host({
+      envFileContent: "FROM_ENV_FILE=from-the-host\n",
+    });
+
+    expect(result.stdout.trim()).toBe("from-the-host");
+    expect(result.status).toBe(0);
+  });
+
+  it("starts the payload anyway when the file does not parse", async () => {
+    // Bash exits a non-interactive shell on a syntax error in a sourced file,
+    // so without the pre-check this host would not start at all - the one
+    // failure mode the launcher exists to avoid.
+    const result = await host({
+      envFileContent: "FROM_ENV_FILE=ok\nif [ ; then\n",
+    });
+
+    expect(result.stdout.trim()).toBe("<unset>");
+    expect(result.stderr).toContain("syntax error");
+    expect(result.status).toBe(0);
+  });
+
+  it("says nothing and starts the payload when there is no file", async () => {
+    const result = await host({ envFileContent: null });
+
+    expect(result.stdout.trim()).toBe("<unset>");
+    expect(result.stderr).not.toContain("env file");
+    expect(result.status).toBe(0);
   });
 });
 
