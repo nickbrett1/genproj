@@ -603,23 +603,7 @@
       "externalServices": [],
       "configurationSchema": {
         "type": "object",
-        "properties": {
-          "launcherName": {
-            "type": "string",
-            "default": "{{projectName}}",
-            "description": "Executable the launcher runs at current/bin/<name>, and therefore the name the release payload has to provide. Defaults to the project name."
-          },
-          "prefix": {
-            "type": "string",
-            "default": "{{projectName}}",
-            "description": "Directory name under $HOME/.local/share that holds releases/ and the current symlink. Defaults to the project name."
-          },
-          "envFile": {
-            "type": "string",
-            "default": "$HOME/.config/{{projectName}}/env",
-            "description": "Env file sourced (with set -a) before the payload starts, so host-local configuration reaches an app fetched from GitHub. Optional: a host with no file at this path starts with the environment it already has. Secrets belong in this file on the host, never in a release."
-          }
-        }
+        "properties": {}
       },
       "benefits": [
         "A host starts once and keeps itself on the newest release",

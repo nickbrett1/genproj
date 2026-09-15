@@ -174,28 +174,26 @@ describe("launcher configuration", () => {
     );
   });
 
-  it("has a default the catalog publishes, not just one that exists", async () => {
-    // The form's default and the launcher's default are the same value stated
-    // twice, so the catalog's `{{projectName}}` is resolved here rather than
-    // being a description of what happens to be rendered.
-    const fetchLaunch = capabilities.find((c) => c.id === "fetch-launch");
-    const defaults = Object.fromEntries(
-      Object.entries(fetchLaunch.configurationSchema.properties).map(
-        ([field, property]) => [field, property.default],
-      ),
-    );
-    expect(defaults).toEqual({
-      launcherName: "{{projectName}}",
-      prefix: "{{projectName}}",
-      envFile: "$HOME/.config/{{projectName}}/env",
-    });
-
+  it("derives the three values from the project name, not a published default", async () => {
+    // These were catalog defaults a client submitted verbatim, resolved from a
+    // `{{projectName}}` token; nothing ever varied them, so they are derived
+    // from the project name instead (see getFetchLaunchTemplateData). For a
+    // project named X the launcher carries launcherName X, prefix X and env
+    // file $HOME/.config/X/env.
     const script = await scriptOf();
-    for (const property of Object.values(defaults)) {
-      expect(script).toContain(
-        property.replaceAll("{{projectName}}", "test-project"),
-      );
-    }
+
+    expect(script).toContain('LAUNCHER_NAME="${LAUNCHER_NAME:-test-project}"');
+    expect(script).toContain("${HOME}/.local/share/test-project");
+    expect(script).toContain(
+      'ENV_FILE="${ENV_FILE:-$HOME/.config/test-project/env}"',
+    );
+
+    // And the catalog no longer offers them as configuration.
+    const fetchLaunch = capabilities.find((c) => c.id === "fetch-launch");
+    const properties = Object.keys(fetchLaunch.configurationSchema.properties);
+    expect(properties).not.toContain("launcherName");
+    expect(properties).not.toContain("prefix");
+    expect(properties).not.toContain("envFile");
   });
 
   it("sources the env file, once, on the way to the exec", async () => {
@@ -226,20 +224,6 @@ describe("launcher configuration", () => {
     expect(script).toContain('[ -n "${ENV_FILE}" ] && [ -f "${ENV_FILE}" ]');
     // A missing file is the normal case, not a log line.
     expect(script).not.toContain("no env file");
-  });
-
-  it("takes the launcher name, prefix and env file from configuration", async () => {
-    const script = await scriptOf({
-      "fetch-launch": {
-        launcherName: "a2a-goose",
-        prefix: "a2a-goose",
-        envFile: "/etc/a2a-goose.env",
-      },
-    });
-
-    expect(script).toContain('LAUNCHER_NAME="${LAUNCHER_NAME:-a2a-goose}"');
-    expect(script).toContain("/etc/a2a-goose.env");
-    expect(script).toContain('exec "${CURRENT}/bin/${LAUNCHER_NAME}"');
   });
 
   it("uses the GitHub owner for the manifest URL when it is known", async () => {
