@@ -524,6 +524,13 @@ describe("ProjectGeneratorService", () => {
     const context = {
       projectName: "test-project",
       capabilities: ["circleci", "doppler", "sonarcloud"],
+      buildkiteDeployment: {
+        organization: "test-org",
+        clusterId: "test-cluster",
+        configured: true,
+        errors: [],
+        warnings: [],
+      },
     };
 
     it("should configure all selected services including dependabot", async () => {
@@ -697,7 +704,7 @@ describe("ProjectGeneratorService", () => {
       service.services.buildkite.createPipeline.mockResolvedValue({
         pipeline: {
           slug: "repo",
-          web_url: "https://buildkite.com/nick-brett/repo",
+          web_url: "https://buildkite.com/test-org/repo",
         },
         existed: false,
       });
@@ -717,18 +724,18 @@ describe("ProjectGeneratorService", () => {
       expect(results.buildkite.webhookRegistered).toBe(true);
       // The webhook is the whole point: without it pushes build nothing.
       expect(service.services.buildkite.registerWebhook).toHaveBeenCalledWith(
-        "nick-brett",
+        "test-org",
         "repo",
       );
 
       const [, options] =
         service.services.buildkite.createPipeline.mock.calls[0];
       expect(options.repository).toBe("https://github.com/owner/repo.git");
-      expect(options.clusterId).toBeTruthy();
+      expect(options.clusterId).toBe("test-cluster");
 
       // The first build uses the initial commit sha, not just the branch.
       expect(service.services.buildkite.triggerBuild).toHaveBeenCalledWith(
-        "nick-brett",
+        "test-org",
         "repo",
         expect.objectContaining({ commit: "abc123", branch: "main" }),
       );
@@ -801,6 +808,41 @@ describe("ProjectGeneratorService", () => {
         skipped: true,
         reason: "provisionPipeline=false",
       });
+      expect(service.services.buildkite.createPipeline).not.toHaveBeenCalled();
+    });
+
+    it("should skip Buildkite provisioning when the deployment is unconfigured", async () => {
+      const results = await service.configureExternalServices(
+        {
+          ...context,
+          capabilities: ["buildkite"],
+          buildkiteDeployment: {
+            organization: undefined,
+            clusterId: undefined,
+            configured: false,
+            errors: [],
+            warnings: [],
+          },
+        },
+        repository,
+      );
+
+      expect(results.buildkite.success).toBe(false);
+      expect(results.buildkite.skipped).toBe(true);
+      expect(results.buildkite.error).toContain("GENPROJ_BUILDKITE_ORG");
+      expect(service.services.buildkite.createPipeline).not.toHaveBeenCalled();
+      expect(service.services.buildkite.registerWebhook).not.toHaveBeenCalled();
+      expect(service.services.buildkite.triggerBuild).not.toHaveBeenCalled();
+    });
+
+    it("should skip Buildkite provisioning when no deployment identity is present", async () => {
+      const results = await service.configureExternalServices(
+        { projectName: context.projectName, capabilities: ["buildkite"] },
+        repository,
+      );
+
+      expect(results.buildkite.success).toBe(false);
+      expect(results.buildkite.skipped).toBe(true);
       expect(service.services.buildkite.createPipeline).not.toHaveBeenCalled();
     });
 

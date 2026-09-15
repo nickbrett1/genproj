@@ -14,7 +14,6 @@ import { DopplerAPIService } from "../clients/doppler-api.js";
 import { SonarCloudAPIService } from "../clients/sonarcloud-api.js";
 import { generateAllFiles } from "./file-generator.js";
 import { isAppOwnedPath, isMergeTargetFile } from "./genproj-overwrite.js";
-import { getServiceConfig } from "./external-services.js";
 
 /**
  * Merges the freshly-generated devcontainer.json into the existing one,
@@ -639,8 +638,29 @@ export class ProjectGeneratorService {
     }
 
     // Deployment-level identifiers (organisation + cluster), not per-project
-    // preferences — see the buildkite entry in config/external-services.js.
-    const { organization, clusterId } = getServiceConfig("buildkite");
+    // preferences — resolved from the Worker environment by
+    // resolveBuildkiteDeployment() in src/generator/external-services.js.
+    const deployment = context.buildkiteDeployment ?? {};
+    const { organization, clusterId } = deployment;
+
+    // Never call the API with an undefined organisation: that would resolve to
+    // /organizations/undefined/pipelines. Absence is a per-generation
+    // condition, not a fatal one — generation still succeeds.
+    if (!deployment.configured) {
+      const reason =
+        deployment.errors?.[0] ||
+        "Buildkite provisioning is not configured for this deployment: set GENPROJ_BUILDKITE_ORG (and GENPROJ_BUILDKITE_CLUSTER_ID if the organisation has a cluster).";
+      console.warn(`⚠️ Skipping Buildkite provisioning: ${reason}`);
+      results.buildkite = { success: false, skipped: true, error: reason };
+      return;
+    }
+
+    // A missing cluster id is a warning, not an error: some organisations have
+    // no cluster, but for the ones that do pipeline creation will 4xx. Surface
+    // it now rather than leaving a mystery failure later.
+    for (const warning of deployment.warnings ?? []) {
+      console.warn(`⚠️ Buildkite: ${warning}`);
+    }
 
     try {
       console.log("🔄 Configuring Buildkite...");
@@ -715,6 +735,7 @@ export class ProjectGeneratorService {
         organization,
         pipeline: { slug, webUrl: pipeline.web_url, existed },
         webhookRegistered,
+        warnings: deployment.warnings?.length ? deployment.warnings : undefined,
         statusCheck,
         build: build
           ? { number: build.number, webUrl: build.web_url }

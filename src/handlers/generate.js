@@ -71,7 +71,12 @@ export async function generateProjectResult(body, userEmail, env = {}) {
   try {
     const authTokens = buildAuthTokens(env);
     const service = new ProjectGeneratorService(authTokens);
-    const projectContext = buildProjectContext(body, userEmail, authTokens);
+    const projectContext = buildProjectContext(
+      body,
+      userEmail,
+      authTokens,
+      env,
+    );
 
     const result = await service.generateProject(projectContext);
 

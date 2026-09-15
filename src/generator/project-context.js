@@ -22,6 +22,7 @@
 
 import { getCapabilityById } from "../catalog/index.js";
 import { json } from "../http.js";
+import { resolveBuildkiteDeployment } from "./external-services.js";
 
 /**
  * Detects mutually exclusive capability selections (symmetric conflicts).
@@ -101,10 +102,13 @@ export function buildAuthTokens(env = {}) {
  * @param {object} payload Parsed request body.
  * @param {string} userId Authenticated identity (the PAT owner's email).
  * @param {Record<string, string | undefined>} authTokens Service tokens.
+ * @param {Record<string, unknown>} [env] Worker environment bindings, used to
+ *   resolve deployment-level identity (currently the Buildkite organisation
+ *   and cluster).
  * @returns {object} The project generation context.
  * @throws {Error} When the selection contains conflicting capabilities.
  */
-export function buildProjectContext(payload, userId, authTokens) {
+export function buildProjectContext(payload, userId, authTokens, env = {}) {
   const {
     name,
     repositoryUrl,
@@ -133,6 +137,9 @@ export function buildProjectContext(payload, userId, authTokens) {
     // dataMounts, hostname). Defaults are applied by the generators.
     configuration: configuration || {},
     authTokens, // Passed down for specific needs
+    // Deployment-level Buildkite identity, resolved from the Worker
+    // environment so genproj is not pinned to one organisation.
+    buildkiteDeployment: resolveBuildkiteDeployment(env),
     userId,
     overwrite: overwrite || false,
     resolutions: resolutions || null,

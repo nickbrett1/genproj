@@ -61,13 +61,9 @@ export const serviceConfigs = {
       instructions:
         "Create an organisation API access token with write_pipelines",
     },
-    // Deployment-level identifiers, not per-project preferences: a pipeline
-    // cannot be created without a cluster in this organisation, and every
-    // generated project belongs to the same organisation. The trigger for
-    // promoting these to capability configuration is a *second* Buildkite
-    // organisation, not a second project.
-    organization: "nick-brett",
-    clusterId: "25e535fa-b23a-48bb-8588-1b1454fcfef8",
+    // Deployment identity (organisation + cluster) is not carried here: it is
+    // read from the Worker environment by resolveBuildkiteDeployment() so
+    // genproj is not pinned to one Buildkite organisation. See that function.
   },
   doppler: {
     name: "Doppler",
@@ -116,6 +112,45 @@ export function getServiceConfig(serviceName) {
  */
 export function getServiceNames() {
   return Object.keys(serviceConfigs);
+}
+
+/**
+ * Resolves the Buildkite deployment identity from the Worker environment.
+ *
+ * These are deployment-level identifiers, not per-project preferences: a
+ * pipeline cannot be created without a cluster in this organisation. They are
+ * read from the environment so genproj is not pinned to one organisation.
+ *
+ * NOTE: the GENPROJ_ prefix avoids BUILDKITE_ORGANIZATION_SLUG, which the
+ * Buildkite agent sets itself on every agent host.
+ *
+ * @param {Record<string, unknown>} [env] Worker environment bindings.
+ * @returns {{organization: string|undefined, clusterId: string|undefined, configured: boolean, errors: string[], warnings: string[]}}
+ */
+export function resolveBuildkiteDeployment(env = {}) {
+  const organization = env.GENPROJ_BUILDKITE_ORG?.trim() || undefined;
+  const clusterId = env.GENPROJ_BUILDKITE_CLUSTER_ID?.trim() || undefined;
+  const errors = [];
+  const warnings = [];
+
+  if (clusterId && !organization) {
+    errors.push(
+      "GENPROJ_BUILDKITE_CLUSTER_ID is set but GENPROJ_BUILDKITE_ORG is not; a cluster id is scoped to an organisation.",
+    );
+  }
+  if (organization && !clusterId) {
+    warnings.push(
+      "GENPROJ_BUILDKITE_CLUSTER_ID is not set. If the organisation has a cluster, pipeline creation will be rejected; set it to the cluster UUID.",
+    );
+  }
+
+  return {
+    organization,
+    clusterId,
+    configured: Boolean(organization) && errors.length === 0,
+    errors,
+    warnings,
+  };
 }
 
 /**
