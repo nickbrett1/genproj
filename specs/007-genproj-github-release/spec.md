@@ -97,7 +97,7 @@ The cost of that choice is the thing to watch: generation cannot _prove_ the rel
 | pipeline `release` step        | label/key/depends_on/if, docker plugin with `mount-buildkite-agent: true`, gh install, token resolution, version + tag, artifact download, artifacts hook, single `gh release create` |
 | pipeline `build` step          | gains `artifact_paths:` when the capability is selected — the upload half of the hand-off                                                                                             |
 | `.github/release.yml`          | GitHub's release-notes classification (Features / Fixes / Dependencies / Other), consumed by `--generate-notes`                                                                       |
-| `RELEASING.md`                 | the tag prefix, how the artifacts travel, what is genproj-owned vs app-owned, prerequisites, and that the release is not a validator                                                  |
+| `RELEASING.md`                 | the tag convention, the manifest and its target keys, how the artifacts travel, what is genproj-owned vs app-owned, prerequisites, and that the release is not a validator            |
 | `scripts/release-artifacts.sh` | app-owned hook: packages `dist/` into `<project>-<version>.tar.gz` by default, with a commented per-platform example                                                                  |
 
 ### The `gh release create` flag set
@@ -116,15 +116,21 @@ Notes always come from the release's merged pull requests, classified by `.githu
 
 ### The artifact hand-off
 
-The build step's `artifact_paths:` follow the language's usual output directory:
+The build step's `artifact_paths:` are derived, never guessed. With `targets` empty they are the language's conventional output directory; with `targets` set they are one pattern per target, and the language default is not unioned in:
 
-| language     | `artifact_paths`    |
-| ------------ | ------------------- |
-| node         | `dist/**`           |
-| rust         | `target/release/**` |
-| python, java | none — notes only   |
+| `targets` | language | `artifact_paths`       |
+| --------- | -------- | ---------------------- |
+| empty     | node     | `dist/**`              |
+| empty     | rust     | `target/release/**`    |
+| empty     | python   | `dist/**`              |
+| empty     | java     | none — notes only      |
+| non-empty | rust     | `build/<target>/**` ×N |
+
+The target case **replaces** rather than augments, deliberately: `build/<target>/**` is the contract `scripts/release-artifacts.sh` packs and the launcher's manifest keys are built from, so the per-target build step writes its payload there and nothing else is carried. The language default would only add bytes the release then has to ignore.
 
 `buildkite-agent artifact download` exits non-zero when nothing matches, which is the normal case for a project that outputs elsewhere, so the release step treats a miss as "notes only" rather than as a failure. That is what makes the generated pipeline work out of the box before anyone has corrected the paths for their project: a wrong guess costs nothing until the build produces output.
+
+The same list is rendered twice — into the build step's `artifact_paths:` and into the release step's `download` — from one array. They cannot disagree.
 
 ### Per-target artifacts and the manifest
 
@@ -132,7 +138,7 @@ The build step's `artifact_paths:` follow the language's usual output directory:
 
 `scripts/release-artifacts.sh` writes `manifest.json` last, after every asset exists, so a manifest never advertises a file that is not there. Releases are fetched at the version-agnostic URL `releases/latest/download/manifest.json`, which is what makes an asset name embedding a version unlaunchable: version and hash belong in the manifest, the asset name carries the target only. Each asset is keyed by its target, with `any` reserved for an architecture-independent payload (a JS bundle, a pure-python `.pyz`). `sha256` is computed next to the packing that produced the file.
 
-**Known seam.** `artifact_paths:` and the matching `download` both live in `.buildkite/pipeline.yml`, which is genproj-owned and rewritten on regeneration. A project that outputs somewhere else has two options: re-apply the edit after regenerating, or edit the app-owned `scripts/release-artifacts.sh` instead. Making the paths a capability configuration option would close the seam properly and is the obvious v2 change; it is not in v1 because the request was for a working default plus a hook, and the hook (`scripts/`) already exists.
+**Deliberately not configurable** (see §8 Q1). `artifact_paths:` and the matching `download` both live in `.buildkite/pipeline.yml`, which is genproj-owned and rewritten on regeneration, so a project that outputs somewhere else re-applies the edit after regenerating. That cost is accepted rather than paid for with a knob, for the reasons in §8 Q1; the app-owned hook (`scripts/release-artifacts.sh`) is where "what gets shipped" is actually decided.
 
 ### Verifying the pipeline
 
@@ -198,7 +204,14 @@ So the field, its `ETag`/`304` machinery (`jsonWithEtag`, `matchesEtag`) and its
 
 ## 8. Open questions
 
-1. **Should the artifact paths be configuration?** §4 leaves them in genproj-owned pipeline content, so a project that outputs elsewhere re-applies the edit after regeneration. A `github-release.artifactPaths` array would close the seam; it needs a decision on whether the generated default is per-language or per-project.
+1. **~~Should the artifact paths be configuration?~~ Resolved — no.** They stay genproj-owned. The request that produced this question was framed as a seam: §4 leaves the paths in genproj-owned pipeline content, so a project that outputs elsewhere re-applies the edit after regeneration. On the evidence, the knob is not worth its surface:
+   - **The default is already derived from a declared fact, not guessed.** Since Primary Language is declared (§3), `dist/**` / `target/release/**` is the language's own convention. There is nothing project-specific left for a project to tell us, and `artifact_paths:` fails _silently_ when a pattern matches nothing — so a declared-but-wrong path is indistinguishable from a correct one that produced nothing. A knob would turn a visible no-op into an invisible one.
+   - **It would compete with `targets`, and lose.** The per-target half is already configuration, and its path is load-bearing: `build/<target>/**` is the contract `scripts/release-artifacts.sh` packs and the key the manifest exposes. A free-form override could point the upload away from `build/<target>/` and break the packing and manifest halves **without failing anything** — a notes-only release whose manifest advertises nothing, which is precisely the outcome the fail-open reasoning everywhere else is trying to make loud.
+   - **It would move the seam, not remove it.** What a project actually wants to change is _what gets shipped_, and that is `scripts/release-artifacts.sh` — app-owned, seeded once, never overwritten. The upload/download pair only carries the build output to the release step; a project that changes its output directory has changed its build commands anyway, and the conventional-directory default is correct for everything genproj has generated.
+   - **The `tagPrefix` precedent applies.** `generateNotes`, `draft`, `prerelease` and `tagPrefix` were all removed for the same reason: the renderer could answer for every project that exists, and no project ever varied them. A knob every project leaves at the default is not neutral — it is a surface that can be set wrong.
+
+   What would justify reopening it: a project whose toolchain has **two** conventional output directories (e.g. a node project that must ship `dist/**` **and** a second tree), or a target matrix that also needs a non-target artifact alongside `build/<target>/**`. Neither has appeared. If one does, the shape to add is a **per-language** default override that cannot shadow the per-target patterns — not a free-form array.
+
 2. **Should generation cut a first release?** A side effect that tags `v0.1.0` would exercise the whole mechanism end to end and mirror `buildkite`'s `triggerFirstBuild`. It was rejected for v1 because it makes generation mutate release state for every project.
 3. **`RELEASING.md` vs `CONTRIBUTING.md`.** A release documented in its own file is one more root markdown file; folding it into an existing doc is possible once the release grows assets.
 4. **Does the release need to be a `block` step?** v1 deliberately made it automatic, like the deploy step. A manual gate would let every merge to the default branch _not_ cut a release, at the cost of the "no human does the mechanics" property. Recorded because it was explicitly asked for and explicitly removed.
