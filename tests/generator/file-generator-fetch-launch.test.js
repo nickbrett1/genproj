@@ -209,6 +209,10 @@ describe("launcher configuration", () => {
     expect(readme).toContain("bin/test-project");
     // A wheel is a release artifact and a useless payload.
     expect(readme).toContain("zipapp");
+    // The universal payload is packed with `tar -C dist .`, so dist/ IS the
+    // payload root: the entry point has to be at dist/bin/<name>, and no earlier
+    // stage can catch its absence (the sha256 matches a payload that cannot run).
+    expect(readme).toContain("dist/bin/test-project");
   });
 });
 

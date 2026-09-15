@@ -1441,6 +1441,46 @@ function targetStepKey(target) {
 }
 
 /**
+ * The dpkg architecture name for a target triple.
+ *
+ * Needed because Debian's `musl-tools` is built for the host architecture only:
+ * on the fleet's arm64 containers, `apt-get install musl-tools` installs an
+ * arm64 `musl-gcc`, which cannot link an x86_64 target at all. Asked for with
+ * `:<arch>` it installs the target's own, which is the only useful one.
+ *
+ * @param {string} target - A release target label
+ * @returns {string} The dpkg architecture
+ */
+function debianArchForTarget(target) {
+  const arch = target.split("-")[0];
+  const debian = {
+    x86_64: "amd64",
+    aarch64: "arm64",
+    i686: "i386",
+    armv7: "armhf",
+  };
+  return debian[arch] || arch;
+}
+
+/**
+ * The env var rustc reads to pick a target's linker:
+ * `CARGO_TARGET_<TRIPLE_UPPER_UNDERSCORE>_LINKER`.
+ *
+ * Setting it is what makes a musl build musl. Without it rustc's final link
+ * goes through the host `cc` — `aarch64-linux-gnu-gcc` in the fleet's arm64
+ * containers — so an x86_64 target dies with `cc: error: unrecognized
+ * command-line option '-m64'`, a failure with nothing to do with musl. Note
+ * `CC_x86_64_unknown_linux_musl` is the *wrong* knob: it is read by the `cc`
+ * crate for build scripts, not by rustc's link.
+ *
+ * @param {string} target - A release target label
+ * @returns {string} The linker env var name
+ */
+function targetLinkerEnvVar(target) {
+  return `CARGO_TARGET_${target.toUpperCase().replaceAll("-", "_")}_LINKER`;
+}
+
+/**
  * The commands for one target's rust build.
  *
  * Building for a target that is not the build host's own triple cannot be
@@ -1460,7 +1500,19 @@ function rustTargetCommands(target, runTests, projectBinaryName) {
     `|
         mkdir -p "build/${target}/bin"
         rustup target add "${target}"
-${isMusl ? "        apt-get update && apt-get install -y --no-install-recommends musl-tools\n" : ""}        cargo build --release --locked --target "${target}"
+${
+  isMusl
+    ? `        # The musl C toolchain, for the TARGET's architecture. Debian's
+        # musl-tools is built for the host architecture only, so a plain
+        # install puts an arm64 \`musl-gcc\` on the fleet's arm64 containers -
+        # inert for an x86_64 target. Adding the target's architecture and
+        # installing it multiarch repoints /usr/bin/musl-gcc at that arch's
+        # wrapper, which is what the linker variable in this step's env names.
+        dpkg --add-architecture ${debianArchForTarget(target)}
+        apt-get update && apt-get install -y --no-install-recommends musl-tools:${debianArchForTarget(target)}
+`
+    : ""
+}        cargo build --release --locked --target "${target}"
         if [ -f "target/${target}/release/${projectBinaryName}" ]; then
           cp "target/${target}/release/${projectBinaryName}" "build/${target}/bin/"
         else
@@ -1505,6 +1557,7 @@ function releaseBuildUnits({
         target: null,
         commands: commands[language],
         artifactPaths: singleArtifactPaths,
+        env: {},
       },
     ];
   }
@@ -1515,6 +1568,11 @@ function releaseBuildUnits({
     target,
     commands: rustTargetCommands(target, index === 0, projectBinaryName),
     artifactPaths: [`build/${target}/**`],
+    // A musl target needs its own linker named explicitly; see
+    // targetLinkerEnvVar. Nothing else about a target changes the environment.
+    env: target.endsWith("-linux-musl")
+      ? { [targetLinkerEnvVar(target)]: "musl-gcc" }
+      : {},
   }));
 }
 
@@ -1545,10 +1603,16 @@ ${unit.artifactPaths.map((p) => `      - "${p}"`).join("\n")}
 `
       : "";
   // RELEASE_TARGET names the target for anything the project adds to this step;
-  // the generated commands already have it spelled out literally.
-  const buildEnv = unit.target
+  // the generated commands already have it spelled out literally. A musl target
+  // adds the linker variable, without which rustc links with the host `cc`.
+  const env = {
+    ...(unit.target ? { RELEASE_TARGET: unit.target } : {}),
+    ...(unit.env || {}),
+  };
+  const envKeys = Object.keys(env);
+  const buildEnv = envKeys.length
     ? `    env:
-      RELEASE_TARGET: ${unit.target}
+${envKeys.map((name) => `      ${name}: ${env[name]}`).join("\n")}
 `
     : "";
   // No docker plugin for a darwin target: the plugin would run the step in a

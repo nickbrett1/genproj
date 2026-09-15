@@ -28,6 +28,10 @@ mkdir -p "$OUT_DIR"
 # directory the tests ran against. Asset names are a contract with whoever
 # consumes them: something fetching releases/latest/download/<name> depends on
 # the exact string, so treat a name as frozen once anything relies on it.
+#
+# `-C dist .` puts the CONTENTS of dist/ at the root of the tarball, so dist/ is
+# the payload root: a launcher that execs `bin/<name>` needs `dist/bin/<name>` to
+# exist before this line runs. Nothing downstream checks it - see LAUNCHING.md.
 if [ -d dist ]; then
   tar -czf "$OUT_DIR/{{projectName}}-{{githubReleaseUniversalTarget}}.tar.gz" -C dist .
   echo "packaged dist/ as {{projectName}}-{{githubReleaseUniversalTarget}}.tar.gz"

@@ -235,12 +235,38 @@ describe("per-target release builds", () => {
       `cargo build --release --locked --target "${DARWIN}"`,
     );
     expect(darwin).not.toContain("musl-tools");
+    expect(darwin).not.toContain("CARGO_TARGET_");
 
     const musl = buildStep(yaml, MUSL);
     expect(musl).toContain("docker#v5.13.0");
     expect(musl).toContain('rustup target add "x86_64-unknown-linux-musl"');
-    // The musl targets need a musl linker, which the rust image does not ship.
-    expect(musl).toContain("musl-tools");
+    // musl-tools is host-architecture, so on the arm64 container a bare install
+    // is inert for an x86_64 target. The target's own architecture is asked for
+    // by name, which repoints /usr/bin/musl-gcc at its wrapper.
+    expect(musl).toContain("dpkg --add-architecture amd64");
+    expect(musl).toContain("musl-tools:amd64");
+    // And the toolchain is only used if rustc is told to use it: without this
+    // the final link goes through the host `cc` and dies with
+    // "unrecognized command-line option '-m64'".
+    expect(musl).toContain(
+      "CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc",
+    );
+  });
+
+  it("maps the toolchain architecture from the target, not the container", async () => {
+    const ARM = "aarch64-unknown-linux-musl";
+    const yaml = pipeline(await rust([ARM]));
+
+    // Same on an arm64 container, where the arm64 package is the native one:
+    // the mapping is a property of the target, so it cannot silently depend on
+    // whatever host happens to pick the step up.
+    const musl = buildStep(yaml, ARM);
+    expect(musl).toContain("dpkg --add-architecture arm64");
+    expect(musl).toContain("musl-tools:arm64");
+    expect(musl).toContain(
+      "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc",
+    );
+    expect(musl).not.toContain("musl-tools:amd64");
   });
 
   it("runs the tests once, against the host toolchain", async () => {

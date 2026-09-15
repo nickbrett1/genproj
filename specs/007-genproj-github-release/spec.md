@@ -140,6 +140,15 @@ The same list is rendered twice — into the build step's `artifact_paths:` and 
 
 **Deliberately not configurable** (see §8 Q1). `artifact_paths:` and the matching `download` both live in `.buildkite/pipeline.yml`, which is genproj-owned and rewritten on regeneration, so a project that outputs somewhere else re-applies the edit after regenerating. That cost is accepted rather than paid for with a knob, for the reasons in §8 Q1; the app-owned hook (`scripts/release-artifacts.sh`) is where "what gets shipped" is actually decided.
 
+### The per-target build step
+
+Each target gets one step, and it builds into `build/<target>/bin/`. Two details of that step are load-bearing, and both were found by running it rather than by reading it:
+
+- **The payload goes under `bin/`.** The consumer the manifest exists for execs `current/bin/<name>`, and `scripts/release-artifacts.sh` packs the _contents_ of `build/<target>/`, so a binary left at the top of that directory yields a tarball with no `bin/` in it. Nothing earlier notices: the manifest key resolves, the sha256 matches, the unpack and the symlink flip succeed, and the process then finds nothing to run. A rust project gets the layout for free; a project publishing the architecture-independent `any` artifact does not, because a bundle's entry point is its own choice — `LAUNCHING.md` says so where the packing is documented.
+- **A musl target needs a C toolchain named explicitly, and for the _target's_ architecture.** `musl-tools` is a host-architecture package, so on the fleet's `linux/arm64` containers a bare install provides an arm64 `musl-gcc` and does nothing for an x86_64 target; and installing it is not sufficient alone, because rustc's final link otherwise goes through the host `cc` and dies with `cc: error: unrecognized command-line option '-m64'`. The step therefore adds the target's dpkg architecture (`musl-tools:amd64`) _and_ sets `CARGO_TARGET_<TRIPLE>_LINKER=musl-gcc`. The plausible-looking `CC_<triple>` is the wrong knob: the `cc` crate reads it for build scripts, rustc's link does not.
+
+The darwin step carries no docker plugin at all — a macOS binary cannot be linked inside a Linux container — so it runs on the agent host, which is why the queue's Macs need the toolchain installed on the host and not only in the image. Tests run **once**, in the first target's step, because a cross-compiled binary cannot be executed by the host that built it.
+
 ### Verifying the pipeline
 
 `tests/generator/file-generator-github-release.test.js` asserts, against the rendered `.buildkite/pipeline.yml`:
