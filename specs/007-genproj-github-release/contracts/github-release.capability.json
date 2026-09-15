@@ -11,10 +11,21 @@
   "configurationSchema": {
     "type": "object",
     "properties": {
-      "tagPrefix": {
-        "type": "string",
-        "default": "v",
-        "description": "Prefix for the tags CI creates: the release tag is <prefix><major>.<minor>.<patch>, starting at 0.1.0 and then a patch bump of the newest existing tag."
+      "targets": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": [
+            "aarch64-apple-darwin",
+            "x86_64-apple-darwin",
+            "x86_64-unknown-linux-musl",
+            "x86_64-unknown-linux-gnu",
+            "aarch64-unknown-linux-musl",
+            "aarch64-unknown-linux-gnu"
+          ]
+        },
+        "default": [],
+        "description": "Per-target release artifacts, one build per Rust-triple label. Empty means a single artifact for the default target (notes-only when the language has no artifact paths)."
       }
     }
   },
@@ -37,7 +48,7 @@
       "id": "github-release-readme",
       "filePath": "RELEASING.md",
       "owner": "genproj",
-      "purpose": "The tag prefix, how artifacts travel from the build step, what is genproj-owned vs app-owned, prerequisites, and that the release is not a validator."
+      "purpose": "The tag convention, how artifacts travel from the build step, what is genproj-owned vs app-owned, prerequisites, and that the release is not a validator."
     },
     {
       "id": "github-release-artifacts",

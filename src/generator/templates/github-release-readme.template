@@ -9,9 +9,13 @@ whatever artifacts the project packages.
 
 1. Merge to the default branch. Buildkite builds and tests the commit.
 2. The release step runs automatically, exactly like the deploy step: it bumps
-   the version from the newest existing tag, creates
-   `{{githubReleaseTagPrefix}}<version>`, attaches the build's artifacts, and
-   publishes the GitHub Release.
+   the version from the newest existing tag, creates the tag `v<version>`,
+   attaches the build's artifacts, and publishes the GitHub Release.
+
+The `v` prefix is a fixed convention, not a setting: it is what the step scans
+for and what it creates. An existing repository adopting this pipeline should
+re-tag its releases to `v<major>.<minor>.<patch>` so version bumps continue the
+real series instead of restarting at `v0.1.0`.
 
 Watch it under the repository's **Buildkite** build, not its Actions tab —
 there is no GitHub Actions workflow here.
@@ -20,7 +24,7 @@ there is no GitHub Actions workflow here.
 
 | Piece | Comes from |
 | ----- | ---------- |
-| Tag `{{githubReleaseTagPrefix}}<version>` | Created by the release step. The first release is `{{githubReleaseTagPrefix}}0.1.0`; after that it is a patch bump of the newest tag |
+| Tag `v<version>` | Created by the release step. The first release is `v0.1.0`; after that it is a patch bump of the newest tag |
 | Release notes | {{githubReleaseNotesSource}} |
 | Assets | Uploaded by the build step as Buildkite artifacts, downloaded by the release step, and named by `scripts/release-artifacts.sh` |
 

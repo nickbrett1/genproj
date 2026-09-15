@@ -11,7 +11,7 @@
 # files is valid: the release then carries notes and no assets.
 #
 # Called as: bash scripts/release-artifacts.sh <version>
-# The version is the tag without its prefix, e.g. "1.2.4" for tag v1.2.4.
+# The version is the tag without its `v` prefix, e.g. "1.2.4" for tag v1.2.4.
 set -euo pipefail
 
 VERSION="${1:?usage: release-artifacts.sh <version>}"
@@ -72,7 +72,7 @@ if [ -n "$(ls -A "$OUT_DIR" 2>/dev/null)" ]; then
     printf '{\n'
     printf '  "name": "%s",\n' "{{projectName}}"
     printf '  "version": "%s",\n' "$VERSION"
-    printf '  "tag": "%s%s",\n' "{{githubReleaseTagPrefix}}" "$VERSION"
+    printf '  "tag": "v%s",\n' "$VERSION"
     printf '  "commit": "%s",\n' "${BUILDKITE_COMMIT:-}"
     printf '  "assets": {'
     first=1

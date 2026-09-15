@@ -1770,8 +1770,12 @@ ${_bkAgents(queue)}    env:
   // commit - so a release can only exist for code that was validated in the
   // same build. Same shape as the deploy step: depends_on build, main only.
   if (hasGithubRelease) {
-    const grConfig = context.configuration?.["github-release"] || {};
-    const tagPrefix = grConfig.tagPrefix || "v";
+    // The tag prefix is fixed at `v` and is not configurable: it is written and
+    // read only by this step, so a project-specific prefix buys nothing that a
+    // declared choice would not already say. Adopting a repo that already has a
+    // differently-prefixed tag series is the one case it would have served;
+    // that project can re-tag instead of carrying a knob every other project
+    // would never touch.
     // The release flags are fixed: notes always come from the merged pull
     // requests in the release (`--generate-notes`), the release is always
     // published rather than left as a draft or flagged pre-release, and
@@ -1869,13 +1873,13 @@ ${installGh}${releaseToken}      - |
         # The version is a patch bump of the newest existing tag, so there is no
         # version file to keep in sync and no bookkeeping to forget.
         git fetch --quiet --force --tags
-        LATEST="$$(git tag --list '${tagPrefix}*' --sort=-v:refname | head -1)"
+        LATEST="$$(git tag --list 'v*' --sort=-v:refname | head -1)"
         if [ -z "$$LATEST" ]; then
           VERSION="0.1.0"
         else
-          VERSION="$$(echo "$$LATEST" | sed -e 's/^${tagPrefix}//' | awk -F. '{printf "%d.%d.%d", $$1, $$2, $$3 + 1}')"
+          VERSION="$$(echo "$$LATEST" | sed -e 's/^v//' | awk -F. '{printf "%d.%d.%d", $$1, $$2, $$3 + 1}')"
         fi
-        TAG="${tagPrefix}$$VERSION"
+        TAG="v$$VERSION"
         # Retried or re-run builds must not fail on a tag that already exists.
         if git ls-remote --exit-code --tags origin "refs/tags/$$TAG" >/dev/null 2>&1; then
           echo "$$TAG already exists on origin - nothing to release."
@@ -1932,18 +1936,16 @@ ${releaseArtifacts}      - |
  * There is no GitHub Actions workflow: the release is a Buildkite step (see
  * `getBuildkiteTemplateData`), so Buildkite stays the only validator and the
  * tag is only ever created for a commit that passed build and test in the same
- * build. The tag prefix is the one remaining knob; the notes and publish
- * behaviour is fixed.
+ * build. The tag prefix is fixed at `v`; the notes and publish behaviour is
+ * fixed too, so nothing here is configurable.
  *
  * @param {Object} context - Template context (capabilities, configuration)
  * @returns {Object} GitHub Release template data
  */
 function getGithubReleaseTemplateData(context) {
   const config = context.configuration?.["github-release"] || {};
-  const tagPrefix = config.tagPrefix || "v";
   const targets = Array.isArray(config.targets) ? config.targets : [];
   return {
-    githubReleaseTagPrefix: tagPrefix,
     githubReleaseTargets: targets,
     // The universal key (see target-labels.js UNIVERSAL_TARGET): the asset name
     // and manifest key for a payload that is not architecture-specific. Kept as

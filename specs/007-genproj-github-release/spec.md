@@ -28,7 +28,7 @@ Machine-readable contract: `contracts/github-release.capability.json`. Summary:
 | `requiresAuth`        | `[]`                                                                                            |
 | `authServices`        | `[]`                                                                                            |
 | `externalServices`    | `[]` — no generation-time GitHub call is made (see §4)                                          |
-| `configurationSchema` | `tagPrefix` — the only knob; everything else about the release is fixed                         |
+| `configurationSchema` | `targets` — the only knob; the tag convention and everything else about the release is fixed    |
 
 The capability contributes no file of its own for the mechanism — the release _is_ pipeline content, produced by `getBuildkiteTemplateData`. It contributes three files that configure and document it:
 
@@ -54,7 +54,7 @@ Buildkite: secret_scan → build (+ test)        ← the only validator
 Buildkite: release  (depends_on: build, main only)
         │
         ├─ resolve GITHUB_RELEASE_TOKEN (Doppler common/prd)
-        ├─ VERSION = patch bump of the newest <prefix>* tag; TAG = <prefix>VERSION
+        ├─ VERSION = patch bump of the newest v* tag; TAG = vVERSION
         ├─ skip if TAG already exists on origin (re-runs must be safe)
         ├─ git tag -a / git push (credential.helper, token never in the URL)
         ├─ buildkite-agent artifact download  ← the exact bytes the build tested
@@ -110,7 +110,9 @@ gh release create "$TAG" --title "$TAG" --generate-notes --verify-tag [release/*
 
 Notes always come from the release's merged pull requests, classified by `.github/release.yml` (`--generate-notes`); the release is always published, never a draft and never flagged pre-release; `--verify-tag` fails the step if the tag was not created rather than publishing a release anchored to nothing. `--generate-notes` is also the flag that keeps the step non-interactive — `gh release create` opens an editor when given no notes flag, which hangs in CI.
 
-`generateNotes`, `draft` and `prerelease` were configuration parameters at first. They were removed because their defaults (`true`, `false`, `false`) suit every project genproj has generated: a project that wants a draft or a pre-release can re-expose them later. `tagPrefix` stays configurable because it is the one genuinely project-specific choice — it is quoted in `RELEASING.md` and used for the `<prefix>*` lookups that derive the next version.
+`generateNotes`, `draft` and `prerelease` were configuration parameters at first. They were removed because their defaults (`true`, `false`, `false`) suit every project genproj has generated: a project that wants a draft or a pre-release can re-expose them later.
+
+`tagPrefix` was later removed for the same reason. It stayed configurable at first on the grounds that it is the one genuinely project-specific choice, but the prefix is written and read only by the release step: `v*` is both what the lookup scans and what the tag is built from, so a different prefix only means a different string in the same two places. The one case it served — adopting a repository that already carries a differently-prefixed tag series — is recoverable by re-tagging, and does not justify a knob every other project leaves at `v`. The tag convention is now fixed at `v`, quoted in `RELEASING.md` as a convention rather than a setting.
 
 ### The artifact hand-off
 
@@ -124,6 +126,12 @@ The build step's `artifact_paths:` follow the language's usual output directory:
 
 `buildkite-agent artifact download` exits non-zero when nothing matches, which is the normal case for a project that outputs elsewhere, so the release step treats a miss as "notes only" rather than as a failure. That is what makes the generated pipeline work out of the box before anyone has corrected the paths for their project: a wrong guess costs nothing until the build produces output.
 
+### Per-target artifacts and the manifest
+
+`targets` is the capability's one configuration option: an array of Rust-triple labels (`aarch64-apple-darwin`, `x86_64-unknown-linux-musl`, …), empty by default. It exists because a single artifact is only the right answer for a project that ships one platform, and a project that ships several needs one build per platform — with the labels also the vocabulary a launcher resolves against, so the pipeline's matrix and the consumer's lookup consume the same table rather than two spellings of the same idea.
+
+`scripts/release-artifacts.sh` writes `manifest.json` last, after every asset exists, so a manifest never advertises a file that is not there. Releases are fetched at the version-agnostic URL `releases/latest/download/manifest.json`, which is what makes an asset name embedding a version unlaunchable: version and hash belong in the manifest, the asset name carries the target only. Each asset is keyed by its target, with `any` reserved for an architecture-independent payload (a JS bundle, a pure-python `.pyz`). `sha256` is computed next to the packing that produced the file.
+
 **Known seam.** `artifact_paths:` and the matching `download` both live in `.buildkite/pipeline.yml`, which is genproj-owned and rewritten on regeneration. A project that outputs somewhere else has two options: re-apply the edit after regenerating, or edit the app-owned `scripts/release-artifacts.sh` instead. Making the paths a capability configuration option would close the seam properly and is the obvious v2 change; it is not in v1 because the request was for a working default plus a hook, and the hook (`scripts/`) already exists.
 
 ### Verifying the pipeline
@@ -136,12 +144,12 @@ The build step's `artifact_paths:` follow the language's usual output directory:
 - the build step uploads `artifact_paths` and the release step downloads the same patterns, with `mount-buildkite-agent: true` so `buildkite-agent` is callable in the container;
 - the release step contains no `npm install`, `npm run build` or `cargo build` — the no-rebuild property, asserted by slicing the release step out of the file so the build step's own `npm run build` does not satisfy it;
 - the paths follow the language, and a language with no known output releases notes only;
-- a non-default tag prefix (`tagPrefix: "release-"`) renders `<prefix>*` lookups correctly, while the release flags stay fixed;
+- the tag prefix is fixed at `v` (`git tag --list 'v*'`, `TAG="v$VERSION"`), a `tagPrefix` left in a saved configuration does not change the render, and the release flags stay fixed;
 - without the capability, neither the step nor `artifact_paths` appears and the hook is not emitted.
 
 ### End-to-end verification
 
-**Not yet run.** It needs a real repository, a real Buildkite agent and a real tag, none of which the build sandbox had. The gate is: generate a repo with `buildkite` + `github-release`, merge to the default branch, confirm the build uploads artifacts, the release step downloads them, a `<prefix>0.1.0` tag is pushed, and a published Release with notes and assets appears at `/releases`. Clear this before the capability is treated as proven.
+**Not yet run.** It needs a real repository, a real Buildkite agent and a real tag, none of which the build sandbox had. The gate is: generate a repo with `buildkite` + `github-release`, merge to the default branch, confirm the build uploads artifacts, the release step downloads them, a `v0.1.0` tag is pushed, and a published Release with notes and assets appears at `/releases`. Clear this before the capability is treated as proven.
 
 ---
 
@@ -191,6 +199,6 @@ So the field, its `ETag`/`304` machinery (`jsonWithEtag`, `matchesEtag`) and its
 ## 8. Open questions
 
 1. **Should the artifact paths be configuration?** §4 leaves them in genproj-owned pipeline content, so a project that outputs elsewhere re-applies the edit after regeneration. A `github-release.artifactPaths` array would close the seam; it needs a decision on whether the generated default is per-language or per-project.
-2. **Should generation cut a first release?** A side effect that tags `<prefix>0.1.0` would exercise the whole mechanism end to end and mirror `buildkite`'s `triggerFirstBuild`. It was rejected for v1 because it makes generation mutate release state for every project.
+2. **Should generation cut a first release?** A side effect that tags `v0.1.0` would exercise the whole mechanism end to end and mirror `buildkite`'s `triggerFirstBuild`. It was rejected for v1 because it makes generation mutate release state for every project.
 3. **`RELEASING.md` vs `CONTRIBUTING.md`.** A release documented in its own file is one more root markdown file; folding it into an existing doc is possible once the release grows assets.
 4. **Does the release need to be a `block` step?** v1 deliberately made it automatic, like the deploy step. A manual gate would let every merge to the default branch _not_ cut a release, at the cost of the "no human does the mechanics" property. Recorded because it was explicitly asked for and explicitly removed.

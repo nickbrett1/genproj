@@ -123,13 +123,18 @@ describe("GitHub release file generation", () => {
     expect(release).toContain("the release will carry notes only");
   });
 
-  it("takes the tag prefix from configuration and fixes the release flags", async () => {
+  it("fixes the tag prefix at `v` and ignores configuration", async () => {
     const files = await generate(["buildkite", "github-release", "doppler"], {
+      // A prefix is no longer a knob: a stale value in a saved configuration
+      // must not change the rendered pipeline.
       "github-release": { tagPrefix: "release-" },
     });
     const release = releaseSection(pipeline(files));
 
-    expect(release).toContain("git tag --list 'release-*'");
+    expect(release).toContain("git tag --list 'v*'");
+    expect(release).toContain('TAG="v$$VERSION"');
+    expect(release).not.toContain("'release-*'");
+    expect(release).not.toContain("release-$$VERSION");
     // Notes are always generated and the release is always published: the
     // parameters that used to choose this were removed, so nothing a project
     // can configure here turns them off.

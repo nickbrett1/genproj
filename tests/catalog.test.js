@@ -104,6 +104,18 @@ describe("catalog metadata", () => {
     expect(language.enum).toEqual(["python", "node", "java", "rust"]);
   });
 
+  it("declares the release knobs a project can set, and no tag prefix", () => {
+    // The tag prefix was removed: it is written and read only by the release
+    // step, so it is not a project choice. `targets` is the real knob.
+    const githubRelease = getCapabilityById("github-release");
+    expect(githubRelease.configurationSchema.properties).toHaveProperty(
+      "targets",
+    );
+    expect(githubRelease.configurationSchema.properties).not.toHaveProperty(
+      "tagPrefix",
+    );
+  });
+
   it("declares what the devcontainer capabilities provide", () => {
     const provided = Object.fromEntries(
       capabilities

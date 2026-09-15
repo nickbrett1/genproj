@@ -557,11 +557,6 @@
       "configurationSchema": {
         "type": "object",
         "properties": {
-          "tagPrefix": {
-            "type": "string",
-            "default": "v",
-            "description": "Prefix for the tags CI creates: the release tag is <prefix><major>.<minor>.<patch>, starting at 0.1.0 and then a patch bump of the newest existing tag."
-          },
           "targets": {
             "type": "array",
             "items": {
