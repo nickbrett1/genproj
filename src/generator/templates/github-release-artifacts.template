@@ -36,11 +36,22 @@ fi
 
 # --- one artifact per platform, when you need it -----------------------------
 # Multi-platform, signing, installers and launcher manifests all belong here,
-# one file per target, each named explicitly, e.g.
+# one file per target, each named explicitly. Targets are Rust triples — the
+# only release vocabulary, used by the pipeline's build matrix and by a
+# launcher resolving the manifest alike. A short label cannot express musl vs
+# glibc (`x86_64-unknown-linux-musl` and `x86_64-unknown-linux-gnu` are
+# distinct, non-interchangeable binaries that share one `uname`), and a glibc
+# artifact published under a label a musl host will fetch passes its sha256
+# check because the file is intact and simply the wrong file.
 #
-#   for target in linux-arm64 darwin-arm64; do
-#     tar -czf "$OUT_DIR/{{projectName}}-$VERSION-$target.tar.gz" -C "build/$target" .
+#   for target in aarch64-apple-darwin x86_64-unknown-linux-musl; do
+#     tar -czf "$OUT_DIR/{{projectName}}-$target.tar.gz" -C "build/$target" .
 #   done
+#
+# An asset name that embeds a version is unlaunchable: version and hash belong
+# in the manifest (below), and the asset name carries the target only. That is
+# what makes releases/latest/download/manifest.json fetchable with no version
+# knowledge.
 #
 # A build that outputs somewhere other than dist/ needs the `artifact_paths:` on
 # the build step and the `artifact download` in the release step updated to

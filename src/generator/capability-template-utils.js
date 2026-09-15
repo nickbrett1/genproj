@@ -258,9 +258,25 @@ function getGooseMcpConfig(context) {
   };
 }
 
+// The primary language is the single source of truth for the sonar flavour
+// too. Rust has no mapping: emit no `sonar.*.reportPaths` line rather than
+// defaulting to JavaScript, which used to write
+// `sonar.javascript.lcov.reportPaths=...` for a project with no JavaScript in
+// it — the default was a live latent bug for every unset sonarcloud project.
+const SONAR_LANGUAGE_BY_PRIMARY = {
+  python: "Python",
+  node: "JavaScript",
+  java: "Java",
+};
+
 function getSonarCloudTemplateData(context) {
   const config = context.configuration?.sonarcloud || {};
-  const language = config.language || "JavaScript";
+  const primary = resolveProjectLanguage(context);
+  // `sonarcloud.language` is a deprecated explicit override, kept for one
+  // release so an in-flight project does not change behaviour under it. New
+  // projects declare the primary language instead.
+  const language =
+    config.language || SONAR_LANGUAGE_BY_PRIMARY[primary] || undefined;
   let languageSettings = "";
 
   switch (language) {
@@ -271,7 +287,7 @@ function getSonarCloudTemplateData(context) {
     }
     case "Python": {
       languageSettings = "sonar.python.coverage.reportPaths=coverage.xml";
-      if (context.capabilities?.includes("devcontainer-python")) {
+      if (primary === "python") {
         languageSettings += "\nsonar.python.version=3.12";
       }
 
@@ -282,7 +298,7 @@ function getSonarCloudTemplateData(context) {
 
       break;
     }
-    // No default
+    // No default: rust (and anything else) emits no reportPaths line.
   }
 
   const wranglerConfig = context.configuration?.["cloudflare-wrangler"] || {};
@@ -565,7 +581,7 @@ function _applyCloudflareConfig(
  * - Node: ESLint + SonarJS via `npm run lint` (existing behavior).
  */
 function _applyCodeQualityConfig(data, context) {
-  const language = resolveLanguage(context);
+  const language = resolveProjectLanguage(context);
   if (language === "python") {
     if (
       context.capabilities.includes("code-quality-python") ||
@@ -616,14 +632,31 @@ export function resolveDopplerTarget(context) {
 }
 
 /**
- * Resolves the project language from the selected capabilities.
- * The selected `devcontainer-*` capability is the source of truth; an explicit
- * top-level `language` configuration option (`python | node | java | rust`)
- * overrides it. Defaults to `node` for backward compatibility.
+ * Resolves the project's **Primary Language** — the single-valued,
+ * project-level fact that governs the single-valued outputs: the CI image and
+ * commands, `releaseArtifactPaths`, the sonar settings and the devcontainer
+ * base.
+ *
+ * Precedence is **declared > derived**. A top-level `configuration.language`
+ * (`python | node | java | rust`) always wins, even when no `devcontainer-*`
+ * for it is selected — that combination is legal and intentional (e.g. a rust
+ * base image with only python dev tooling). Only when nothing is declared does
+ * the function fall back to the selected `devcontainer-*` capability, and then
+ * to `node` for backward compatibility.
+ *
+ * This replaced two pickers with two different rules — `resolveLanguage`'s
+ * fixed precedence and the devcontainer Dockerfile's
+ * `developmentContainerCapabilities[0]` ("first selected") — which could
+ * disagree and split the devcontainer base from CI in an order-dependent way.
+ * Both now read this one function, so whatever it returns is *the* answer.
+ *
+ * `docker-container.language` is still read as a deprecated alias for one
+ * release; prefer the project-level `language`.
+ *
  * @param {Object} context - Generation context (capabilities, configuration)
- * @returns {'python'|'node'|'java'|'rust'} The resolved language
+ * @returns {'python'|'node'|'java'|'rust'} The resolved primary language
  */
-export function resolveLanguage(context) {
+export function resolveProjectLanguage(context) {
   const explicit =
     context.configuration?.language ??
     context.configuration?.["docker-container"]?.language;
@@ -638,6 +671,28 @@ export function resolveLanguage(context) {
   if (caps.some((c) => c.startsWith("devcontainer-java"))) return "java";
   if (caps.some((c) => c.startsWith("devcontainer-rust"))) return "rust";
   return "node";
+}
+
+/**
+ * Deprecated alias for {@link resolveProjectLanguage}. Kept exported so the
+ * rename does not break callers; remove once nothing imports it.
+ * @param {Object} context - Generation context
+ * @returns {'python'|'node'|'java'|'rust'}
+ */
+export const resolveLanguage = resolveProjectLanguage;
+
+/**
+ * The devcontainer capability that provides the primary language's toolchain —
+ * `devcontainer-${primaryLanguage}`. The devcontainer **base** (Dockerfile and
+ * JSON: remoteUser, features, remoteEnv PATH) follows this rather than the
+ * first-selected `devcontainer-*`, so the base and CI cannot disagree. The
+ * *other* selected devcontainers are still merged in as toolboxes.
+ *
+ * @param {Object} context - Generation context
+ * @returns {string} A devcontainer capability id, e.g. "devcontainer-python"
+ */
+export function primaryDevcontainerCapabilityId(context) {
+  return `devcontainer-${resolveProjectLanguage(context)}`;
 }
 
 /**
@@ -729,7 +784,7 @@ function getHostPort(publishPort, exposePort) {
  */
 function getDockerContainerTemplateData(context) {
   const config = context.configuration?.["docker-container"] || {};
-  const language = resolveLanguage(context);
+  const language = resolveProjectLanguage(context);
   const isPython = language === "python";
   const isNode = language === "node";
   const networkMode = config.networkMode || "bridge";
@@ -1173,7 +1228,7 @@ function getCircleCiTemplateData(context) {
     ? `\n          context: ${contextName}`
     : "";
 
-  const language = resolveLanguage(context);
+  const language = resolveProjectLanguage(context);
   if (language === "python") {
     data.ciOrbs = "";
     data.buildExecutor = "    docker:\n      - image: cimg/python:3.12\n";
@@ -1376,7 +1431,7 @@ ${extraYaml}${envBlock}${commandYaml}`;
 function getBuildkiteTemplateData(context) {
   const config = context.configuration?.buildkite || {};
   const caps = context.capabilities || [];
-  const language = resolveLanguage(context);
+  const language = resolveProjectLanguage(context);
   const queue = config.queue || "mac-studio-linux";
   const branchGating = config.branchGating !== false;
   const usesPlaywright = caps.includes("playwright");
@@ -1401,7 +1456,9 @@ function getBuildkiteTemplateData(context) {
       ? ["dist/**"]
       : language === "rust"
         ? ["target/release/**"]
-        : [];
+        : language === "python"
+          ? ["dist/**"]
+          : [];
 
   const images = {
     node: "node:22-bookworm",
@@ -1460,6 +1517,14 @@ function getBuildkiteTemplateData(context) {
     ],
     python: [
       'python -m pip install --no-cache-dir -e ".[dev]"',
+      // The release attaches what the build produced, so the build has to
+      // produce a distribution: a `dist/` path with nothing creating `dist/`
+      // is the silent-empty-match trap - `artifact upload` does not fail on a
+      // pattern that matches nothing, so the release would silently be
+      // notes-only. `python -m build` makes the wheel + sdist the existing
+      // release-artifacts.sh already knows how to pack.
+      "python -m pip install --no-cache-dir build",
+      "python -m build",
       "ruff check src tests",
       "pytest -q",
     ],

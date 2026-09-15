@@ -76,13 +76,15 @@ import { capabilities } from "../catalog/index.js";
 import {
   getCapabilityTemplateData,
   applyDefaults,
-  resolveLanguage,
+  resolveProjectLanguage,
+  primaryDevcontainerCapabilityId,
   resolveDopplerTarget,
   toPythonPackageName,
   toDistributionName,
   getGooseMcpConfig,
   assertNoGooseEnvVarReferences,
 } from "./capability-template-utils.js";
+import { validatePrimaryLanguage } from "./project-validation.js";
 
 // 2.2: health endpoint emitted for docker-container SvelteKit projects.
 // Returns 200 {ok:true} so the container HEALTHCHECK and Homepage widget work
@@ -939,7 +941,12 @@ function generateAndMergeDevcontainerJson(
   context,
   developmentContainerCapabilities,
 ) {
-  const baseDevelopmentContainerId = developmentContainerCapabilities[0];
+  // The base follows the primary language, not "first selected": otherwise the
+  // base JSON (remoteUser, features, remoteEnv PATH) and CI can disagree,
+  // order-dependently (memo D8). A declared-but-absent devcontainer for the
+  // primary language is legal and intentional - language rust with only
+  // devcontainer-python selected means a rust base image and no python tooling.
+  const baseDevelopmentContainerId = primaryDevcontainerCapabilityId(context);
   const baseCapability = capabilities.find(
     (c) => c.id === baseDevelopmentContainerId,
   );
@@ -974,14 +981,11 @@ function generateAndMergeDevcontainerJson(
   // 2. From all capabilities (project configuration)
   addExtensionsFromCapabilities(allExtensions, context.capabilities);
 
-  // 3. From other devcontainer JSONs (merged ones)
-  for (
-    let index = 1;
-    index < developmentContainerCapabilities.length;
-    index++
-  ) {
-    // eslint-disable-next-line security/detect-object-injection
-    const capabilityId = developmentContainerCapabilities[index];
+  // 3. From other devcontainer JSONs (merged ones) - the selected
+  // devcontainers other than the primary-language base are toolboxes, merged
+  // in for their features and extensions.
+  for (const capabilityId of developmentContainerCapabilities) {
+    if (capabilityId === baseDevelopmentContainerId) continue;
     processAdditionalDevelopmentContainer(
       capabilityId,
       context,
@@ -1028,7 +1032,9 @@ export function generateMergedDevelopmentContainerFiles(
 
   if (developmentContainerCapabilities.length === 0) return files;
 
-  const baseDevelopmentContainerId = developmentContainerCapabilities[0];
+  // The Dockerfile base follows the primary language (memo D8), matching the
+  // base JSON that generateAndMergeDevcontainerJson selects.
+  const baseDevelopmentContainerId = primaryDevcontainerCapabilityId(context);
   const baseCapability = capabilities.find(
     (c) => c.id === baseDevelopmentContainerId,
   );
@@ -1039,7 +1045,7 @@ export function generateMergedDevelopmentContainerFiles(
     context.configuration?.[baseDevelopmentContainerId] || {},
   );
 
-  // Process Dockerfile (using base one for now)
+  // Process Dockerfile (the base one)
   const dockerfileContent = templateEngine.generateFile(
     `devcontainer-${baseDevelopmentContainerId.split("-")[1]}-dockerfile`,
     {
@@ -1550,7 +1556,7 @@ export function generateReadmeFile(context) {
   const description =
     context.description || `A ${projectName} project generated with genproj`;
   const hasDocker = context.capabilities.includes("docker-container");
-  const language = resolveLanguage(context);
+  const language = resolveProjectLanguage(context);
 
   const capabilitiesSection =
     context.capabilities && context.capabilities.length > 0
@@ -2109,6 +2115,10 @@ export function normalizeYamlBlankLines(content) {
 }
 
 export async function generateAllFiles(context) {
+  // Fail before emitting anything: a project that silently resolves order-
+  // dependently is worse than one that refuses to generate.
+  validatePrimaryLanguage(context);
+
   const templateEngine = new TemplateEngine();
   await templateEngine.initialize();
 

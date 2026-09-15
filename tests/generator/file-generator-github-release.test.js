@@ -92,7 +92,10 @@ describe("GitHub release file generation", () => {
     );
   });
 
-  it("releases notes only where there is no known build output", async () => {
+  it("builds and attaches python artifacts, not notes only", async () => {
+    // `dist/**` with nothing creating `dist/` is the silent-empty-match trap:
+    // `artifact upload` does not fail on a pattern that matches nothing, so
+    // the path and `python -m build` are useless apart. Both, or neither.
     const python = pipeline(
       await generate(
         ["buildkite", "github-release", "doppler", "devcontainer-python"],
@@ -101,7 +104,21 @@ describe("GitHub release file generation", () => {
     );
     const release = releaseSection(python);
 
-    expect(python).not.toContain("artifact_paths:");
+    expect(python).toContain("python -m build");
+    expect(python).toContain('- "dist/**"');
+    expect(release).toContain('buildkite-agent artifact download "dist/**" .');
+  });
+
+  it("releases notes only where there is no known build output", async () => {
+    const java = pipeline(
+      await generate(
+        ["buildkite", "github-release", "doppler", "devcontainer-java"],
+        {},
+      ),
+    );
+    const release = releaseSection(java);
+
+    expect(java).not.toContain("artifact_paths:");
     expect(release).not.toContain("buildkite-agent artifact download");
     expect(release).toContain("the release will carry notes only");
   });
