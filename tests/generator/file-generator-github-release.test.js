@@ -253,6 +253,29 @@ describe("per-target release builds", () => {
     );
   });
 
+  it("keeps a darwin target off a queue that only runs containers", async () => {
+    // The queue is where the *containers* run, so a project moving it to a
+    // Linux queue is not asking for its darwin build to move with it: that
+    // build has no container to run in.
+    const yaml = pipeline(
+      await rust([DARWIN, MUSL], { buildkite: { queue: "linux-medium" } }),
+    );
+
+    expect(buildStep(yaml, DARWIN)).toContain("queue: mac-studio-linux");
+    expect(buildStep(yaml, MUSL)).toContain("queue: linux-medium");
+  });
+
+  it("leaves a project with no darwin target on its configured queue", async () => {
+    // The override belongs to the darwin step alone: a pipeline of Linux
+    // targets is not quietly split across two queues.
+    const yaml = pipeline(
+      await rust([MUSL], { buildkite: { queue: "linux-medium" } }),
+    );
+
+    expect(yaml).toContain("queue: linux-medium");
+    expect(yaml).not.toContain("queue: mac-studio-linux");
+  });
+
   it("maps the toolchain architecture from the target, not the container", async () => {
     const ARM = "aarch64-unknown-linux-musl";
     const yaml = pipeline(await rust([ARM]));
