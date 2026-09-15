@@ -25,7 +25,6 @@
 /** Every label a release may publish. One vocabulary, no short forms. */
 export const TARGET_LABELS = Object.freeze([
   "aarch64-apple-darwin",
-  "x86_64-apple-darwin",
   "x86_64-unknown-linux-musl",
   "x86_64-unknown-linux-gnu",
   "aarch64-unknown-linux-musl",
@@ -48,7 +47,6 @@ export const TARGET_LABELS = Object.freeze([
  */
 export const TARGET_DISPLAY_NAMES = Object.freeze({
   "aarch64-apple-darwin": "macOS (Apple silicon)",
-  "x86_64-apple-darwin": "macOS (Intel)",
   "x86_64-unknown-linux-musl": "Linux x86-64 (musl)",
   "x86_64-unknown-linux-gnu": "Linux x86-64 (glibc)",
   "aarch64-unknown-linux-musl": "Linux arm64 (musl)",
@@ -76,8 +74,11 @@ export const UNIVERSAL_TARGET = "any";
  * ordered first because it is the portable choice; a host that must link
  * against glibc's DSM publishes and resolves the `-gnu` label.
  *
- * `Darwin`/`x86_64` is listed for completeness only: it is not a fleet target
- * and no queue produces it (there is no Intel Mac runner).
+ * `Darwin`/`x86_64` has no entry: it is not a fleet target and no queue can
+ * produce it (the fleet has no Intel Mac runner), so no producer can ever
+ * publish `x86_64-apple-darwin`. An Intel Mac therefore resolves a universal
+ * payload through the `any` fallback and never an arm64 binary, which it
+ * could not run.
  *
  * Exported because the launcher is a shell script: {@link getFetchLaunchTemplateData}
  * renders this table into its `case` statement rather than restating it, so the
@@ -87,7 +88,6 @@ export const UNIVERSAL_TARGET = "any";
 export const UNAME_CANDIDATES = Object.freeze({
   Darwin: Object.freeze({
     arm64: Object.freeze(["aarch64-apple-darwin"]),
-    x86_64: Object.freeze(["x86_64-apple-darwin"]),
   }),
   Linux: Object.freeze({
     x86_64: Object.freeze([

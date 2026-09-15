@@ -57,12 +57,17 @@ describe("target label vocabulary", () => {
       // A name that contained a triple would just be the label again.
       expect(name).not.toMatch(/-unknown-|-apple-|x86_64|aarch64|-gnu/);
     }
-    expect(names["x86_64-apple-darwin"]).toBe("macOS (Intel)");
-    // musl and glibc are the pair a person cannot tell apart from `uname`, so
-    // both are named rather than one being called "Linux".
     expect(names["x86_64-unknown-linux-musl"]).not.toBe(
       names["x86_64-unknown-linux-gnu"],
     );
+  });
+
+  it("does not offer a target the fleet cannot build", () => {
+    // An Intel Mac target was offered and removed: no queue in the fleet has an
+    // Intel Mac agent, so `x86_64-apple-darwin` can never be produced and
+    // offering it only promised an artifact no release could contain.
+    expect(TARGET_LABELS).not.toContain("x86_64-apple-darwin");
+    expect(TARGET_LABELS).toHaveLength(5);
   });
 });
 
@@ -94,6 +99,12 @@ describe("uname -> candidate labels", () => {
     // A host we have no triple for still resolves an architecture-independent
     // payload; it is the same lookup, not a special case.
     expect(targetCandidates("FreeBSD", "riscv64")).toEqual(["any"]);
+  });
+
+  it("resolves an Intel Mac to a universal payload only", () => {
+    // Not a fleet target, so there is no Intel-native candidate to try; and it
+    // must never fall through to the arm64 label, which it cannot execute.
+    expect(targetCandidates("Darwin", "x86_64")).toEqual(["any"]);
   });
 });
 
