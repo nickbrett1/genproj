@@ -3,12 +3,21 @@
 /**
  * The release target vocabulary — Rust triples, and the only vocabulary.
  *
- * A `mac-arm64`-style short label cannot express musl vs glibc:
- * `x86_64-unknown-linux-musl` and `x86_64-unknown-linux-gnu` are distinct,
- * non-interchangeable binaries that share one `uname`. Collapsing both to
- * `linux-x64` publishes a glibc-linked artifact under a label a musl target
- * will happily download — and the sha256 check passes, because the file is
- * intact and simply the wrong file. So the labels are triples and nothing else.
+ * These are the toolchain's own names. A target is handed to `cargo --target`
+ * verbatim, and the same string is the manifest key, the pipeline step, the
+ * artifact path and the launcher's lookup, so no reader translates between two
+ * spellings of one idea.
+ *
+ * The vocabulary is deliberately **one Linux libc, and it is musl**. Rust
+ * triples are the natural spelling for that because musl and glibc are distinct,
+ * non-interchangeable binaries sharing one `uname` — a `linux-x64` label would
+ * let a glibc artifact be fetched by a musl host, pass its sha256 check because
+ * the file is intact, and fail at exec. Musl is the half worth keeping: it is
+ * the libc that can be linked statically, so one artifact runs on Alpine, on a
+ * Debian host and on the NAS alike. `-gnu` is therefore not offered at all
+ * rather than offered as a second choice — a target list that can publish both
+ * is a target list where picking wrong is possible, and the caller here owns
+ * every host it deploys to.
  *
  * This module is the single source of truth for two consumers that must agree
  * byte-for-byte:
@@ -26,9 +35,7 @@
 export const TARGET_LABELS = Object.freeze([
   "aarch64-apple-darwin",
   "x86_64-unknown-linux-musl",
-  "x86_64-unknown-linux-gnu",
   "aarch64-unknown-linux-musl",
-  "aarch64-unknown-linux-gnu",
 ]);
 
 /**
@@ -44,13 +51,14 @@ export const TARGET_LABELS = Object.freeze([
  *
  * The triple is not replaced by the name anywhere - a release target is a
  * build input, and "Linux x86-64 (musl)" is not a value any toolchain accepts.
+ * The libc qualifier stays in the name because it is part of what the artifact
+ * is, and a name that dropped it would be the one thing that had to change the
+ * day a second libc appears.
  */
 export const TARGET_DISPLAY_NAMES = Object.freeze({
   "aarch64-apple-darwin": "macOS (Apple silicon)",
   "x86_64-unknown-linux-musl": "Linux x86-64 (musl)",
-  "x86_64-unknown-linux-gnu": "Linux x86-64 (glibc)",
   "aarch64-unknown-linux-musl": "Linux arm64 (musl)",
-  "aarch64-unknown-linux-gnu": "Linux arm64 (glibc)",
 });
 
 /**
@@ -67,12 +75,12 @@ export const UNIVERSAL_TARGET = "any";
  * Maps `uname -s` / `uname -m` to the labels a host may be running, in
  * preference order (first present in the manifest wins).
  *
- * The value is a *candidate list*, not a single label, because `uname` cannot
- * see libc: it reports `Linux`/`x86_64` for both a musl and a glibc host. The
- * launcher is not entitled to guess which one it is, so it asks the manifest
- * which of the plausible labels the producer actually published. Musl is
- * ordered first because it is the portable choice; a host that must link
- * against glibc's DSM publishes and resolves the `-gnu` label.
+ * One entry per host, because there is now nothing for `uname` to be confused
+ * about: the fleet publishes one libc, so `Linux`/`x86_64` has exactly one
+ * possible label. The list survives as a list because of `{@link
+ * UNIVERSAL_TARGET}`, which is appended to every host's candidates — a host
+ * prefers a real triple for itself and falls back to an architecture-independent
+ * payload, through one lookup rather than a special case.
  *
  * `Darwin`/`x86_64` has no entry: it is not a fleet target and no queue can
  * produce it (the fleet has no Intel Mac runner), so no producer can ever
@@ -90,14 +98,8 @@ export const UNAME_CANDIDATES = Object.freeze({
     arm64: Object.freeze(["aarch64-apple-darwin"]),
   }),
   Linux: Object.freeze({
-    x86_64: Object.freeze([
-      "x86_64-unknown-linux-musl",
-      "x86_64-unknown-linux-gnu",
-    ]),
-    aarch64: Object.freeze([
-      "aarch64-unknown-linux-musl",
-      "aarch64-unknown-linux-gnu",
-    ]),
+    x86_64: Object.freeze(["x86_64-unknown-linux-musl"]),
+    aarch64: Object.freeze(["aarch64-unknown-linux-musl"]),
   }),
 });
 

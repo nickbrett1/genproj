@@ -13,16 +13,30 @@ import { getCapabilityTemplateData } from "../../src/generator/capability-templa
 
 describe("target label vocabulary", () => {
   it("is Rust triples only — no short labels", () => {
-    // A short label cannot express musl vs glibc, so every label must carry a
-    // full arch-vendor-os(-env) triple. This is the property that matters, not
-    // the exact membership.
+    // Every label must carry a full arch-vendor-os(-env) triple: it is what
+    // `cargo --target` takes, and it is the manifest key. This is the property
+    // that matters, not the exact membership.
     for (const label of TARGET_LABELS) {
       expect(label.split("-").length).toBeGreaterThanOrEqual(3);
       expect(label).toMatch(/^(aarch64|x86_64)-/);
     }
     expect(TARGET_LABELS).toContain("x86_64-unknown-linux-musl");
-    expect(TARGET_LABELS).toContain("x86_64-unknown-linux-gnu");
+    expect(TARGET_LABELS).toContain("aarch64-unknown-linux-musl");
     expect(TARGET_LABELS).toContain("aarch64-apple-darwin");
+  });
+
+  it("offers one Linux libc, and it is musl", () => {
+    // Musl is pinned rather than preferred. It is the libc that can be linked
+    // statically, so one artifact runs on a musl host and a glibc host alike;
+    // a `-gnu` label would be a second, non-interchangeable binary for the
+    // same `uname`, and picking the wrong one fails at exec rather than at
+    // download, because the file is intact.
+    const linux = TARGET_LABELS.filter((label) => label.includes("linux"));
+    expect(linux).toHaveLength(2);
+    for (const label of linux) {
+      expect(label).toMatch(/-musl$/);
+    }
+    expect(TARGET_LABELS.some((label) => label.endsWith("-gnu"))).toBe(false);
   });
 
   it("is the universal key the release template publishes under", () => {
@@ -57,9 +71,8 @@ describe("target label vocabulary", () => {
       // A name that contained a triple would just be the label again.
       expect(name).not.toMatch(/-unknown-|-apple-|x86_64|aarch64|-gnu/);
     }
-    expect(names["x86_64-unknown-linux-musl"]).not.toBe(
-      names["x86_64-unknown-linux-gnu"],
-    );
+    expect(names["x86_64-unknown-linux-musl"]).toBe("Linux x86-64 (musl)");
+    expect(names["aarch64-unknown-linux-musl"]).toBe("Linux arm64 (musl)");
   });
 
   it("does not offer a target the fleet cannot build", () => {
@@ -67,23 +80,21 @@ describe("target label vocabulary", () => {
     // Intel Mac agent, so `x86_64-apple-darwin` can never be produced and
     // offering it only promised an artifact no release could contain.
     expect(TARGET_LABELS).not.toContain("x86_64-apple-darwin");
-    expect(TARGET_LABELS).toHaveLength(5);
+    expect(TARGET_LABELS).toHaveLength(3);
   });
 });
 
 describe("uname -> candidate labels", () => {
-  it("maps a fleet Linux/x86_64 host musl-first", () => {
+  it("maps a fleet Linux/x86_64 host", () => {
     expect(targetCandidates("Linux", "x86_64")).toEqual([
       "x86_64-unknown-linux-musl",
-      "x86_64-unknown-linux-gnu",
       "any",
     ]);
   });
 
-  it("maps a fleet Linux/arm64 host musl-first", () => {
+  it("maps a fleet Linux/arm64 host", () => {
     expect(targetCandidates("Linux", "aarch64")).toEqual([
       "aarch64-unknown-linux-musl",
-      "aarch64-unknown-linux-gnu",
       "any",
     ]);
   });
@@ -109,18 +120,17 @@ describe("uname -> candidate labels", () => {
 });
 
 describe("manifest lookup (never string construction)", () => {
-  it("selects the first candidate the manifest contains", () => {
-    // A glibc-only release on a Linux/x86_64 host resolves the -gnu key
-    // instead of 404ing; musl is preferred only when both are published.
-    expect(selectTarget("Linux", "x86_64", ["x86_64-unknown-linux-gnu"])).toBe(
-      "x86_64-unknown-linux-gnu",
+  it("selects the candidate the manifest contains", () => {
+    // The lookup is an intersection, not a guess: this host has one possible
+    // label, and it is used only if the release actually published it.
+    expect(selectTarget("Linux", "x86_64", ["x86_64-unknown-linux-musl"])).toBe(
+      "x86_64-unknown-linux-musl",
     );
+    // The other architecture's artifact is not a match, and it is not a 404
+    // either - it is the same "nothing for this host" as an empty manifest.
     expect(
-      selectTarget("Linux", "x86_64", [
-        "x86_64-unknown-linux-musl",
-        "x86_64-unknown-linux-gnu",
-      ]),
-    ).toBe("x86_64-unknown-linux-musl");
+      selectTarget("Linux", "x86_64", ["aarch64-unknown-linux-musl"]),
+    ).toBeUndefined();
   });
 
   it("returns undefined for a host the release does not publish", () => {

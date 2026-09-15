@@ -103,13 +103,13 @@ sha256_of() {
 }
 
 # The candidate labels for this host, most preferred first. The label is LOOKED
-# UP from this table, never constructed from `uname`: `uname` reports
-# Linux/x86_64 for both a musl and a glibc host, so only the manifest knows which
-# of the plausible labels the producer actually published. A host we have no
-# table entry for still gets the universal key, which is how an
-# architecture-independent payload (a JS bundle, a pure-python .pyz) is found.
-# This table is generated from src/generator/target-labels.js in genproj - the
-# same table the pipeline builds its targets from.
+# UP from this table, never constructed from `uname`: a concatenated triple is
+# where producer/consumer drift would live, and the launcher has no business
+# spelling a Rust target at all. Every host's list ends with the universal key,
+# so a host with no triple of its own still finds an architecture-independent
+# payload (a JS bundle, a pure-python .pyz). This table is generated from
+# src/generator/target-labels.js in genproj - the same table the pipeline builds
+# its targets from.
 candidates() {
   case "$(uname -s)/$(uname -m)" in
 {{fetchLaunchCandidates}}
