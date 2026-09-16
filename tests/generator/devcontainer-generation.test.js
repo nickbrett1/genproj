@@ -404,6 +404,35 @@ describe("DevContainer Generation Tests", () => {
     expect(setup.content).not.toContain("{{projectName}}");
   });
 
+  it("renders the workspace path in post-create-setup.sh for callers that pass no projectName", async () => {
+    const engine = new TemplateEngine();
+    await engine.initialize();
+
+    // Callers are not required to set projectName (previews pass `name`,
+    // tests pass nothing) — the template's /workspaces/{{projectName}} must
+    // still resolve, to the placeholder name if necessary.
+    for (const context of [
+      { capabilities: ["devcontainer-node"], configuration: {} },
+      {
+        name: "TestProject",
+        capabilities: ["devcontainer-node"],
+        configuration: {},
+      },
+    ]) {
+      const files = generateMergedDevelopmentContainerFiles(engine, context, [
+        "devcontainer-node",
+      ]);
+      const setup = files.find(
+        (f) => f.filePath === ".devcontainer/post-create-setup.sh",
+      );
+      expect(setup).toBeDefined();
+      expect(setup.content).not.toContain("{{projectName}}");
+      expect(setup.content).toContain(
+        `/workspaces/${context.name || "my-project"}`,
+      );
+    }
+  });
+
   it("node containers get SSH-first setup, .ssh bind, and npx --yes git hooks (no flaky java feature)", async () => {
     const engine = new TemplateEngine();
     await engine.initialize();

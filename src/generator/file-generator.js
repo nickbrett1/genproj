@@ -130,10 +130,11 @@ agy-dev() {
   doppler run --project common --config dev -- doppler run --forward-signals --project {{dopplerProject}} --config dev -- agy "$@"
 }`;
 
+// `uv` deliberately does NOT live here. It is the delivery vehicle for
+// `spec-kit` (a Python program) and nothing else in the devcontainer consumes
+// it, so it travels with that capability in the Dockerfile instead — installing
+// it from `shell-tools` re-added it to every project unconditionally.
 export const SHELL_SETUP_SCRIPT = `
-echo "INFO: Installing uv tool..."
-curl -LsSf https://astral.sh/uv/install.sh | sudo env CARGO_HOME=/usr/local UV_INSTALL_DIR=/usr/local/bin sh
-
 echo "INFO: Installing Cursor CLI..."
 curl https://cursor.com/install -fsS | bash
 `;
@@ -397,10 +398,7 @@ echo "INFO: Antigravity CLI and Specify CLI installation complete."
 echo "INFO: Initializing Antigravity CLI global settings..."
 mkdir -p "$USER_HOME_DIR/.agy"
 printf '{\n  "selectedAuthType": "oauth-personal",\n  "general": {\n    "sessionRetention": {\n      "enabled": true,\n      "maxAge": "30d",\n      "warningAcknowledged": true\n    }\n  },\n  "ide": {\n    "hasSeenNudge": true,\n    "enabled": true\n  }\n}\n' > "$USER_HOME_DIR/.agy/settings.json"
-sudo chown -R "$CURRENT_USER:$CURRENT_USER" "$USER_HOME_DIR/.agy"
-
-echo "INFO: Installing agy-telemetry hook..."
-curl -fsSL https://raw.githubusercontent.com/nickbrett1/agy-telemetry/main/install.py | python3`;
+sudo chown -R "$CURRENT_USER:$CURRENT_USER" "$USER_HOME_DIR/.agy"`;
 
 export const PLAYWRIGHT_SETUP_SCRIPT = `
 echo "INFO: Installing Playwright and its Chromium dependencies..."
@@ -590,6 +588,34 @@ doppler run --project {{dopplerProject}} --config dev -- ./scripts/setup-wrangle
 
 export const DOPPLER_INSTALL_SCRIPT = String.raw`curl -sLf --retry 3 --tlsv1.2 --proto "=https" 'https://packages.doppler.com/public/cli/gpg.DE2A7741A397C129.key' | gpg --dearmor -o /usr/share/keyrings/doppler-archive-keyring.gpg \
     && echo "deb [signed-by=/usr/share/keyrings/doppler-archive-keyring.gpg] https://packages.doppler.com/public/cli/deb/debian any-version main" | tee /etc/apt/sources.list.d/doppler-cli.list`;
+
+// uv + spec-kit travel together. `spec-kit` is a Python program, and uv is the
+// only thing that installs it (uv fetches its own CPython 3.11 and keeps it out
+// of PATH). Nothing else in the devcontainer consumes uv, so both fragments are
+// injected iff `spec-kit` is selected — see `uvInstallation` / `specKitInstallation`.
+//
+// These are two injection points and cannot be merged into one placeholder:
+// uv itself is installed as root on the apt RUN, while `uv tool install` runs
+// later as the non-root user inside the goose/tooling RUN.
+export const UV_INSTALL_FRAGMENT = ` \\\n    && curl -LsSf https://astral.sh/uv/install.sh | env CARGO_HOME=/usr/local UV_INSTALL_DIR=/usr/local/bin sh`;
+export const SPEC_KIT_INSTALL_FRAGMENT = `&& uv tool install --python 3.11 git+https://github.com/github/spec-kit.git \\\n    `;
+
+/**
+ * The two Dockerfile injection points owned by `spec-kit`, resolved together.
+ *
+ * Deliberately a helper: the caller is a large function already at its
+ * cognitive-complexity ceiling, and two more ternaries in it trip the rule.
+ * Both values are empty when the capability is not selected — uv has no other
+ * consumer in the devcontainer.
+ */
+export function specKitInstallationFragments(capabilities) {
+  return capabilities.includes("spec-kit")
+    ? {
+        uvInstallation: UV_INSTALL_FRAGMENT,
+        specKitInstallation: SPEC_KIT_INSTALL_FRAGMENT,
+      }
+    : { uvInstallation: "", specKitInstallation: "" };
+}
 
 const templateImports = {
   "devcontainer-java-dockerfile": devcontainerJavaDockerfile,
@@ -1060,6 +1086,10 @@ export function generateMergedDevelopmentContainerFiles(
       ...context,
       capabilityConfig: baseCapabilityConfig,
       capability: baseCapability,
+      // uv + spec-kit are one unit: `spec-kit` is a Python program and uv is
+      // the only thing that installs it, so both exist iff the capability is
+      // selected. Splitting them would leave uv orphaned in every project.
+      ...specKitInstallationFragments(context.capabilities),
       dopplerInstallation: context.capabilities.includes("doppler")
         ? ` \\\n    && ${DOPPLER_INSTALL_SCRIPT} \\\n    && apt-get update && apt-get install -y doppler`
         : "",
@@ -1122,6 +1152,10 @@ export function generateMergedDevelopmentContainerFiles(
         "devcontainer-post-create-setup-sh",
         {
           ...context,
+          // The template addresses the workspace as /workspaces/{{projectName}},
+          // so the placeholder must always resolve (callers are not required to
+          // pass projectName — e.g. previews and tests pass `name` or nothing).
+          projectName: context.projectName || context.name || "my-project",
           // 2.9: the devcontainer setup script only contains tooling for
           // SELECTED capabilities — no kitchen-sink leftovers.
           wranglerSetup: context.capabilities.includes("cloudflare-wrangler")

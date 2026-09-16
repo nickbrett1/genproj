@@ -84,12 +84,7 @@ describe("catalog metadata", () => {
     const defaults = capabilities
       .filter((capability) => capability.selectedByDefault)
       .map((capability) => capability.id);
-    expect(defaults).toEqual([
-      "coding-agents",
-      "editor-tools",
-      "shell-tools",
-      "spec-kit",
-    ]);
+    expect(defaults).toEqual(["coding-agents", "editor-tools", "shell-tools"]);
 
     for (const capability of capabilities) {
       expect(capability.selectedByDefault).toBe(capability.category === "core");
@@ -174,7 +169,7 @@ describe("catalog lookups", () => {
   it("filters by category", () => {
     expect(
       getCapabilitiesByCategory("core").map((capability) => capability.id),
-    ).toEqual(["coding-agents", "editor-tools", "shell-tools", "spec-kit"]);
+    ).toEqual(["coding-agents", "editor-tools", "shell-tools"]);
     expect(getCapabilitiesByCategory("nope")).toEqual([]);
   });
 });

@@ -30,6 +30,7 @@ import {
   WRANGLER_LOGIN_SCRIPT,
   SETUP_WRANGLER_SCRIPT,
   DOPPLER_INSTALL_SCRIPT,
+  specKitInstallationFragments,
   generateViteConfigFile,
   generatePyProjectToml,
   generateReadmeFile,
@@ -41,6 +42,7 @@ import {
 import {
   getCapabilityTemplateData,
   applyDefaults,
+  resolveDopplerTarget,
 } from "./capability-template-utils.js";
 import { buildScriptsBlock, buildGitHooksBlock } from "./file-generator.js";
 
@@ -87,15 +89,26 @@ export async function generatePreview(projectConfig, selectedCapabilities) {
     const resolution = resolveDependencies(selectedCapabilities);
     const executionOrder = getCapabilityExecutionOrder(selectedCapabilities);
 
-    const files = await generatePreviewFiles(projectConfig, executionOrder);
+    // The devcontainer templates address the project as `{{projectName}}`, but
+    // a preview request carries it as `name` (and may carry neither, since
+    // previews are unauthenticated). Resolve it once, here, so no template can
+    // emit the raw token — spec 001 US1: previews show a placeholder name
+    // ("my-project") rather than `{{projectName}}`.
+    const config = {
+      ...projectConfig,
+      projectName:
+        projectConfig.projectName || projectConfig.name || "my-project",
+    };
+
+    const files = await generatePreviewFiles(config, executionOrder);
 
     const externalServices = await generateExternalServiceChanges(
-      projectConfig,
+      config,
       executionOrder,
     );
 
     const summary = createPreviewSummary(
-      projectConfig,
+      config,
       resolution,
       files,
       externalServices,
@@ -247,8 +260,12 @@ function createDevelopmentContainerDockerfile(
       ...projectConfig,
       capabilityConfig: baseConfig,
       capability: baseCap,
+      ...specKitInstallationFragments(allCapabilities),
       dopplerInstallation: allCapabilities.includes("doppler")
         ? ` \\\n    && ${DOPPLER_INSTALL_SCRIPT} \\\n    && apt-get update && apt-get install -y doppler`
+        : "",
+      docsifyInstallation: allCapabilities.includes("docsify")
+        ? " \\\n    && npm install -g docsify-cli"
         : "",
     },
   );
@@ -277,8 +294,8 @@ function createDevelopmentContainerShellFiles(
     ...projectConfig,
     agyDevAlias: allCapabilities.includes("doppler")
       ? AGY_DEV_ALIAS.replaceAll(
-          "{{projectName}}",
-          projectConfig.name || "my-project",
+          "{{dopplerProject}}",
+          () => resolveDopplerTarget(projectConfig).project,
         )
       : "",
     gooseAlias: allCapabilities.includes("doppler") ? GOOSE_ALIAS : "",
@@ -366,7 +383,14 @@ function createDevelopmentContainerShellFiles(
 
   const postStartContent = templateEngine.generateFile(
     "devcontainer-post-start-setup-sh",
-    projectConfig,
+    {
+      ...projectConfig,
+      // The docs server is only wired up when docsify is selected; the
+      // template's {{docsifyService}} must always resolve.
+      docsifyService: allCapabilities.includes("docsify")
+        ? `\n# Start documentation server\n# Ensure symlink for specs exists in docs folder for the documentation server\nif [ ! -L /workspaces/${projectConfig.projectName || projectConfig.name || "my-project"}/docs/specs ] && [ ! -e /workspaces/${projectConfig.projectName || projectConfig.name || "my-project"}/docs/specs ]; then\n    echo "INFO: Creating specs symlink in docs folder..."\n    ln -s ../specs /workspaces/${projectConfig.projectName || projectConfig.name || "my-project"}/docs/specs\nfi\n\necho "INFO: Checking documentation server status..."\nif ! pgrep -f 'serve-docs.cjs' >/dev/null; then\n    echo "INFO: Documentation server not running. Starting custom Node server..."\n    if [ -f "/workspaces/${projectConfig.projectName || projectConfig.name || "my-project"}/.devcontainer/serve-docs.cjs" ]; then\n        sudo start-stop-daemon --start --background --oknodo --pidfile /var/run/serve-docs.pid --make-pidfile --chuid $(id -un):$(id -gn) --exec "/usr/local/bin/node" -- /workspaces/${projectConfig.projectName || projectConfig.name || "my-project"}/.devcontainer/serve-docs.cjs\n    else\n        echo "WARNING: serve-docs.cjs not found, skipping startup."\n    fi\nfi\n`
+        : "",
+    },
   );
 
   return [
@@ -755,19 +779,25 @@ async function generateCloudDeploymentFiles(
   const projectName = projectConfig.name || "my-project";
   const compatibilityDate = new Date().toISOString().split("T")[0];
 
+  // Doppler scaling memo (memos/doppler-scaling): the scripts address the
+  // RESOLVED doppler project (`common` by default), not the repo name — the
+  // constants carry `{{dopplerProject}}`, so substituting `{{projectName}}`
+  // silently left the raw token in the rendered script.
+  const dopplerProject = resolveDopplerTarget(projectConfig).project;
+  const withDopplerProject = (script) =>
+    script.replaceAll("{{dopplerProject}}", () => dopplerProject);
+
   // cloud_login.sh
   const dopplerLogin = hasDoppler
-    ? DOPPLER_LOGIN_SCRIPT.replaceAll("{{projectName}}", projectName)
+    ? withDopplerProject(DOPPLER_LOGIN_SCRIPT)
     : "";
 
   const wranglerLogin = hasWrangler
-    ? WRANGLER_LOGIN_SCRIPT.replaceAll("{{projectName}}", projectName)
+    ? withDopplerProject(WRANGLER_LOGIN_SCRIPT)
     : "";
 
   const setupWrangler =
-    hasDoppler && hasWrangler
-      ? SETUP_WRANGLER_SCRIPT.replaceAll("{{projectName}}", projectName)
-      : "";
+    hasDoppler && hasWrangler ? withDopplerProject(SETUP_WRANGLER_SCRIPT) : "";
 
   const googleCloudLogin = hasGoogleCloud
     ? `gcloud auth login && gcloud config set project ${projectName}`
@@ -798,72 +828,96 @@ async function generateCloudDeploymentFiles(
   });
 
   if (hasWrangler) {
-    // If SvelteKit is present, we don't generate src/index.js (worker entry point)
-    // because SvelteKit manages its own entry point via the adapter.
-    // But we still need wrangler configuration.
+    files.push(
+      ...buildWranglerPreviewFiles(templateEngine, projectConfig, {
+        hasDoppler,
+        hasSvelteKit,
+        projectName,
+        compatibilityDate,
+      }),
+    );
+  }
+}
 
-    const wranglerConfig =
-      projectConfig.configuration?.["cloudflare-wrangler"] || {};
-    const isRustWorker = wranglerConfig.workerType === "rust";
+/**
+ * Builds the preview's wrangler file set (wrangler.template.jsonc +
+ * setup-wrangler-config.sh when doppler is present, wrangler.jsonc otherwise).
+ *
+ * Extracted from generateCloudDeploymentFiles: the entry-point / assets /
+ * build-config ternaries that the wrangler template needs pushed that function
+ * past the cognitive-complexity limit.
+ *
+ * @returns {Array<Object>} File objects for the preview.
+ */
+function buildWranglerPreviewFiles(
+  templateEngine,
+  projectConfig,
+  { hasDoppler, hasSvelteKit, projectName, compatibilityDate },
+) {
+  // If SvelteKit is present, we don't generate src/index.js (worker entry point)
+  // because SvelteKit manages its own entry point via the adapter.
+  // But we still need wrangler configuration.
+  const wranglerConfig =
+    projectConfig.configuration?.["cloudflare-wrangler"] || {};
+  const isRustWorker = wranglerConfig.workerType === "rust";
 
-    let mainEntryPoint = "src/index.js";
-    if (hasSvelteKit) {
-      mainEntryPoint = ".svelte-kit/cloudflare/_worker.js";
-    } else if (isRustWorker) {
-      mainEntryPoint = "build/worker/index.js";
-    }
+  let mainEntryPoint = "src/index.js";
+  if (hasSvelteKit) {
+    mainEntryPoint = ".svelte-kit/cloudflare/_worker.js";
+  } else if (isRustWorker) {
+    mainEntryPoint = "build/worker/index.js";
+  }
 
-    const buildConfig = isRustWorker
-      ? ',\n\t"build": {\n\t\t"command": "cargo install -q worker-build && worker-build --release"\n\t}'
-      : "";
+  const buildConfig = isRustWorker
+    ? ',\n\t"build": {\n\t\t"command": "cargo install -q worker-build && worker-build --release"\n\t}'
+    : "";
 
-    if (hasDoppler) {
-      const templateContent = templateEngine.generateFile(
-        "wrangler-template-jsonc",
-        {
-          ...projectConfig,
-          projectName: projectConfig.name || "my-project",
-          compatibilityDate,
-          mainEntryPoint,
-          buildConfig,
-        },
-      );
-      files.push({
-        path: "wrangler.template.jsonc",
-        name: "wrangler.template.jsonc",
-        content: templateContent,
-        size: templateContent.length,
-        type: "file",
-      });
+  // SvelteKit serves its static assets through the adapter's output dir, so the
+  // wrangler template needs the ASSETS binding — without it the template
+  // renders a literal {{assetsConfig}}.
+  const assetsConfig = hasSvelteKit
+    ? ',\n\t"assets": {\n\t\t"binding": "ASSETS",\n\t\t"directory": ".svelte-kit/cloudflare"\n\t}'
+    : "";
 
-      const setupContent = templateEngine.generateFile(
+  const wranglerData = {
+    ...projectConfig,
+    projectName,
+    compatibilityDate,
+    mainEntryPoint,
+    assetsConfig,
+    buildConfig,
+  };
+
+  const toFile = (path, content) => ({
+    path,
+    name: path.split("/").pop(),
+    content,
+    size: content.length,
+    type: "file",
+  });
+
+  if (!hasDoppler) {
+    return [
+      toFile(
+        "wrangler.jsonc",
+        templateEngine.generateFile("wrangler-jsonc", wranglerData),
+      ),
+    ];
+  }
+
+  return [
+    toFile(
+      "wrangler.template.jsonc",
+      templateEngine.generateFile("wrangler-template-jsonc", wranglerData),
+    ),
+    toFile(
+      "scripts/setup-wrangler-config.sh",
+      templateEngine.generateFile(
         "scripts-setup-wrangler-config-sh",
         projectConfig,
-      );
-      files.push({
-        path: "scripts/setup-wrangler-config.sh",
-        name: "setup-wrangler-config.sh",
-        content: setupContent,
-        size: setupContent.length,
-        type: "file",
-      });
-    } else {
-      const wranglerContent = templateEngine.generateFile("wrangler-jsonc", {
-        ...projectConfig,
-        projectName: projectConfig.name || "my-project",
-        compatibilityDate,
-        mainEntryPoint,
-        buildConfig,
-      });
-      files.push({
-        path: "wrangler.jsonc",
-        name: "wrangler.jsonc",
-        content: wranglerContent,
-        size: wranglerContent.length,
-        type: "file",
-      });
-    }
-  }
+      ),
+    ),
+  ];
 }
 
 function generateGitignoreFile(templateEngine, projectConfig, allCapabilities) {
@@ -891,11 +945,25 @@ function generateGitignoreFile(templateEngine, projectConfig, allCapabilities) {
     ? "\n# Java\n*.class\n*.log\n*.ctxt\n.mtj.tmp/\n*.jar\n*.war\n*.nar\n*.ear\n*.zip\n*.tar.gz\n*.rar\ntarget/"
     : "";
 
+  // Rust ignores apply to a rust devcontainer or a rust-worker wrangler project
+  // (same rule as the real generator). Without this the template renders a
+  // literal {{rustIgnore}} into .gitignore.
+  const wranglerConfig =
+    projectConfig.configuration?.["cloudflare-wrangler"] || {};
+  const isRustWorker = hasWrangler && wranglerConfig.workerType === "rust";
+  const hasRust =
+    allCapabilities.some((c) => c.startsWith("devcontainer-rust")) ||
+    isRustWorker;
+  const rustIgnore = hasRust
+    ? "\n# Rust\ntarget/\n**/target/\nCargo.lock\n.rustc_info.json\n**/.rustc_info.json"
+    : "";
+
   const content = templateEngine.generateFile("gitignore", {
     ...projectConfig,
     wranglerIgnore,
     pythonIgnore,
     javaIgnore,
+    rustIgnore,
   });
 
   return {

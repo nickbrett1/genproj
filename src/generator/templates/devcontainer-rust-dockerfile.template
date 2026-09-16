@@ -1,7 +1,6 @@
 FROM mcr.microsoft.com/devcontainers/rust:1-bookworm
 RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
-    && apt-get -y install --no-install-recommends git socat curl gnupg nodejs npm openssh-server mosh micro libevent-dev libncurses-dev pkg-config bison build-essential xclip \
-    && curl -LsSf https://astral.sh/uv/install.sh | env CARGO_HOME=/usr/local UV_INSTALL_DIR=/usr/local/bin sh{{dopplerInstallation}}
+    && apt-get -y install --no-install-recommends git socat curl gnupg nodejs npm openssh-server mosh micro libevent-dev libncurses-dev pkg-config bison build-essential xclip{{uvInstallation}}{{dopplerInstallation}}
 
 
 # Build a current tmux from source (Debian bookworm's apt tmux is old).
@@ -31,8 +30,7 @@ RUN if [ -d "$HOME/.oh-my-zsh" ]; then rm -rf "$HOME/.oh-my-zsh"; fi \
     && git clone https://github.com/zsh-users/zsh-autosuggestions $HOME/.oh-my-zsh/custom/plugins/zsh-autosuggestions \
     && git clone --depth=1 https://github.com/romkatv/powerlevel10k.git $HOME/.oh-my-zsh/custom/themes/powerlevel10k \
     && curl https://cursor.com/install -fsS | bash \
-    && uv tool install --python 3.11 git+https://github.com/github/spec-kit.git \
-    && curl -fsSL https://antigravity.google/cli/install.sh | bash \
+    {{specKitInstallation}}&& curl -fsSL https://antigravity.google/cli/install.sh | bash \
     && mkdir -p "$HOME/.local/bin" \
     && GOOSE_ARCH="$(uname -m | sed 's/arm64/aarch64/')" \
     && GOOSE_TAG="$(curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 https://api.github.com/repos/aaif-goose/goose/releases/latest | sed -n 's/.*"tag_name": "\([^"]*\)".*/\1/p')" \
@@ -46,7 +44,7 @@ RUN if [ -d "$HOME/.oh-my-zsh" ]; then rm -rf "$HOME/.oh-my-zsh"; fi \
     && "$HOME/.local/bin/goose" --version \
     && rm -rf /tmp/goose.tar.bz2 /tmp/goose-extract
 
-# Add uv tools and goose to PATH for the non-root user
+# Add local tools and goose to PATH for the non-root user
 ENV PATH="$USER_HOME_DIR/.local/bin:$PATH"
 
 RUN mkdir -p $HOME/.wrangler

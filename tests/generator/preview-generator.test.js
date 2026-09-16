@@ -167,10 +167,14 @@ vi.mock("../../src/generator/capability-resolver.js", () => ({
   getCapabilityExecutionOrder: vi.fn((caps) => caps),
 }));
 
-vi.mock("../../src/generator/capability-template-utils.js", () => ({
-  getCapabilityTemplateData: vi.fn(() => ({})),
-  applyDefaults: vi.fn((cap, config) => config),
-}));
+vi.mock(
+  "../../src/generator/capability-template-utils.js",
+  async (importOriginal) => ({
+    ...(await importOriginal()),
+    getCapabilityTemplateData: vi.fn(() => ({})),
+    applyDefaults: vi.fn((cap, config) => config),
+  }),
+);
 
 describe("generatePreview", () => {
   it("creates preview data with non-devcontainer files", async () => {
