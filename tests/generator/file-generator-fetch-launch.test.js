@@ -1,7 +1,17 @@
 // tests/generator/file-generator-fetch-launch.test.js
 
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  readlinkSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -146,12 +156,32 @@ describe("launcher contract", () => {
     expect(script).toContain('if [ -n "${NO_FETCH:-}" ]');
   });
 
-  it("flips the symlink atomically rather than in place", async () => {
+  it("flips `current` by freeing the name first, never by renaming over it", async () => {
     const script = await scriptOf();
 
-    // A rename over the destination: a reader never sees `current` dangling.
-    expect(script).toContain('ln -sn "${RELEASES_DIR}/${version}"');
-    expect(script).toContain('mv -f "${DEPLOY_DIR}/.current.$$" "$CURRENT"');
+    // `ln -sn tmp` then `mv -f tmp current` reads like the atomic spelling and
+    // is silently a no-op: `current` is a symlink to a directory, mv follows it,
+    // moves the new link *inside* the previous release, and leaves `current`
+    // pointing where it did. The launcher says "installed <version>" and keeps
+    // running the version it first installed (mac-studio, v0.1.14 -> v0.1.15).
+    // `mv -T` fixes it on GNU and does not exist on macOS.
+    expect(script).not.toContain(
+      'mv -f "${DEPLOY_DIR}/.current.$$" "$CURRENT"',
+    );
+    expect(script).toContain('rm -f "$CURRENT" && mv "$flip" "$CURRENT"');
+
+    // This failure's character is that it reports success, so the result is
+    // read back: "installed" has to mean "`current` points at it".
+    expect(script).toContain(
+      'if [ "$(readlink "$CURRENT" 2>/dev/null || true)" != "${RELEASES_DIR}/${version}" ]',
+    );
+
+    // Fail open, including here: a flip that cannot be done leaves the host on
+    // the release it has, rather than with no `current` at all.
+    expect(script).toContain(
+      'previous="$(readlink "$CURRENT" 2>/dev/null || true)"',
+    );
+    expect(script).toContain('ln -sn "$previous" "$CURRENT"');
   });
 });
 
@@ -324,6 +354,108 @@ describe("the launcher sources the host's env file", () => {
     expect(result.stdout.trim()).toBe("<unset>");
     expect(result.stderr).not.toContain("env file");
     expect(result.status).toBe(0);
+  });
+});
+
+describe("fetch-launch upgrades a host that is already running a release", () => {
+  // The static assertions above cannot see this defect: the script that had the
+  // bug passed every one of them. The only thing that catches it is an upgrade -
+  // a host with a `current` that already points at an unpacked release, which is
+  // every host after its first boot. The manifest is served over `file://`, the
+  // payload is a real tarball with a real sha256, and the assertion is what the
+  // host ends up executing.
+  const sha256 = (file) =>
+    createHash("sha256").update(readFileSync(file)).digest("hex");
+
+  const upgradeHost = async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fetch-launch-upgrade-"));
+    const serve = join(dir, "serve");
+    const pack = join(dir, "pack");
+    mkdirSync(serve, { recursive: true });
+
+    // What is installed and running: 1.0.0, with `current` pointing at it, the
+    // way every host looks after its first boot.
+    const installed = join(dir, "releases", "1.0.0", "bin");
+    mkdirSync(installed, { recursive: true });
+    writeFileSync(
+      join(installed, "test-project"),
+      '#!/bin/sh\nprintf "%s\\n" 1.0.0\n',
+    );
+    chmodSync(join(installed, "test-project"), 0o755);
+    symlinkSync(join(dir, "releases", "1.0.0"), join(dir, "current"), "dir");
+
+    // What the manifest offers: 1.0.1, packed the way
+    // `scripts/release-artifacts.sh` packs it (`tar -C <dir> .`), under the
+    // universal key - which every host's candidate list ends with, so this test
+    // does not depend on the machine it runs on.
+    const stage = join(pack, "bin");
+    mkdirSync(stage, { recursive: true });
+    writeFileSync(
+      join(stage, "test-project"),
+      '#!/bin/sh\nprintf "%s\\n" 1.0.1\n',
+    );
+    chmodSync(join(stage, "test-project"), 0o755);
+    const asset = join(serve, "test-project-any.tar.gz");
+    expect(spawnSync("tar", ["-czf", asset, "-C", pack, "."]).status).toBe(0);
+    // One asset per line, the shape `scripts/release-artifacts.sh` writes: the
+    // launcher reads an entry with grep and two `sed`s, not a JSON parser.
+    const sha = sha256(asset);
+    writeFileSync(
+      join(serve, "manifest.json"),
+      `{
+  "name": "test-project",
+  "version": "1.0.1",
+  "tag": "v1.0.1",
+  "assets": {
+    "any": { "file": "test-project-any.tar.gz", "sha256": "${sha}" }
+  }
+}
+`,
+    );
+
+    const script = join(dir, "fetch-launch.sh");
+    writeFileSync(script, await scriptOf());
+    const result = spawnSync("bash", [script], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        DEPLOY_DIR: dir,
+        ENV_FILE: join(dir, "no-such-env-file"),
+        LAUNCHER_NAME: "test-project",
+        MANIFEST_URL: `file://${join(serve, "manifest.json")}`,
+      },
+    });
+
+    return { dir, result };
+  };
+
+  it("replaces `current` and execs the new release", async () => {
+    const { dir, result } = await upgradeHost();
+
+    expect(result.stderr).toContain("installed 1.0.1");
+    expect(result.status).toBe(0);
+    // The payload that ran is the fetched one, not the installed one.
+    expect(result.stdout.trim()).toBe("1.0.1");
+    expect(readlinkSync(join(dir, "current"))).toBe(
+      join(dir, "releases", "1.0.1"),
+    );
+  });
+
+  it("leaves no half-flipped link inside the release it replaced", async () => {
+    // The bug's fingerprint: `current` untouched, and a stray `.current.<pid>`
+    // sitting under the previous version.
+    const { dir } = await upgradeHost();
+
+    // An asymmetric matcher inside `toContain` would pass vacuously; these are
+    // plain arrays so a stray fails the test rather than the assertion.
+    expect(
+      readdirSync(join(dir, "releases", "1.0.0")).filter((entry) =>
+        entry.startsWith(".current."),
+      ),
+    ).toEqual([]);
+    expect(
+      readdirSync(dir).filter((entry) => entry.startsWith(".current.")),
+    ).toEqual([]);
   });
 });
 
