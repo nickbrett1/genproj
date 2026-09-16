@@ -1503,7 +1503,7 @@ function _bkAgents(queue) {
  * @param {string} image - Container image
  * @param {string[]} [envNames] - Environment variable names to forward
  * @param {string} [commandYaml] - Optional `command:` in exec form
- * @param {string} [extraYaml] - Additional plugin options (e.g. mount-buildkite-agent)
+ * @param {string} [extraYaml] - Additional plugin options (e.g. `user: "1000"`)
  * @returns {string} YAML fragment
  */
 function _bkDockerPlugin(

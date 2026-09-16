@@ -3,6 +3,7 @@
 **Status**: Draft (v1 scope: capability + generated release step + artifact hand-off)
 **Created**: 2026-09-13
 **Revised**: 2026-09-14 — the release moved from a tag-triggered GitHub Actions workflow to a Buildkite step, and from "notes only" to publishing artifacts
+**Revised**: 2026-09-16 — the artifact hand-off moved off the mounted `buildkite-agent` onto the agent API (the fleet's macOS agent binary cannot be executed inside a Linux container), and the Doppler CLI install names `gpgv`, which its installer verifies with. §7's end-to-end gate is cleared with the run that passed.
 **Motivating use case**: a generated project should be able to **ship a release** — the code that passed CI is tagged, packaged and published with no human doing the mechanics. Requested alongside `buildkite` for the `a2a-goose` node agent, whose deploy channel is a GitHub Release consumed by a boot-fetch launcher (`releases/latest/download/<asset>` only resolves to a real Release with real assets).
 **Depends on**: `buildkite`. The release is a step _in_ the Buildkite pipeline, so the capability is meaningless without it (see §3).
 **Reference implementation**: `specs/006-genproj-buildkite/spec.md` — the pipeline the release step is appended to.
@@ -57,7 +58,7 @@ Buildkite: release  (depends_on: build, main only)
         ├─ VERSION = patch bump of the newest v* tag; TAG = vVERSION
         ├─ skip if TAG already exists on origin (re-runs must be safe)
         ├─ git tag -a / git push (credential.helper, token never in the URL)
-        ├─ buildkite-agent artifact download  ← the exact bytes the build tested
+        ├─ agent API artifact search + curl   ← the exact bytes the build tested
         ├─ bash scripts/release-artifacts.sh "$VERSION"
         └─ gh release create "$TAG" --title "$TAG" <flags> release/*
         │
@@ -69,7 +70,7 @@ Four properties are load-bearing:
 
 1. **The release is gated on the build, inside the same build.** `depends_on: [build]` and `if: build.branch == "main"`, the same shape as the deploy step. A release therefore cannot exist for a commit that did not pass, and this is structural rather than a matter of discipline.
 2. **The tag is created by CI, never by a human.** The version is derived from the newest existing tag, so there is no version file to keep in sync and no "bump and tag" step to forget.
-3. **The release attaches the artifacts the build produced, and does not rebuild them.** Steps run in isolated containers, so the build step uploads `artifact_paths` and the release step downloads them with `buildkite-agent artifact download`. One compile per commit, and the release ships what the tests actually ran against rather than a second compile of the same tree.
+3. **The release attaches the artifacts the build produced, and does not rebuild them.** Steps run in isolated containers, so the build step uploads `artifact_paths` and the release step fetches them back from the Buildkite agent API — searching this build's artifacts for the build step's own path, then downloading each match — rather than compiling the tree a second time. One compile per commit, and the release ships what the tests actually ran against. It does **not** call `buildkite-agent artifact download`: that needs the agent binary mounted from the host, and the fleet's agents are macOS, so the mounted binary cannot be executed inside the step's Linux container. The agent API is called with the job's own token instead, which is the only credential a step holds and which the public REST API rejects.
 4. **It is not a validator.** Buildkite is the only thing that reports on pushes; the release step reads that verdict rather than producing one of its own.
 
 ### Why a Buildkite step and not GitHub Actions
@@ -92,13 +93,13 @@ The cost of that choice is the thing to watch: generation cannot _prove_ the rel
 
 ## 4. Templates and generated content
 
-| Artifact                       | Shape                                                                                                                                                                                 |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| pipeline `release` step        | label/key/depends_on/if, docker plugin with `mount-buildkite-agent: true`, gh install, token resolution, version + tag, artifact download, artifacts hook, single `gh release create` |
-| pipeline `build` step          | gains `artifact_paths:` when the capability is selected — the upload half of the hand-off                                                                                             |
-| `.github/release.yml`          | GitHub's release-notes classification (Features / Fixes / Dependencies / Other), consumed by `--generate-notes`                                                                       |
-| `RELEASING.md`                 | the tag convention, the manifest and its target keys, how the artifacts travel, what is genproj-owned vs app-owned, prerequisites, and that the release is not a validator            |
-| `scripts/release-artifacts.sh` | app-owned hook: packages `dist/` into `<project>-<version>.tar.gz` by default, with a commented per-platform example                                                                  |
+| Artifact                       | Shape                                                                                                                                                                                           |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| pipeline `release` step        | label/key/depends_on/if, docker plugin forwarding the job token and build id, gh install, token resolution, version + tag, agent-API artifact fetch, artifacts hook, single `gh release create` |
+| pipeline `build` step          | gains `artifact_paths:` when the capability is selected — the upload half of the hand-off                                                                                                       |
+| `.github/release.yml`          | GitHub's release-notes classification (Features / Fixes / Dependencies / Other), consumed by `--generate-notes`                                                                                 |
+| `RELEASING.md`                 | the tag convention, the manifest and its target keys, how the artifacts travel, what is genproj-owned vs app-owned, prerequisites, and that the release is not a validator                      |
+| `scripts/release-artifacts.sh` | app-owned hook: packages `dist/` into `<project>-<version>.tar.gz` by default, with a commented per-platform example                                                                            |
 
 ### The `gh release create` flag set
 
@@ -128,9 +129,9 @@ The build step's `artifact_paths:` are derived, never guessed. With `targets` em
 
 The target case **replaces** rather than augments, deliberately: `build/<target>/**` is the contract `scripts/release-artifacts.sh` packs and the launcher's manifest keys are built from, so the per-target build step writes its payload there and nothing else is carried. The language default would only add bytes the release then has to ignore.
 
-`buildkite-agent artifact download` exits non-zero when nothing matches, which is the normal case for a project that outputs elsewhere, so the release step treats a miss as "notes only" rather than as a failure. That is what makes the generated pipeline work out of the box before anyone has corrected the paths for their project: a wrong guess costs nothing until the build produces output.
+An artifact search that matches nothing is an empty result, not an error, and that is the normal case for a project that outputs somewhere other than the default, so the release step treats a miss as "notes only" rather than as a failure. That is what makes the generated pipeline work out of the box before anyone has corrected the paths for their project: a wrong guess costs nothing until the build produces output.
 
-The same list is rendered twice — into the build step's `artifact_paths:` and into the release step's `download` — from one array. They cannot disagree.
+The same list is rendered twice — into the build step's `artifact_paths:` and into the release step's search — from one array. They cannot disagree.
 
 ### Per-target artifacts and the manifest
 
@@ -158,7 +159,7 @@ The darwin step carries no docker plugin at all — a macOS binary cannot be lin
 - the release step exists with `key: release`, `depends_on: - build` and `if: build.branch == "main"`;
 - it creates the tag (`git tag -a`, `git push origin "refs/tags/$TAG"`) and publishes (`gh release create`, always `--generate-notes`, never `--draft`, `--prerelease` or `--notes-from-tag`);
 - it resolves the token at run time and never writes it to the repository;
-- the build step uploads `artifact_paths` and the release step downloads the same patterns, with `mount-buildkite-agent: true` so `buildkite-agent` is callable in the container;
+- the build step uploads `artifact_paths` and the release step searches for the same patterns, over the agent API with the forwarded job token and build id — and the release step names neither `buildkite-agent`, `mount-buildkite-agent` nor the public `api.buildkite.com` REST API;
 - the release step contains no `npm install`, `npm run build` or `cargo build` — the no-rebuild property, asserted by slicing the release step out of the file so the build step's own `npm run build` does not satisfy it;
 - the paths follow the language, and a language with no known output releases notes only;
 - the tag prefix is fixed at `v` (`git tag --list 'v*'`, `TAG="v$VERSION"`), a `tagPrefix` left in a saved configuration does not change the render, and the release flags stay fixed;
@@ -166,7 +167,12 @@ The darwin step carries no docker plugin at all — a macOS binary cannot be lin
 
 ### End-to-end verification
 
-**Not yet run.** It needs a real repository, a real Buildkite agent and a real tag, none of which the build sandbox had. The gate is: generate a repo with `buildkite` + `github-release`, merge to the default branch, confirm the build uploads artifacts, the release step downloads them, a `v0.1.0` tag is pushed, and a published Release with notes and assets appears at `/releases`. Clear this before the capability is treated as proven.
+**Run, and passed** (2026-09-16). `nickbrett1/a2a-goose` was generated with `buildkite` + `github-release` (targets `aarch64-apple-darwin`, `x86_64-unknown-linux-musl`) + `fetch-launch` + `doppler` and pushed to the default branch. Buildkite build #13 ran the pipeline: both build steps compiled, tested and uploaded, and the release step searched this build's artifacts, fetched both payloads, packed them with the hook and published `v0.1.5` carrying `a2a-goose-aarch64-apple-darwin.tar.gz`, `a2a-goose-x86_64-unknown-linux-musl.tar.gz` and `manifest.json`. The manifest's sha256 for each target matches the asset GitHub serves, and the two payloads are a Mach-O arm64 executable and a static-pie x86-64 ELF — one build per commit, no rebuild, and the launcher's `releases/latest/download/manifest.json` contract resolves.
+
+That run is also the argument for keeping this gate manual, because it found two defects the tests could not:
+
+- The Doppler CLI was installed with `--no-install-recommends`, and `cli.doppler.com/install.sh` verifies its own download with `gpgv` — a binary `gnupg` only _Recommends_, and one Debian 13's apt no longer needs for itself. The install line now names `gpgv` explicitly, through a helper shared with the deploy step's install so the two cannot drift.
+- The fetch originally called `buildkite-agent artifact download`, which needs the agent binary mounted from the host. The fleet's agents are macOS, so that binary is Mach-O and unrunnable inside the Linux container, and the step **failed open** — the release was published with notes and no assets — because a missing artifact is a normal case here. The agent API replaced it; see §3.
 
 ---
 
