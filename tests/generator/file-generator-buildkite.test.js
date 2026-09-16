@@ -185,6 +185,11 @@ describe("Buildkite file generation", () => {
     expect(content).not.toContain("            - CLOUDFLARE_API_TOKEN");
     expect(content).toContain("setup-wrangler-config.sh");
     expect(content).toContain("sync-doppler-secrets.sh");
+    // The deploy step installs the CLI the same way the release step does, so
+    // it needs the same `gpgv` for the installer's own signature check.
+    expect(content).toContain(
+      "apt-get install -y --no-install-recommends curl ca-certificates gpgv",
+    );
     expect(content).toContain("npx --yes wrangler deploy");
     // A preview on every branch is off by default, matching CircleCI.
     expect(content).not.toContain("key: deploy_preview");

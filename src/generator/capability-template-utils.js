@@ -1396,6 +1396,30 @@ ${minorAndPatch}`;
 }
 
 /**
+ * Doppler CLI install, shared by every step that resolves secrets from Doppler.
+ *
+ * `cli.doppler.com/install.sh` verifies its own download with `gpgv` and exits 3
+ * when it cannot find the binary ("Unable to find gpg binary for signature
+ * verification"), which is what the release step hit. That check is about the
+ * script's own signature verification, not about apt: Debian 13's apt verifies
+ * repositories itself and no longer needs `gpgv` to do it, so the images the
+ * containerised steps run in - rust:1-slim among them - are free to ship
+ * without it. `gpgv` is not pulled in by `gnupg` either (it is a Recommends,
+ * and these installs pass --no-install-recommends), so it is named here: the
+ * install script is the only thing on the image that wants it.
+ *
+ * @param {string} indent - Leading indentation for the command lines
+ * @returns {string} YAML command block
+ */
+function dopplerCliInstallCommands(indent) {
+  return `${indent}if ! command -v doppler >/dev/null 2>&1; then
+${indent}  apt-get update && apt-get install -y --no-install-recommends curl ca-certificates gpgv
+${indent}  curl -Ls --tlsv1.2 --proto "=https" --retry 3 https://cli.doppler.com/install.sh | sh
+${indent}fi
+`;
+}
+
+/**
  * Queue declaration shared by every generated step.
  * @param {string} queue - Agent queue
  * @returns {string} YAML fragment
@@ -1922,11 +1946,7 @@ ${_bkDockerPlugin(playwrightImage, ["CHROME_PATH"])}    # CHROME_PATH must be li
 
     const installDoppler = hasDoppler
       ? `      - |
-        if ! command -v doppler >/dev/null 2>&1; then
-          apt-get update && apt-get install -y --no-install-recommends curl ca-certificates
-          curl -Ls --tlsv1.2 --proto "=https" --retry 3 https://cli.doppler.com/install.sh | sh
-        fi
-      - |
+${dopplerCliInstallCommands("        ")}      - |
         # sync-doppler-secrets.sh needs jq and exits without it ("jq is not
         # installed or not in PATH"); CircleCI's deploy job installed it, and the
         # failure lands AFTER a successful wrangler deploy, which reads as a
@@ -2131,11 +2151,7 @@ ${releaseArtifactPaths
 `;
     const releaseToken = hasDoppler
       ? `      - |
-        if ! command -v doppler >/dev/null 2>&1; then
-          apt-get update && apt-get install -y --no-install-recommends curl ca-certificates
-          curl -Ls --tlsv1.2 --proto "=https" --retry 3 https://cli.doppler.com/install.sh | sh
-        fi
-      - |
+${dopplerCliInstallCommands("        ")}      - |
         # Resolved at run time, never stored in the repository and never in the
         # agent's environment hook, where every job on the fleet could read it.
         export GH_TOKEN="$$(doppler secrets get GITHUB_RELEASE_TOKEN --project common --config prd --plain)"

@@ -56,6 +56,27 @@ describe("GitHub release file generation", () => {
     expect(release).toContain("bash scripts/release-artifacts.sh");
   });
 
+  it("installs the gpg binary the Doppler installer verifies with", async () => {
+    const files = await generate(
+      ["buildkite", "github-release", "doppler"],
+      {},
+    );
+    const release = releaseSection(pipeline(files));
+
+    // cli.doppler.com/install.sh verifies its own download with `gpgv` and
+    // exits 3 ("Unable to find gpg binary for signature verification") without
+    // it. Debian 13's apt verifies repositories itself and no longer needs
+    // `gpgv`, so the step's image is free to ship without it - and `gnupg` only
+    // recommends it, which --no-install-recommends drops.
+    expect(release).toContain(
+      "apt-get install -y --no-install-recommends curl ca-certificates gpgv",
+    );
+    // The binary has to be there before the installer that looks for it runs.
+    expect(
+      release.indexOf("-recommends curl ca-certificates gpgv"),
+    ).toBeLessThan(release.indexOf("cli.doppler.com/install.sh"));
+  });
+
   it("passes artifacts from the build step to the release instead of rebuilding", async () => {
     const files = await generate(
       ["buildkite", "github-release", "doppler", "devcontainer-node"],
