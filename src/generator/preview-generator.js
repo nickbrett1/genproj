@@ -33,6 +33,7 @@ import {
   specKitInstallationFragments,
   generateViteConfigFile,
   generatePyProjectToml,
+  generateRustCrateFiles,
   generateReadmeFile,
   getDevcontainerJsonExtras,
   normalizeYamlBlankLines,
@@ -955,7 +956,7 @@ function generateGitignoreFile(templateEngine, projectConfig, allCapabilities) {
     allCapabilities.some((c) => c.startsWith("devcontainer-rust")) ||
     isRustWorker;
   const rustIgnore = hasRust
-    ? "\n# Rust\ntarget/\n**/target/\nCargo.lock\n.rustc_info.json\n**/.rustc_info.json"
+    ? "\n# Rust\ntarget/\n**/target/\n.rustc_info.json\n**/.rustc_info.json"
     : "";
 
   const content = templateEngine.generateFile("gitignore", {
@@ -1127,6 +1128,19 @@ async function generatePreviewFiles(projectConfig, executionOrder) {
       name: pyFile.filePath.split("/").pop(),
       content: pyFile.content,
       size: pyFile.content.length,
+      type: "file",
+    });
+  }
+
+  // Rust scaffold: Cargo.toml + Cargo.lock + src/main.rs, mirroring the real
+  // generator so a preview matches what genproj emits (and so the preview of a
+  // rust project shows the package its pipeline builds).
+  for (const rustFile of generateRustCrateFiles(context)) {
+    files.push({
+      path: rustFile.filePath,
+      name: rustFile.filePath.split("/").pop(),
+      content: rustFile.content,
+      size: rustFile.content.length,
       type: "file",
     });
   }

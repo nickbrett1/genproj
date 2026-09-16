@@ -268,6 +268,15 @@ describe("Cloudflare Wrangler File Generation", () => {
     const gitignore = files.find((f) => f.filePath === ".gitignore");
     expect(gitignore).toBeDefined();
     expect(gitignore.content).toContain("/target");
-    expect(gitignore.content).toContain("Cargo.lock");
+    // The lockfile is tracked, not ignored: `cargo build --locked` (the
+    // generated build step) fails when Cargo.lock is absent.
+    expect(gitignore.content).not.toContain("Cargo.lock");
+
+    // A rust project's primary language also gets a root binary crate, so the
+    // generated pipeline's `cargo build --locked` has a package to build.
+    const rootCargoToml = files.find((f) => f.filePath === "Cargo.toml");
+    expect(rootCargoToml).toBeDefined();
+    expect(rootCargoToml.content).toContain('name = "rust-worker-project"');
+    expect(files.find((f) => f.filePath === "src/main.rs")).toBeDefined();
   });
 });

@@ -25,6 +25,7 @@ vi.mock("../../src/generator/file-generator.js", () => ({
   SETUP_WRANGLER_SCRIPT: "setup-wrangler-script",
   DOPPLER_INSTALL_SCRIPT: "doppler-install-script",
   generatePyProjectToml: () => [],
+  generateRustCrateFiles: () => [],
   generateReadmeFile: (context) => ({
     filePath: "README.md",
     content: `# ${context.name || context.projectName || "project"}`,

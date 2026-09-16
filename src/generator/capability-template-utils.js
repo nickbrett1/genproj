@@ -684,6 +684,34 @@ export function resolveProjectLanguage(context) {
 export const resolveLanguage = resolveProjectLanguage;
 
 /**
+ * The cargo package/binary name for a project name.
+ *
+ * A project name is a GitHub repository name, whose alphabet (letters, digits,
+ * `.`, `-`, `_`) is not cargo's: a `.` is not a package-name character and cargo
+ * rejects it, while `-` is legal in both the package and the binary cargo builds
+ * from it. Three generated things have to agree on one spelling of the name -
+ * the `Cargo.toml` package, the `target/<triple>/release/<name>` the build step
+ * copies to `build/<target>/bin/`, and the `/app/target/release/<name>` the
+ * Dockerfile copies onto PATH - so all three go through this function rather
+ * than sanitising separately and drifting.
+ *
+ * A name that sanitises away entirely, or that starts with a digit (which cargo
+ * also rejects), is prefixed rather than allowed through: an invalid manifest is
+ * a build that fails on the first push, which is the failure this exists to
+ * prevent.
+ *
+ * @param {string} name - The project/repository name
+ * @returns {string} A name cargo accepts and the pipeline looks for
+ */
+export function cargoPackageName(name) {
+  const sanitized = String(name || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, "");
+  if (sanitized && !/^\d/.test(sanitized)) return sanitized;
+  return sanitized ? `app-${sanitized}` : "app";
+}
+
+/**
  * The devcontainer capability that provides the primary language's toolchain —
  * `devcontainer-${primaryLanguage}`. The devcontainer **base** (Dockerfile and
  * JSON: remoteUser, features, remoteEnv PATH) follows this rather than the
@@ -831,9 +859,7 @@ function getDockerContainerTemplateData(context) {
   // Python package name (src-layout) and Rust binary name (package name)
   // used by the manifest-first build and the runtime stage below.
   const pkgName = toPythonPackageName(projectName);
-  const rustBinName = (projectName || "my-project")
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]/g, "");
+  const rustBinName = cargoPackageName(projectName || "my-project");
 
   // ---- Health mechanism (config-driven; see jsdoc above).
   let healthcheckSetting =
@@ -1722,7 +1748,13 @@ function getBuildkiteTemplateData(context) {
         (target) => typeof target === "string" && target.trim() !== "",
       )
     : [];
-  const projectBinaryName = context.projectName || context.name || "my-project";
+  // The cargo binary the build step looks for under
+  // `target/<triple>/release/`. It goes through the same sanitiser as the
+  // generated Cargo.toml's package name, so the manifest and the step cannot
+  // disagree about what cargo will have produced.
+  const projectBinaryName = cargoPackageName(
+    context.projectName || context.name || "my-project",
+  );
 
   const releaseArtifactPaths = releaseTargets.length
     ? releaseTargets.map((target) => `build/${target}/**`)
