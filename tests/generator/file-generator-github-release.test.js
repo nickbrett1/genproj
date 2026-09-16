@@ -251,6 +251,13 @@ describe("per-target release builds", () => {
     expect(musl).toContain(
       "CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc",
     );
+    // ...and the plugin actually forwards it. A step-level `env:` value does
+    // not enter the container: only names in the plugin's `environment:` list
+    // do, taking their value from the job environment.
+    expect(musl).toContain("environment:\n            - RELEASE_TARGET");
+    expect(musl).toContain(
+      "            - CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER",
+    );
   });
 
   it("keeps a darwin target off a queue that only runs containers", async () => {

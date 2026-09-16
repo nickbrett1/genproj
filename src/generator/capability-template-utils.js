@@ -1671,10 +1671,15 @@ ${envKeys.map((name) => `      ${name}: ${env[name]}`).join("\n")}
   // the project's - a project that moved its containers to a Linux queue must
   // not take its darwin build with them.
   const darwin = isDarwinTarget(unit.target || "");
+  // The step's `env:` values do not enter the container on their own - only the
+  // names listed in the plugin's `environment:` do, and they take their value
+  // from the job environment. Without this the musl target's
+  // CARGO_TARGET_<TRIPLE>_LINKER never reaches rustc, whose final link then
+  // falls back to the host `cc` and dies on `-m64` (see targetLinkerEnvVar).
   const buildPlugins = darwin
     ? ""
     : `    plugins:
-${_bkDockerPlugin(image)}`;
+${_bkDockerPlugin(image, envKeys)}`;
   return `
   - label: "${unit.label}"
     key: ${unit.key}
