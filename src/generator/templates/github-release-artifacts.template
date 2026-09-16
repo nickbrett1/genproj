@@ -53,7 +53,7 @@ fi
 #
 # A target with no build/<target>/ is reported and skipped rather than failing
 # the release, so declaring a target before its build produces anything costs
-# nothing — the same fail-open reasoning as the artifact download above. The
+# nothing — the same fail-open reasoning as the artifact fetch above. The
 # list is empty for a project that declares no targets, which makes the whole
 # loop a no-op.
 for target in {{githubReleaseTargetsJoined}}; do

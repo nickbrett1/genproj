@@ -88,11 +88,23 @@ describe("GitHub release file generation", () => {
     // The build step uploads what it compiled and tested...
     expect(yaml).toContain("artifact_paths:");
     expect(yaml).toContain('- "dist/**"');
-    // ...and the release step fetches those exact bytes back.
-    expect(release).toContain('buildkite-agent artifact download "dist/**" .');
-    // buildkite-agent is a host binary, so it has to be mounted to be callable
-    // from inside the step's container.
-    expect(release).toContain("mount-buildkite-agent: true");
+    // ...and the release step fetches those exact bytes back from the
+    // artifacts API, keyed by this step's own path prefix.
+    expect(release).toContain('--arg prefix "dist/"');
+    // `buildkite-agent` is not used at all: on this fleet it is a macOS host
+    // binary, and a linux container cannot exec a Mach-O file.
+    expect(release).not.toContain("buildkite-agent artifact download");
+    expect(release).not.toContain("mount-buildkite-agent");
+    // The API call authenticates with the job's own token, which the docker
+    // plugin has to forward by name to reach the container.
+    expect(release).toContain(
+      "https://api.buildkite.com/v2/organizations/$$BUILDKITE_ORGANIZATION_SLUG",
+    );
+    expect(release).toContain(
+      "Authorization: Bearer $$BUILDKITE_AGENT_ACCESS_TOKEN",
+    );
+    expect(release).toContain("            - BUILDKITE_AGENT_ACCESS_TOKEN");
+    expect(release).toContain("            - BUILDKITE_BUILD_NUMBER");
     // And it must not compile the same tree a second time.
     expect(release).not.toContain("npm install");
     expect(release).not.toContain("npm run build");
@@ -108,9 +120,7 @@ describe("GitHub release file generation", () => {
     );
 
     expect(rust).toContain('- "target/release/**"');
-    expect(releaseSection(rust)).toContain(
-      'buildkite-agent artifact download "target/release/**" .',
-    );
+    expect(releaseSection(rust)).toContain('--arg prefix "target/release/"');
   });
 
   it("builds and attaches python artifacts, not notes only", async () => {
@@ -127,7 +137,7 @@ describe("GitHub release file generation", () => {
 
     expect(python).toContain("python -m build");
     expect(python).toContain('- "dist/**"');
-    expect(release).toContain('buildkite-agent artifact download "dist/**" .');
+    expect(release).toContain('--arg prefix "dist/"');
   });
 
   it("releases notes only where there is no known build output", async () => {
@@ -141,6 +151,9 @@ describe("GitHub release file generation", () => {
 
     expect(java).not.toContain("artifact_paths:");
     expect(release).not.toContain("buildkite-agent artifact download");
+    // Nothing to fetch means no API call and no token forwarded either.
+    expect(release).not.toContain("api.buildkite.com");
+    expect(release).not.toContain("BUILDKITE_AGENT_ACCESS_TOKEN");
     expect(release).toContain("the release will carry notes only");
   });
 
@@ -240,8 +253,11 @@ describe("per-target release builds", () => {
     const release = releaseSection(yaml);
     expect(release).toContain("      - build_aarch64_apple_darwin");
     expect(release).toContain("      - build_x86_64_unknown_linux_musl");
+    // One fetch block per target pattern, each scoped to its own prefix so the
+    // two targets' payloads cannot be mixed up.
+    expect(release).toContain('--arg prefix "build/aarch64-apple-darwin/"');
     expect(release).toContain(
-      'buildkite-agent artifact download "build/aarch64-apple-darwin/**" .',
+      '--arg prefix "build/x86_64-unknown-linux-musl/"',
     );
   });
 

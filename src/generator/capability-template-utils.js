@@ -1420,6 +1420,69 @@ ${indent}fi
 }
 
 /**
+ * Fetch the build step's uploaded artifacts, over the Buildkite API.
+ *
+ * NOT `buildkite-agent artifact download`, which is the obvious call and the one
+ * the mounted agent is for. The fleet runs macOS (`/opt/homebrew` paths in the
+ * agent's own log), so the binary the docker plugin mounts at
+ * `/usr/bin/buildkite-agent` is a Mach-O executable: every call into it from the
+ * step's linux container dies with "Cannot run macOS (Mach-O) executable in
+ * Docker: Exec format error". The plugin's own README says as much - "don't try
+ * to mount the OS X agent binary in a container running linux" - and mounts it
+ * anyway unless `BUILDKITE_AGENT_BINARY_PATH` names a linux build of the same
+ * agent. The downloads therefore failed, and the release they feed was published
+ * with no assets: silently, because a missing artifact is a normal case here.
+ *
+ * The API needs no agent binary, only the token the mount would have carried in
+ * - and the docker plugin forwards that token (and the build it names) by name,
+ * like every other env var these steps need.
+ *
+ * @param {string[]} patterns - Artifact path globs, e.g. "dist/**"
+ * @param {string} indent - Leading indentation for the command lines
+ * @returns {string} YAML command block
+ */
+function releaseArtifactFetchCommands(patterns, indent = "        ") {
+  // An artifact's `path` is its uploaded location, so the directory the glob
+  // prefix names is what selects them: "build/<target>/**" is "everything the
+  // build step uploaded under build/<target>/".
+  const perPattern = patterns
+    .map((pattern) => {
+      const prefix = pattern.replace(/\/\*\*$/, "/");
+      // `$$` is what a literal `$` looks like in a Buildkite command, so the jq
+      // variable is spelled `$$prefix` here: Buildkite collapses it to `$prefix`
+      // at run time, which is the variable jq was handed, and shell is not asked
+      // to expand it on the way.
+      const select = `.[] | select(.path | startswith($$prefix))`;
+      // The value handed over is the literal path, not a variable.
+      const prefixValue = `"${prefix}"`;
+      return `${indent}  if [ "$$(jq --arg prefix ${prefixValue} '[.[] | select(.path | startswith($$prefix))] | length' /tmp/buildkite-artifacts.json)" -eq 0 ]; then
+${indent}    echo "No ${pattern} artifacts to attach - the release will carry notes only."
+${indent}  else
+${indent}    jq -r --arg prefix ${prefixValue} '${select} | [.path, .download_url] | @tsv' /tmp/buildkite-artifacts.json |
+${indent}      while IFS="$$(printf '\\t')" read -r artifact_path artifact_url; do
+${indent}        mkdir -p "$$(dirname "$$artifact_path")"
+${indent}        curl -fsSL -o "$$artifact_path" "$$artifact_url" ||
+${indent}          echo "Failed to fetch $$artifact_path - the release may not carry it." >&2
+${indent}      done
+${indent}  fi`;
+    })
+    .join("\n");
+
+  return `${indent}# The build step uploaded what it compiled and the tests ran against;
+${indent}# this fetches those exact bytes back rather than rebuilding the tree.
+${indent}if ! command -v jq >/dev/null 2>&1; then
+${indent}  apt-get update && apt-get install -y --no-install-recommends curl jq
+${indent}fi
+${indent}ARTIFACTS_URL="https://api.buildkite.com/v2/organizations/$$BUILDKITE_ORGANIZATION_SLUG/pipelines/$$BUILDKITE_PIPELINE_SLUG/builds/$$BUILDKITE_BUILD_NUMBER/artifacts?per_page=100"
+${indent}if curl -fsS -H "Authorization: Bearer $$BUILDKITE_AGENT_ACCESS_TOKEN" "$$ARTIFACTS_URL" -o /tmp/buildkite-artifacts.json; then
+${perPattern}
+${indent}else
+${indent}  echo "Could not list this build's artifacts - the release will carry notes only." >&2
+${indent}fi
+`;
+}
+
+/**
  * Queue declaration shared by every generated step.
  * @param {string} queue - Agent queue
  * @returns {string} YAML fragment
@@ -2112,25 +2175,17 @@ ${_bkAgents(queue)}    env:
     // bytes back: one build per commit, and the release attaches what the tests
     // actually ran against rather than a second compile of the same tree.
     //
-    // `artifact download` exits non-zero when nothing matches, which is the
-    // normal case for a project whose build outputs somewhere other than the
-    // default, so a miss is reported as "notes only" rather than failing the
-    // release.
+    // A miss is reported as "notes only" rather than failing the release: an
+    // artifact path that matches nothing is the normal case for a project whose
+    // build outputs somewhere other than the default, and the release itself is
+    // still worth publishing.
     const releaseArtifacts = releaseArtifactPaths.length
       ? `      - |
-        # The build step uploaded what it compiled and the tests ran against;
-        # this fetches those exact bytes back rather than rebuilding the tree.
-${releaseArtifactPaths
-  .map(
-    (pattern) =>
-      `        buildkite-agent artifact download "${pattern}" . || echo "No ${pattern} artifacts to attach - the release will carry notes only."`,
-  )
-  .join("\n")}
-`
+${releaseArtifactFetchCommands(releaseArtifactPaths, "        ")}`
       : `      - |
         # This language has no default artifact paths, so there is nothing to
-        # fetch. Add artifact_paths to the build step and a download here to
-        # ship files with the release.
+        # fetch. Add artifact_paths to the build step and a fetch here to ship
+        # files with the release.
         echo "No artifact paths configured - the release will carry notes only."
 `;
     // The generated language images ship the toolchain, not the GitHub CLI, and
@@ -2170,21 +2225,28 @@ ${dopplerCliInstallCommands("        ")}      - |
         fi
 `;
 
+    // The artifact fetch reads this build through the API, so the step needs the
+    // token that authorises it and the three names that identify it. They are
+    // forwarded by name like every other env var a step needs - a step-level
+    // `env:` value would not reach the container.
+    const releaseEnv = [
+      ...(hasDoppler ? ["DOPPLER_TOKEN"] : ["GH_TOKEN"]),
+      ...(releaseArtifactPaths.length
+        ? [
+            "BUILDKITE_AGENT_ACCESS_TOKEN",
+            "BUILDKITE_ORGANIZATION_SLUG",
+            "BUILDKITE_PIPELINE_SLUG",
+            "BUILDKITE_BUILD_NUMBER",
+          ]
+        : []),
+    ];
+
     steps.push(`
   - label: ":bookmark: Release"
     key: release
 ${buildDependencies}    if: build.branch == "main"
 ${_bkAgents(queue)}    plugins:
-${_bkDockerPlugin(
-  image,
-  hasDoppler ? ["DOPPLER_TOKEN"] : ["GH_TOKEN"],
-  "",
-  `          # buildkite-agent is a host binary and artifact download is a
-          # buildkite-agent call: without this mount it is not in the container
-          # and the step has no way to read what the build step uploaded.
-          mount-buildkite-agent: true
-`,
-)}    commands:
+${_bkDockerPlugin(image, releaseEnv)}    commands:
 ${installGh}${releaseToken}      - |
         # The version is a patch bump of the newest existing tag, so there is no
         # version file to keep in sync and no bookkeeping to forget.
