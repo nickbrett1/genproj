@@ -88,23 +88,28 @@ describe("GitHub release file generation", () => {
     // The build step uploads what it compiled and tested...
     expect(yaml).toContain("artifact_paths:");
     expect(yaml).toContain('- "dist/**"');
-    // ...and the release step fetches those exact bytes back from the
-    // artifacts API, keyed by this step's own path prefix.
-    expect(release).toContain('--arg prefix "dist/"');
+    // ...and the release step fetches those exact bytes back from the agent
+    // API, scoped to this step's own artifact path.
+    expect(release).toContain('for pattern in "dist/**"; do');
     // `buildkite-agent` is not used at all: on this fleet it is a macOS host
     // binary, and a linux container cannot exec a Mach-O file.
     expect(release).not.toContain("buildkite-agent artifact download");
     expect(release).not.toContain("mount-buildkite-agent");
-    // The API call authenticates with the job's own token, which the docker
-    // plugin has to forward by name to reach the container.
+    // The agent API, not the public REST API: the step holds a per-job token,
+    // which the public API rejects (401) and this endpoint accepts. The docker
+    // plugin has to forward the token by name to reach the container.
     expect(release).toContain(
-      "https://api.buildkite.com/v2/organizations/$$BUILDKITE_ORGANIZATION_SLUG",
+      'AGENT_API="https://agent-edge.buildkite.com/v3"',
     );
     expect(release).toContain(
-      "Authorization: Bearer $$BUILDKITE_AGENT_ACCESS_TOKEN",
+      '"$$AGENT_API/builds/$$BUILDKITE_BUILD_ID/artifacts/search"',
     );
+    expect(release).toContain(
+      "Authorization: Token $$BUILDKITE_AGENT_ACCESS_TOKEN",
+    );
+    expect(release).not.toContain("api.buildkite.com/v2");
     expect(release).toContain("            - BUILDKITE_AGENT_ACCESS_TOKEN");
-    expect(release).toContain("            - BUILDKITE_BUILD_NUMBER");
+    expect(release).toContain("            - BUILDKITE_BUILD_ID");
     // And it must not compile the same tree a second time.
     expect(release).not.toContain("npm install");
     expect(release).not.toContain("npm run build");
@@ -120,7 +125,9 @@ describe("GitHub release file generation", () => {
     );
 
     expect(rust).toContain('- "target/release/**"');
-    expect(releaseSection(rust)).toContain('--arg prefix "target/release/"');
+    expect(releaseSection(rust)).toContain(
+      'for pattern in "target/release/**"; do',
+    );
   });
 
   it("builds and attaches python artifacts, not notes only", async () => {
@@ -137,7 +144,7 @@ describe("GitHub release file generation", () => {
 
     expect(python).toContain("python -m build");
     expect(python).toContain('- "dist/**"');
-    expect(release).toContain('--arg prefix "dist/"');
+    expect(release).toContain('for pattern in "dist/**"; do');
   });
 
   it("releases notes only where there is no known build output", async () => {
@@ -152,7 +159,7 @@ describe("GitHub release file generation", () => {
     expect(java).not.toContain("artifact_paths:");
     expect(release).not.toContain("buildkite-agent artifact download");
     // Nothing to fetch means no API call and no token forwarded either.
-    expect(release).not.toContain("api.buildkite.com");
+    expect(release).not.toContain("agent-edge.buildkite.com");
     expect(release).not.toContain("BUILDKITE_AGENT_ACCESS_TOKEN");
     expect(release).toContain("the release will carry notes only");
   });
@@ -253,11 +260,10 @@ describe("per-target release builds", () => {
     const release = releaseSection(yaml);
     expect(release).toContain("      - build_aarch64_apple_darwin");
     expect(release).toContain("      - build_x86_64_unknown_linux_musl");
-    // One fetch block per target pattern, each scoped to its own prefix so the
+    // One search per target pattern, each scoped to its own artifacts so the
     // two targets' payloads cannot be mixed up.
-    expect(release).toContain('--arg prefix "build/aarch64-apple-darwin/"');
     expect(release).toContain(
-      '--arg prefix "build/x86_64-unknown-linux-musl/"',
+      'for pattern in "build/aarch64-apple-darwin/**" "build/x86_64-unknown-linux-musl/**"; do',
     );
   });
 

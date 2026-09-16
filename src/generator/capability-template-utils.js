@@ -1420,7 +1420,7 @@ ${indent}fi
 }
 
 /**
- * Fetch the build step's uploaded artifacts, over the Buildkite API.
+ * Fetch the build step's uploaded artifacts, over the Buildkite agent API.
  *
  * NOT `buildkite-agent artifact download`, which is the obvious call and the one
  * the mounted agent is for. The fleet runs macOS (`/opt/homebrew` paths in the
@@ -1433,52 +1433,52 @@ ${indent}fi
  * agent. The downloads therefore failed, and the release they feed was published
  * with no assets: silently, because a missing artifact is a normal case here.
  *
- * The API needs no agent binary, only the token the mount would have carried in
- * - and the docker plugin forwards that token (and the build it names) by name,
- * like every other env var these steps need.
+ * So the agent's own API is called directly. Not the public REST API: a job
+ * holds a *job token*, minted per job and dead when the job ends, which the
+ * public REST API rejects (401). `https://agent-edge.buildkite.com/v3` is the
+ * endpoint the `buildkite-agent artifact` commands use with exactly this token,
+ * and artifact search is one of the operations job tokens are documented to
+ * perform. The download itself needs no credential at all: the search result
+ * carries a URL to the uploaded bytes.
+ *
+ * The docker plugin forwards the token by name, like every other env var these
+ * steps need.
  *
  * @param {string[]} patterns - Artifact path globs, e.g. "dist/**"
  * @param {string} indent - Leading indentation for the command lines
  * @returns {string} YAML command block
  */
 function releaseArtifactFetchCommands(patterns, indent = "        ") {
-  // An artifact's `path` is its uploaded location, so the directory the glob
-  // prefix names is what selects them: "build/<target>/**" is "everything the
-  // build step uploaded under build/<target>/".
-  const perPattern = patterns
-    .map((pattern) => {
-      const prefix = pattern.replace(/\/\*\*$/, "/");
-      // `$$` is what a literal `$` looks like in a Buildkite command, so the jq
-      // variable is spelled `$$prefix` here: Buildkite collapses it to `$prefix`
-      // at run time, which is the variable jq was handed, and shell is not asked
-      // to expand it on the way.
-      const select = `.[] | select(.path | startswith($$prefix))`;
-      // The value handed over is the literal path, not a variable.
-      const prefixValue = `"${prefix}"`;
-      return `${indent}  if [ "$$(jq --arg prefix ${prefixValue} '[.[] | select(.path | startswith($$prefix))] | length' /tmp/buildkite-artifacts.json)" -eq 0 ]; then
-${indent}    echo "No ${pattern} artifacts to attach - the release will carry notes only."
-${indent}  else
-${indent}    jq -r --arg prefix ${prefixValue} '${select} | [.path, .download_url] | @tsv' /tmp/buildkite-artifacts.json |
-${indent}      while IFS="$$(printf '\\t')" read -r artifact_path artifact_url; do
-${indent}        mkdir -p "$$(dirname "$$artifact_path")"
-${indent}        curl -fsSL -o "$$artifact_path" "$$artifact_url" ||
-${indent}          echo "Failed to fetch $$artifact_path - the release may not carry it." >&2
-${indent}      done
-${indent}  fi`;
-    })
-    .join("\n");
+  // An artifact's `path` is its uploaded location, so the glob is what selects
+  // them: "build/<target>/**" is "everything the build step uploaded under
+  // build/<target>/". The search is the server's, so a pattern matching nothing
+  // is an empty result rather than an error.
+  const patternList = patterns.map((pattern) => `"${pattern}"`).join(" ");
 
   return `${indent}# The build step uploaded what it compiled and the tests ran against;
 ${indent}# this fetches those exact bytes back rather than rebuilding the tree.
 ${indent}if ! command -v jq >/dev/null 2>&1; then
 ${indent}  apt-get update && apt-get install -y --no-install-recommends curl jq
 ${indent}fi
-${indent}ARTIFACTS_URL="https://api.buildkite.com/v2/organizations/$$BUILDKITE_ORGANIZATION_SLUG/pipelines/$$BUILDKITE_PIPELINE_SLUG/builds/$$BUILDKITE_BUILD_NUMBER/artifacts?per_page=100"
-${indent}if curl -fsS -H "Authorization: Bearer $$BUILDKITE_AGENT_ACCESS_TOKEN" "$$ARTIFACTS_URL" -o /tmp/buildkite-artifacts.json; then
-${perPattern}
-${indent}else
-${indent}  echo "Could not list this build's artifacts - the release will carry notes only." >&2
-${indent}fi
+${indent}AGENT_API="https://agent-edge.buildkite.com/v3"
+${indent}for pattern in ${patternList}; do
+${indent}  if curl -fsS -G -H "Authorization: Token $$BUILDKITE_AGENT_ACCESS_TOKEN" \\
+${indent}    --data-urlencode "query=$$pattern" --data-urlencode "state=finished" \\
+${indent}    "$$AGENT_API/builds/$$BUILDKITE_BUILD_ID/artifacts/search" -o /tmp/buildkite-artifacts.json; then
+${indent}    if [ "$$(jq 'length' /tmp/buildkite-artifacts.json)" -eq 0 ]; then
+${indent}      echo "No $$pattern artifacts to attach - the release will carry notes only."
+${indent}    else
+${indent}      jq -r '.[] | [.path, .url] | @tsv' /tmp/buildkite-artifacts.json |
+${indent}        while IFS="$$(printf '\\t')" read -r artifact_path artifact_url; do
+${indent}          mkdir -p "$$(dirname "$$artifact_path")"
+${indent}          curl -fsSL -o "$$artifact_path" "$$artifact_url" ||
+${indent}            echo "Failed to fetch $$artifact_path - the release may not carry it." >&2
+${indent}        done
+${indent}    fi
+${indent}  else
+${indent}    echo "Could not list this build's artifacts - the release will carry notes only." >&2
+${indent}  fi
+${indent}done
 `;
 }
 
@@ -2225,19 +2225,14 @@ ${dopplerCliInstallCommands("        ")}      - |
         fi
 `;
 
-    // The artifact fetch reads this build through the API, so the step needs the
-    // token that authorises it and the three names that identify it. They are
-    // forwarded by name like every other env var a step needs - a step-level
+    // The artifact fetch reads this build through the agent API, so the step
+    // needs the token that authorises it and the id of the build it names. They
+    // are forwarded by name like every other env var a step needs - a step-level
     // `env:` value would not reach the container.
     const releaseEnv = [
       ...(hasDoppler ? ["DOPPLER_TOKEN"] : ["GH_TOKEN"]),
       ...(releaseArtifactPaths.length
-        ? [
-            "BUILDKITE_AGENT_ACCESS_TOKEN",
-            "BUILDKITE_ORGANIZATION_SLUG",
-            "BUILDKITE_PIPELINE_SLUG",
-            "BUILDKITE_BUILD_NUMBER",
-          ]
+        ? ["BUILDKITE_AGENT_ACCESS_TOKEN", "BUILDKITE_BUILD_ID"]
         : []),
     ];
 
