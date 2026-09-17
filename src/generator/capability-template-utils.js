@@ -2376,6 +2376,10 @@ function getFetchLaunchTemplateData(context) {
     fetchLaunchEnvFile: envFile,
     fetchLaunchEnvFileDescription: `\`${envFile}\``,
     fetchLaunchManifestUrl: `https://github.com/${owner}/${projectName}/releases/latest/download/manifest.json`,
+    // The launcher is published as a release asset beside the payloads (see
+    // scripts/release-artifacts.sh) and advertised in the manifest, so the cold
+    // start is the same file every later run maintains.
+    fetchLaunchLauncherUrl: `https://github.com/${owner}/${projectName}/releases/latest/download/fetch-launch.sh`,
     fetchLaunchCandidates: candidates,
     fetchLaunchUniversalTarget: UNIVERSAL_TARGET,
   };

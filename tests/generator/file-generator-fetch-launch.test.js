@@ -13,7 +13,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { describe, it, expect } from "vitest";
 
@@ -154,6 +154,43 @@ describe("launcher contract", () => {
     const script = await scriptOf();
 
     expect(script).toContain('if [ -n "${NO_FETCH:-}" ]');
+  });
+
+  it("self-updates from the manifest's launcher entry, by renaming over itself", async () => {
+    const script = await scriptOf();
+
+    // The launcher is what a host's init system supervises, so a fix to *it* has
+    // to reach a host. It is published as an asset and advertised under a
+    // top-level `launcher` key (beside `assets`, which is keyed by target - the
+    // launcher has no triple and must never be resolved by a candidate list).
+    expect(script).toContain("self_update()");
+    expect(script).toContain('grep \'"launcher"[[:space:]]*:\' "$manifest"');
+    // Its own path, so it can replace itself.
+    expect(script).toContain('SELF="$(cd "$(dirname "$0")"');
+    // Downloaded *beside* SELF: a cross-device `mv` would copy onto the
+    // destination instead of renaming, which is the write-through to avoid.
+    expect(script).toContain('new="${SELF}.new.$$"');
+    // Verified, and only then swapped.
+    expect(script).toContain('actual="$(sha256_of "$new")"');
+    expect(script).toContain('bash -n "$new"');
+    expect(script).toContain('cmp -s "$new" "$SELF"');
+    expect(script).toContain('mv -f "$new" "$SELF"');
+    // Fail open: no entry, no file/sha256, no download, a mismatch, a file that
+    // does not parse, a directory it cannot write - all continue as before.
+    for (const failure of [
+      "the manifest's launcher entry has no file/sha256",
+      "could not download the launcher",
+      "sha256 mismatch for the launcher",
+      "does not parse",
+      "could not replace the launcher",
+    ]) {
+      expect(script, failure).toContain(failure);
+    }
+    // It runs before the "already at <version>" return: a host whose payload is
+    // current can still be running a stale launcher.
+    expect(script.indexOf("self_update\n")).toBeLessThan(
+      script.indexOf('log "already at ${version}"'),
+    );
   });
 
   it("flips `current` by freeing the name first, never by renaming over it", async () => {
@@ -456,6 +493,144 @@ describe("fetch-launch upgrades a host that is already running a release", () =>
     expect(
       readdirSync(dir).filter((entry) => entry.startsWith(".current.")),
     ).toEqual([]);
+  });
+});
+
+describe("fetch-launch replaces itself from the manifest's launcher entry", () => {
+  // The static assertions can see the shape; only running it shows that the file
+  // on disk is actually replaced - and, more importantly, is *not* replaced when
+  // anything is wrong with what came down. The manifest is served over
+  // `file://`, so this is a real fetch through the same code path a host uses.
+  const sha256Of = (content) =>
+    createHash("sha256").update(content).digest("hex");
+
+  const host = async ({ publish = null, sha, launcherEntry = true }) => {
+    const dir = mkdtempSync(join(tmpdir(), "fetch-launch-self-"));
+    const serve = join(dir, "serve");
+    mkdirSync(serve, { recursive: true });
+
+    // A host whose payload is already current: `current` points at the release
+    // it runs, so the payload path returns early. The launcher update has to
+    // happen before that return, which is the whole point of doing it early.
+    const bin = join(dir, "releases", "1.0.0", "bin");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(
+      join(bin, "test-project"),
+      '#!/bin/sh\nprintf "%s\\n" 1.0.0\n',
+    );
+    chmodSync(join(bin, "test-project"), 0o755);
+    symlinkSync(join(dir, "releases", "1.0.0"), join(dir, "current"), "dir");
+
+    const script = join(dir, "fetch-launch.sh");
+    const running = await scriptOf();
+    writeFileSync(script, running);
+
+    if (publish !== null) {
+      writeFileSync(join(serve, "fetch-launch.sh"), publish);
+    }
+    const launcher = launcherEntry
+      ? `,\n  "launcher": { "file": "fetch-launch.sh", "sha256": "${sha}" }`
+      : "";
+    writeFileSync(
+      join(serve, "manifest.json"),
+      `{
+  "name": "test-project",
+  "version": "1.0.0",
+  "tag": "v1.0.0",
+  "assets": {${launcher}
+}
+`,
+    );
+
+    const result = spawnSync("bash", [script], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        DEPLOY_DIR: dir,
+        ENV_FILE: join(dir, "no-such-env-file"),
+        LAUNCHER_NAME: "test-project",
+        MANIFEST_URL: `file://${join(serve, "manifest.json")}`,
+      },
+    });
+
+    return { dir, script, running, result };
+  };
+
+  // A launcher that is a valid script but a different one: the running copy plus
+  // a marker, so the assertion is about the exact bytes on disk afterwards.
+  const nextLauncher = async () =>
+    `${await scriptOf()}\n# replaced by the test\n`;
+
+  it("swaps in the advertised launcher and still starts the payload", async () => {
+    const next = await nextLauncher();
+    const { script, result } = await host({
+      publish: next,
+      sha: sha256Of(next),
+    });
+
+    expect(result.stderr).toContain("updated the launcher to 1.0.0");
+    // The payload it landed on is unchanged and still runs.
+    expect(result.stdout.trim()).toBe("1.0.0");
+    expect(result.status).toBe(0);
+    // The file at the path the init unit runs is now the advertised one - not a
+    // `.new.<pid>` beside it, and not the old copy.
+    expect(readFileSync(script, "utf8")).toBe(next);
+    expect(
+      readdirSync(dirname(script)).filter((e) => e.includes(".new.")),
+    ).toEqual([]);
+  });
+
+  it("keeps the running launcher when the checksum is wrong", async () => {
+    const { script, running, result } = await host({
+      publish: await nextLauncher(),
+      sha: "0".repeat(64),
+    });
+
+    expect(result.stderr).toContain("sha256 mismatch for the launcher");
+    // Unchanged, and the host still booted on what it had.
+    expect(readFileSync(script, "utf8")).toBe(running);
+    expect(result.stdout.trim()).toBe("1.0.0");
+    expect(result.status).toBe(0);
+  });
+
+  it("keeps the running launcher when the download is not a script", async () => {
+    // A GitHub error page, or a truncation that happens to hash right: the
+    // sha256 is the manifest's, so it cannot catch this on its own.
+    const broken = "if [ ; then\n";
+    const { script, running, result } = await host({
+      publish: broken,
+      sha: sha256Of(broken),
+    });
+
+    expect(result.stderr).toContain("does not parse");
+    expect(readFileSync(script, "utf8")).toBe(running);
+    expect(result.stdout.trim()).toBe("1.0.0");
+    expect(result.status).toBe(0);
+  });
+
+  it("does nothing when the manifest advertises no launcher", async () => {
+    // An older release, or a project with `fetch-launch` but no release
+    // pipeline: a no-op, not a failure.
+    const { script, running, result } = await host({
+      launcherEntry: false,
+    });
+
+    expect(readFileSync(script, "utf8")).toBe(running);
+    expect(result.stderr).not.toContain("launcher");
+    expect(result.stdout.trim()).toBe("1.0.0");
+    expect(result.status).toBe(0);
+  });
+
+  it("keeps the running launcher when the download fails", async () => {
+    const { script, running, result } = await host({
+      launcherEntry: true,
+      // No `publish`: the manifest points at a file that is not there.
+      sha: sha256Of("anything"),
+    });
+
+    expect(result.stderr).toContain("could not download the launcher");
+    expect(readFileSync(script, "utf8")).toBe(running);
+    expect(result.stdout.trim()).toBe("1.0.0");
   });
 });
 

@@ -1,4 +1,15 @@
 import { describe, it, expect } from "vitest";
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { generateAllFiles } from "../../src/generator/file-generator.js";
 
 const generate = (capabilities, configuration = {}) =>
@@ -218,6 +229,123 @@ describe("release manifest", () => {
     const readme = byPath(files, "RELEASING.md").content;
     expect(readme).toContain("releases/latest/download/manifest.json");
     expect(readme).toContain("Primary Language");
+  });
+
+  it("publishes the launcher and advertises it in the manifest", async () => {
+    // The launcher is what a host's init system supervises, so a fix to *it* has
+    // to be shippable - otherwise it only changes when a human visits the box.
+    // Published verbatim (not packed: one script, not a payload tree) and set
+    // beside `assets` in the manifest, not inside it: `assets` is keyed by
+    // target, and a candidate lookup must never resolve to the launcher.
+    const files = await generate(
+      ["buildkite", "github-release", "fetch-launch", "devcontainer-rust"],
+      {
+        language: "rust",
+        "github-release": { targets: ["aarch64-apple-darwin"] },
+      },
+    );
+    const script = byPath(files, "scripts/release-artifacts.sh").content;
+
+    expect(script).toContain("cp scripts/fetch-launch.sh");
+    expect(script).toContain('chmod +x "$OUT_DIR/fetch-launch.sh"');
+    expect(script).toContain('"launcher": { "file": "fetch-launch.sh"');
+  });
+
+  it("writes the launcher's sha256 into the manifest, next to the packing", async () => {
+    // A real run: the sha256 in the manifest has to be the sha256 of the file
+    // that was actually shipped, or every host refuses the update (fail open,
+    // so it would be a silent never-updates).
+    const files = await generate(
+      ["buildkite", "github-release", "fetch-launch", "devcontainer-rust"],
+      {
+        language: "rust",
+        "github-release": { targets: ["aarch64-apple-darwin"] },
+      },
+    );
+    const script = byPath(files, "scripts/release-artifacts.sh").content;
+    const launcher = byPath(files, "scripts/fetch-launch.sh").content;
+
+    const dir = mkdtempSync(join(tmpdir(), "release-artifacts-"));
+    mkdirSync(join(dir, "scripts"), { recursive: true });
+    mkdirSync(join(dir, "build", "aarch64-apple-darwin", "bin"), {
+      recursive: true,
+    });
+    writeFileSync(join(dir, "scripts", "release-artifacts.sh"), script);
+    writeFileSync(join(dir, "scripts", "fetch-launch.sh"), launcher);
+    writeFileSync(
+      join(dir, "build", "aarch64-apple-darwin", "bin", "test-project"),
+      "#!/bin/sh\n",
+    );
+
+    const result = spawnSync(
+      "bash",
+      ["scripts/release-artifacts.sh", "1.2.3"],
+      {
+        cwd: dir,
+        encoding: "utf8",
+      },
+    );
+    // sha256sum is what the template uses and may not be on a dev's mac; the
+    // release step runs it in a Linux container either way.
+    if (result.status !== 0 && /sha256sum/.test(result.stderr)) {
+      return;
+    }
+    expect(result.status).toBe(0);
+
+    const manifest = JSON.parse(
+      readFileSync(join(dir, "release", "manifest.json"), "utf8"),
+    );
+    const sha = createHash("sha256").update(launcher).digest("hex");
+    expect(manifest.launcher).toEqual({
+      file: "fetch-launch.sh",
+      sha256: sha,
+    });
+    // The payload is still keyed by target and hashed the same way.
+    expect(manifest.assets["aarch64-apple-darwin"].file).toBe(
+      "test-project-aarch64-apple-darwin.tar.gz",
+    );
+    // And the file it points at is attached, executable.
+    expect(readFileSync(join(dir, "release", "fetch-launch.sh"), "utf8")).toBe(
+      launcher,
+    );
+  });
+
+  it("publishes no launcher for a project that has none", async () => {
+    // Same real run, without the capability: the step is a guarded no-op, so
+    // nothing is attached and the manifest has no `launcher` key - which a
+    // running launcher reads as "keep running me".
+    const files = await generate(
+      ["buildkite", "github-release", "devcontainer-node"],
+      {},
+    );
+    const script = byPath(files, "scripts/release-artifacts.sh").content;
+
+    const dir = mkdtempSync(join(tmpdir(), "release-artifacts-none-"));
+    mkdirSync(join(dir, "scripts"), { recursive: true });
+    mkdirSync(join(dir, "dist"), { recursive: true });
+    writeFileSync(join(dir, "scripts", "release-artifacts.sh"), script);
+    writeFileSync(join(dir, "dist", "index.js"), "// payload\n");
+
+    const result = spawnSync(
+      "bash",
+      ["scripts/release-artifacts.sh", "1.2.3"],
+      {
+        cwd: dir,
+        encoding: "utf8",
+      },
+    );
+    if (result.status !== 0 && /sha256sum/.test(result.stderr)) {
+      return;
+    }
+    expect(result.status).toBe(0);
+
+    expect(existsSync(join(dir, "release", "fetch-launch.sh"))).toBe(false);
+    const manifest = JSON.parse(
+      readFileSync(join(dir, "release", "manifest.json"), "utf8"),
+    );
+    expect(manifest.launcher).toBeUndefined();
+    // The payload it does have is untouched by any of this.
+    expect(manifest.assets.any.file).toBe("test-project-any.tar.gz");
   });
 });
 
