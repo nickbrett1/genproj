@@ -2,10 +2,12 @@ import { describe, it, expect } from "vitest";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -506,6 +508,56 @@ describe("per-target release builds", () => {
     // Still target-only: a version in the name would make the asset
     // unlaunchable, because nothing can name the current version in advance.
     expect(script).not.toContain("$VERSION.tar.gz");
+  });
+
+  it("normalises the payload's execute bit at pack time", async () => {
+    // The bit does not survive on its own: the build step's `cp` and the
+    // release step's `curl -o` both create the file under the machine's umask,
+    // and the first host to cold-start a payload packed without it refused the
+    // file it could not exec. A real run, because the assertion that matters is
+    // the mode *inside the tarball*, not the line in the template.
+    const script = byPath(
+      await rust([DARWIN]),
+      "scripts/release-artifacts.sh",
+    ).content;
+
+    const dir = mkdtempSync(join(tmpdir(), "release-artifacts-mode-"));
+    const bin = join(dir, "build", DARWIN, "bin");
+    mkdirSync(join(dir, "scripts"), { recursive: true });
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(dir, "scripts", "release-artifacts.sh"), script);
+    const payload = join(bin, "test-project");
+    writeFileSync(payload, "#!/bin/sh\n");
+    chmodSync(payload, 0o644);
+    // The release step's `curl -o` shape, for the same reason.
+    const other = join(bin, "sidecar");
+    writeFileSync(other, "#!/bin/sh\n");
+    chmodSync(other, 0o644);
+
+    const result = spawnSync(
+      "bash",
+      ["scripts/release-artifacts.sh", "1.2.3"],
+      {
+        cwd: dir,
+        encoding: "utf8",
+      },
+    );
+    expect(result.status).toBe(0);
+
+    const packed = spawnSync(
+      "tar",
+      [
+        "-tvf",
+        join(dir, "release", `test-project-${DARWIN}.tar.gz`),
+        "./bin/test-project",
+      ],
+      { encoding: "utf8" },
+    );
+    expect(packed.status).toBe(0);
+    expect(packed.stdout.startsWith("-rwxr-xr-x")).toBe(true);
+    // Nothing is left behind at the old mode on the way through.
+    expect(statSync(payload).mode & 0o777).toBe(0o755);
+    expect(statSync(other).mode & 0o777).toBe(0o755);
   });
 
   it("leaves the single-artifact pipeline alone without targets", async () => {
