@@ -42,22 +42,35 @@ const capabilities = Object.fromEntries(
 export function resolveDependencies(selectedCapabilities) {
   const resolvedCapabilities = new Set(selectedCapabilities);
   const addedDependencies = [];
-  const conflicts = [];
 
-  // Process each selected capability to resolve dependencies
-  for (const capabilityId of selectedCapabilities) {
+  // Transitive closure of dependencies. A dependency may itself have
+  // dependencies — devcontainer-* → container-agent → coding-agents — so walk
+  // a worklist until no new capability is added. A capability is only ever
+  // enqueued once (when first added), which makes cycles terminate.
+  const queue = [...selectedCapabilities];
+
+  while (queue.length > 0) {
+    const capabilityId = queue.shift();
     const capability = capabilities[capabilityId];
     if (!capability) continue;
 
-    // Add dependencies
     for (const depId of capability.dependencies ?? []) {
       if (!resolvedCapabilities.has(depId)) {
         resolvedCapabilities.add(depId);
         addedDependencies.push(depId);
+        queue.push(depId);
       }
     }
+  }
 
-    // Check for conflicts
+  // Conflicts are evaluated against the fully resolved set, so a conflict is
+  // reported whether it arrives via the selection or via a dependency.
+  const conflicts = [];
+
+  for (const capabilityId of resolvedCapabilities) {
+    const capability = capabilities[capabilityId];
+    if (!capability) continue;
+
     for (const conflictId of capability.conflicts ?? []) {
       if (resolvedCapabilities.has(conflictId)) {
         conflicts.push(conflictId);

@@ -21,8 +21,12 @@ import { isAppOwnedPath, isMergeTargetFile } from "./genproj-overwrite.js";
  * - customizations.vscode.extensions: union (existing first, then additions)
  * - mounts: append entries whose target path is not already present
  * - features / containerEnv: merge maps (existing keys win, generated-only added)
- * - all other keys (workspaceFolder, postCreateCommand, runArgs, ...): keep
- *   existing values — never clobber project/user-owned settings
+ * - runArgs: union (existing first, then generated-only additions) — a
+ *   capability that needs a `docker run` flag (e.g. `container-agent`'s
+ *   `--stop-timeout`) must be able to reach a project that already has a
+ *   devcontainer, and it cannot depend on the flag surviving a hand-edit
+ * - all other keys (workspaceFolder, postCreateCommand, ...): keep existing
+ *   values — never clobber project/user-owned settings
  * Nothing is ever removed, so re-merging the same inputs is a no-op.
  * @param {string} existingContent - Current file content in the repo
  * @param {string} generatedContent - Freshly generated file content
@@ -71,6 +75,26 @@ export function mergeDevcontainerJson(existingContent, generatedContent) {
     }
   }
 
+  // --- runArgs: union (existing first, then generated-only additions) ---
+  // Each entry is a standalone argv token, so a union is meaningful here in a
+  // way it is not for a key/value setting: an existing `--stop-timeout 5` keeps
+  // its position and the generated tokens that are not already present are
+  // appended. Nothing is removed and the generated set is deduped against the
+  // existing one, so re-merging is still a no-op.
+  const existingRunArgs = Array.isArray(existing.runArgs)
+    ? [...existing.runArgs]
+    : [];
+  const generatedRunArgs = Array.isArray(generated.runArgs)
+    ? generated.runArgs
+    : [];
+  const runArgsSeen = new Set(existingRunArgs);
+  for (const arg of generatedRunArgs) {
+    if (!runArgsSeen.has(arg)) {
+      runArgsSeen.add(arg);
+      existingRunArgs.push(arg);
+    }
+  }
+
   // --- features / containerEnv: merge maps (existing keys win) ---
   const mergedFeatures = {
     ...(generated.features || {}),
@@ -90,6 +114,9 @@ export function mergeDevcontainerJson(existingContent, generatedContent) {
   }
   if (existingMounts.length > 0) {
     merged.mounts = existingMounts;
+  }
+  if (existingRunArgs.length > 0) {
+    merged.runArgs = existingRunArgs;
   }
   if (Object.keys(mergedFeatures).length > 0) {
     merged.features = mergedFeatures;

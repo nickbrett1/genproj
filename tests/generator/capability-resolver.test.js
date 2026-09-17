@@ -50,6 +50,46 @@ describe("capability resolver", () => {
       expect(result.conflicts).toContain("docker-container");
       expect(result.isValid).toBe(false);
     });
+
+    it("resolves dependencies transitively across multiple levels", () => {
+      const result = resolveDependencies(["devcontainer-rust"]);
+      expect(result.resolvedCapabilities).toEqual(
+        expect.arrayContaining([
+          "devcontainer-rust",
+          "container-agent",
+          "coding-agents",
+          "docker",
+        ]),
+      );
+      expect(result.addedDependencies).toEqual(
+        expect.arrayContaining(["container-agent", "coding-agents", "docker"]),
+      );
+      expect(result.isValid).toBe(true);
+    });
+
+    it("resolves the devcontainer → container-agent → coding-agents chain", () => {
+      const result = resolveDependencies(["devcontainer-python"]);
+      const resolved = result.resolvedCapabilities;
+      expect(resolved).toContain("container-agent");
+      expect(resolved).toContain("coding-agents");
+      // The dependency of a dependency must land in the closure, not just the
+      // first level (devcontainer-python → container-agent).
+      expect(result.addedDependencies).toContain("coding-agents");
+    });
+
+    it("does not duplicate an explicitly selected dependency", () => {
+      const result = resolveDependencies([
+        "devcontainer-python",
+        "container-agent",
+      ]);
+      expect(result.resolvedCapabilities).toEqual(
+        expect.arrayContaining(["container-agent", "coding-agents"]),
+      );
+      expect(result.resolvedCapabilities.length).toBe(
+        new Set(result.resolvedCapabilities).size,
+      );
+      expect(result.addedDependencies).not.toContain("container-agent");
+    });
   });
 
   describe("validateCapabilitySelection", () => {

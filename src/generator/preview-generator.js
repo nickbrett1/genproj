@@ -386,6 +386,18 @@ function createDevelopmentContainerShellFiles(
     "devcontainer-post-start-setup-sh",
     {
       ...projectConfig,
+      // The container's own agent comes up here, not in post-create (memo "The
+      // container's own agent"): an agent that only appears after a rebuild is
+      // missing when you actually work. Mirrors the real generator's data.
+      containerAgentService: allCapabilities.includes("container-agent")
+        ? `echo "INFO: Checking the container agent..."
+if [ -x "/workspaces/${projectConfig.projectName || projectConfig.name || "my-project"}/scripts/agent-dev.sh" ]; then
+    "/workspaces/${projectConfig.projectName || projectConfig.name || "my-project"}/scripts/agent-dev.sh" start || true
+else
+    echo "WARN: scripts/agent-dev.sh not found, skipping the container agent"
+fi
+`
+        : "",
       // The docs server is only wired up when docsify is selected; the
       // template's {{docsifyService}} must always resolve.
       docsifyService: allCapabilities.includes("docsify")

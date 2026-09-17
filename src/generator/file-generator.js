@@ -56,6 +56,7 @@ const scriptsSetupWranglerConfigSh =
   templateFiles["scripts-setup-wrangler-config.sh.template"];
 const scriptsSyncDopplerSecretsSh =
   templateFiles["scripts-sync-doppler-secrets-sh.template"];
+const scriptsAgentDevSh = templateFiles["scripts-agent-dev.sh.template"];
 const eslintConfigJs = templateFiles["eslint-config-js.template"];
 const gitignoreTemplate = templateFiles["gitignore.template"];
 const dependabotConfig = templateFiles["dependabot.yml.template"];
@@ -668,6 +669,7 @@ const templateImports = {
   "scripts-run-wrangler-dev-sh": scriptsRunWranglerDevelopmentSh,
   "scripts-setup-wrangler-config-sh": scriptsSetupWranglerConfigSh,
   "scripts-sync-doppler-secrets-sh": scriptsSyncDopplerSecretsSh,
+  "scripts-agent-dev-sh": scriptsAgentDevSh,
 
   gitignore: gitignoreTemplate,
   "dependabot-config": dependabotConfig,
@@ -1079,6 +1081,26 @@ function generateAndMergeDevcontainerJson(
     }
   }
 
+  // container-agent: the agent must be given time to deregister on `docker
+  // stop`. devcontainer.json has no `stop_grace_period` key - that is a
+  // compose-only setting - the equivalent for a `docker run`-based container is
+  // docker's own `--stop-timeout`, which the devcontainer CLI passes through
+  // `runArgs`. A measured goose child shutdown is ~8s, so the 30s here is
+  // headroom, not a timeout anyone should be waiting on.
+  //
+  // Appended rather than set: runArgs already carries the tailnet flags, and
+  // the merge target (see mergeDevcontainerJson) unions the list, so adding
+  // this to an existing devcontainer is a regeneration, not a hand-edit.
+  if (context.capabilities.includes("container-agent")) {
+    const runArgs = Array.isArray(mergedDevelopmentContainerJson.runArgs)
+      ? [...mergedDevelopmentContainerJson.runArgs]
+      : [];
+    for (const arg of ["--stop-timeout", "30"]) {
+      if (!runArgs.includes(arg)) runArgs.push(arg);
+    }
+    mergedDevelopmentContainerJson.runArgs = runArgs;
+  }
+
   return {
     filePath: ".devcontainer/devcontainer.json",
     content: `${JSON.stringify(mergedDevelopmentContainerJson, undefined, 2)}\n`,
@@ -1170,6 +1192,20 @@ export function generateMergedDevelopmentContainerFiles(
       filePath: ".devcontainer/post-start-setup.sh",
       content: templateEngine.generateFile("devcontainer-post-start-setup-sh", {
         ...context,
+        // The container's own agent (memo "The container's own agent") comes up
+        // here, not in post-create: an agent that only exists after a rebuild is
+        // missing for the whole session it was meant to serve. `agent-dev.sh
+        // start` is idempotent and fails open, so the devcontainer still comes
+        // up when the network (or Doppler) does not.
+        containerAgentService: context.capabilities.includes("container-agent")
+          ? `echo "INFO: Checking the container agent..."
+if [ -x "/workspaces/${context.projectName || context.name || "my-project"}/scripts/agent-dev.sh" ]; then
+    "/workspaces/${context.projectName || context.name || "my-project"}/scripts/agent-dev.sh" start || true
+else
+    echo "WARN: scripts/agent-dev.sh not found, skipping the container agent"
+fi
+`
+          : "",
         docsifyService: context.capabilities.includes("docsify")
           ? `\n# Start documentation server\n# Ensure symlink for specs exists in docs folder for the documentation server\nif [ ! -L /workspaces/${context.projectName || context.name || "my-project"}/docs/specs ] && [ ! -e /workspaces/${context.projectName || context.name || "my-project"}/docs/specs ]; then\n    echo "INFO: Creating specs symlink in docs folder..."\n    ln -s ../specs /workspaces/${context.projectName || context.name || "my-project"}/docs/specs\nfi\n\necho "INFO: Checking documentation server status..."\nif ! pgrep -f 'serve-docs.cjs' >/dev/null; then\n    echo "INFO: Documentation server not running. Starting custom Node server..."\n    if [ -f "/workspaces/${context.projectName || context.name || "my-project"}/.devcontainer/serve-docs.cjs" ]; then\n        sudo start-stop-daemon --start --background --oknodo --pidfile /var/run/serve-docs.pid --make-pidfile --chuid $(id -un):$(id -gn) --exec "/usr/local/bin/node" -- /workspaces/${context.projectName || context.name || "my-project"}/.devcontainer/serve-docs.cjs\n    else\n        echo "WARNING: serve-docs.cjs not found, skipping startup."\n    fi\nfi\n`
           : "",
@@ -1785,6 +1821,38 @@ doppler setup --no-interactive --project ${dopplerProject} --config dev
       })()
     : "";
 
+  // container-agent: the project's own agent is a thing the reader has to be
+  // able to operate (start/stop/status) and to know the name of, because that
+  // name is how the hub and every peer address it. The name is derived, so the
+  // README states it rather than making the reader re-derive it.
+  const containerAgentSection = context.capabilities.includes("container-agent")
+    ? (() => {
+        const agentConfig = context.configuration?.["container-agent"] || {};
+        const nameSuffix = agentConfig.nameSuffix || "-dev";
+        const litellmBaseUrl = agentConfig.litellmBaseUrl || "http://nas:4000";
+        const agentName = `${projectName}${nameSuffix}`;
+        return `## The container's agent
+
+This devcontainer brings up its own \`a2a-goose\` agent, registered in the hub as
+\`${agentName}\` - one agent per repo, so a restart reclaims the same entry
+instead of adding a second one. Turns are billed through LiteLLM at
+\`${litellmBaseUrl}\`.
+
+\`\`\`bash
+scripts/agent-dev.sh start    # write secrets + config, fetch the launcher, run it
+scripts/agent-dev.sh status   # running or not, the card URL, the log tail
+scripts/agent-dev.sh stop     # SIGTERM, wait for a clean deregister, confirm gone
+\`\`\`
+
+\`start\` runs from the devcontainer's post-start hook, so the agent is normally
+already up when you arrive. It fails open: with no network on a first start it
+prints why it did not start and leaves the project usable. Secrets come from
+Doppler into \`~/.config/a2a-goose/env\` (mode 0600) and never into the image or
+\`containerEnv\`.
+`;
+      })()
+    : "";
+
   const content = `# ${projectName}
 
 ${description}
@@ -1793,6 +1861,7 @@ ${capabilitiesSection}
 ${quickstart}
 ${dopplerSection}
 ${deploySection}
+${containerAgentSection}
 ## Generated by genproj
 
 This project was generated using the genproj tool.

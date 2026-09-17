@@ -110,6 +110,10 @@
           "type": "boolean",
           "description": "Whether the UI should pre-select this capability for a new project."
         },
+        "locked": {
+          "type": "boolean",
+          "description": "Always applied when this capability is required; a client must not offer to deselect it."
+        },
         "provides": {
           "type": "array",
           "description": "Machine-readable values other capabilities or the UI can consume. Replaces UI-side hardcoded mappings.",

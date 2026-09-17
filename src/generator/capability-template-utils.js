@@ -2390,6 +2390,55 @@ function getFetchLaunchTemplateData(context) {
   };
 }
 
+/**
+ * The template data for `scripts/agent-dev.sh` — the container's own a2a-goose
+ * agent.
+ *
+ * The agent is named `<repo><nameSuffix>` and registered under that name, so a
+ * start reclaims a stale row by name rather than adding a second agent. The
+ * values here are the ones the shell template cannot derive for itself: the
+ * fixed names, the workspace path, and the release repo the launcher fetches
+ * from.
+ *
+ * `tailnetName` is deliberately allowed to be empty: the card's public URL must
+ * not be loopback, so when the capability does not pin a name the rendered
+ * script resolves it at start time from `tailscale status --json`. Reading the
+ * config with defaults mirrors {@link resolveDopplerTarget} / `applyDefaults`.
+ *
+ * @param {Object} context - Generation context (configuration, projectName, name)
+ * @returns {Object} Template data for scripts/agent-dev.sh
+ */
+function getContainerAgentTemplateData(context) {
+  const projectName = context.projectName || context.name || "my-project";
+  const config = context.configuration?.["container-agent"] || {};
+  const nameSuffix = config.nameSuffix || "-dev";
+  const tailnetName = config.tailnetName || "";
+  const litellmBaseUrl = config.litellmBaseUrl || "http://nas:4000";
+  const agentName = `${projectName}${nameSuffix}`;
+  const workspacePath = `/workspaces/${projectName}`;
+  const repoSlug = "nickbrett1/a2a-goose";
+
+  // The snippet a reader pastes into .devcontainer/post-start-setup.sh to have
+  // the agent come up with the container. It is idempotent and fails open, so
+  // `|| true` is the whole of the error handling.
+  const postStartHook = [
+    `if [ -x "${workspacePath}/scripts/agent-dev.sh" ]; then`,
+    `  "${workspacePath}/scripts/agent-dev.sh" start >/dev/null 2>&1 || true`,
+    `fi`,
+  ].join("\n");
+
+  return {
+    containerAgentProjectName: projectName,
+    containerAgentName: agentName,
+    containerAgentNameSuffix: nameSuffix,
+    containerAgentTailnetName: tailnetName,
+    containerAgentWorkspacePath: workspacePath,
+    containerAgentLitellmBaseUrl: litellmBaseUrl,
+    containerAgentRepoSlug: repoSlug,
+    containerAgentPostStartHook: postStartHook,
+  };
+}
+
 function getDependabotTemplateData(context) {
   const config = context.configuration?.dependabot || {};
   const interval = config.updateSchedule || "weekly";
@@ -2465,6 +2514,7 @@ export function getCapabilityTemplateData(capabilityId, context) {
     buildkite: getBuildkiteTemplateData,
     "github-release": getGithubReleaseTemplateData,
     "fetch-launch": getFetchLaunchTemplateData,
+    "container-agent": getContainerAgentTemplateData,
     dependabot: getDependabotTemplateData,
     "docker-container": getDockerContainerTemplateData,
     doppler: (ctx) => {

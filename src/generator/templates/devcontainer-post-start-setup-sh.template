@@ -29,4 +29,6 @@ else
     echo "WARN: goose not found, skipping update"
 fi
 
+{{containerAgentService}}
+
 echo "INFO: Services check/startup complete."

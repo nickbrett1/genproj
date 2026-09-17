@@ -30,6 +30,14 @@ export const capabilityTemplates = {
       templateId: "mcp-streamable-http-proxy-js",
     },
   ],
+  "container-agent": [
+    {
+      id: "agent-dev",
+      filePath: "scripts/agent-dev.sh",
+      templateId: "scripts-agent-dev-sh",
+      isExecutable: true,
+    },
+  ],
   "editor-tools": [
     {
       id: "vscode-tasks",

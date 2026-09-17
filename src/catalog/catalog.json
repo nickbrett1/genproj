@@ -64,6 +64,54 @@
       ]
     },
     {
+      "id": "container-agent",
+      "name": "Container Agent",
+      "description": "Every generated devcontainer brings up and registers its own a2a-goose agent (`<repo>-dev`), reached over the tailnet by the LiteLLM proxy; reuses the a2a-goose GitHub release channel, so the container has the same self-update path as a host.",
+      "category": "core",
+      "icon": "robot",
+      "iconColor": "purple",
+      "selectedByDefault": true,
+      "locked": true,
+      "provides": [],
+      "dependencies": ["coding-agents"],
+      "conflicts": [],
+      "requiresAuth": [],
+      "authServices": [],
+      "externalServices": [],
+      "configurationSchema": {
+        "type": "object",
+        "properties": {
+          "litellmBaseUrl": {
+            "type": "string",
+            "default": "http://nas:4000",
+            "description": "Base URL of the LiteLLM proxy the agent registers with and bills its turns through."
+          },
+          "nameSuffix": {
+            "type": "string",
+            "default": "-dev",
+            "description": "Appended to the repo name to form the agent's name (`<repo><nameSuffix>`). That name is the registry key, so changing it registers a new agent rather than renaming the existing one."
+          },
+          "tailnetName": {
+            "type": "string",
+            "default": "",
+            "description": "The container's Tailscale name the agent card advertises; empty means derive at runtime from `tailscale status --json`."
+          }
+        }
+      },
+      "vscodeExtensions": [],
+      "benefits": [
+        "Every devcontainer brings up and registers its own a2a-goose agent",
+        "The agent is reached over the tailnet through the LiteLLM proxy",
+        "Reuses the a2a-goose GitHub release channel, so the container self-updates exactly like a host"
+      ],
+      "links": [
+        {
+          "label": "a2a-goose",
+          "url": "https://github.com/nickbrett1/a2a-goose"
+        }
+      ]
+    },
+    {
       "id": "xcode-development",
       "name": "Xcode Development",
       "description": "Connects an agent to a remote Xcode project over an SSE proxy for AI-assisted iOS/macOS development. Requires Xcode running on a Mac with the Xcode MCP bridge installed.",
@@ -236,7 +284,7 @@
           "value": "javascript"
         }
       ],
-      "dependencies": ["docker"],
+      "dependencies": ["docker", "container-agent"],
       "conflicts": [],
       "requiresAuth": [],
       "authServices": [],
@@ -330,7 +378,7 @@
           "value": "python"
         }
       ],
-      "dependencies": ["docker"],
+      "dependencies": ["docker", "container-agent"],
       "conflicts": [],
       "requiresAuth": [],
       "authServices": [],
@@ -362,7 +410,7 @@
           "value": "java"
         }
       ],
-      "dependencies": ["docker"],
+      "dependencies": ["docker", "container-agent"],
       "conflicts": [],
       "requiresAuth": [],
       "authServices": [],
@@ -393,7 +441,7 @@
       "iconColor": "orange",
       "selectedByDefault": false,
       "provides": [],
-      "dependencies": ["docker"],
+      "dependencies": ["docker", "container-agent"],
       "conflicts": [],
       "requiresAuth": [],
       "authServices": [],

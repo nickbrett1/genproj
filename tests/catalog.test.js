@@ -10,12 +10,14 @@ import {
   getRequiredAuthServices,
   validateCapabilityDependencies,
 } from "../src/catalog/index.js";
+import { resolveDependencies } from "../src/generator/capability-resolver.js";
 
 // The catalog's job in phase 0 is to expose exactly the capability set the
 // existing UI knows about. Any change here is a deliberate catalog change, so
 // the expected list is pinned rather than derived.
 const EXPECTED_IDS = [
   "coding-agents",
+  "container-agent",
   "xcode-development",
   "editor-tools",
   "shell-tools",
@@ -84,7 +86,12 @@ describe("catalog metadata", () => {
     const defaults = capabilities
       .filter((capability) => capability.selectedByDefault)
       .map((capability) => capability.id);
-    expect(defaults).toEqual(["coding-agents", "editor-tools", "shell-tools"]);
+    expect(defaults).toEqual([
+      "coding-agents",
+      "container-agent",
+      "editor-tools",
+      "shell-tools",
+    ]);
 
     for (const capability of capabilities) {
       expect(capability.selectedByDefault).toBe(capability.category === "core");
@@ -158,6 +165,54 @@ describe("catalog metadata", () => {
   });
 });
 
+describe("container-agent capability", () => {
+  it("is locked so a client cannot offer to deselect it", () => {
+    const containerAgent = getCapabilityById("container-agent");
+    expect(containerAgent).toBeDefined();
+    expect(containerAgent.locked).toBe(true);
+    expect(containerAgent.selectedByDefault).toBe(true);
+  });
+
+  it("is required by every devcontainer-* capability", () => {
+    const devcontainers = capabilities.filter((capability) =>
+      capability.id.startsWith("devcontainer-"),
+    );
+    expect(devcontainers.map((capability) => capability.id)).toEqual([
+      "devcontainer-node",
+      "devcontainer-python",
+      "devcontainer-java",
+      "devcontainer-rust",
+    ]);
+    for (const devcontainer of devcontainers) {
+      expect(devcontainer.dependencies).toContain("container-agent");
+    }
+  });
+
+  it("resolves devcontainer-* → container-agent → coding-agents transitively", () => {
+    const result = resolveDependencies(["devcontainer-rust"]);
+    expect(result.resolvedCapabilities).toEqual(
+      expect.arrayContaining(["container-agent", "coding-agents", "docker"]),
+    );
+    expect(result.addedDependencies).toEqual(
+      expect.arrayContaining(["container-agent", "coding-agents"]),
+    );
+  });
+
+  it("does not duplicate container-agent when it is also selected", () => {
+    const result = resolveDependencies([
+      "devcontainer-python",
+      "container-agent",
+    ]);
+    expect(result.resolvedCapabilities).toEqual(
+      expect.arrayContaining(["container-agent", "coding-agents"]),
+    );
+    expect(result.resolvedCapabilities.length).toBe(
+      new Set(result.resolvedCapabilities).size,
+    );
+    expect(result.addedDependencies).not.toContain("container-agent");
+  });
+});
+
 describe("catalog lookups", () => {
   it("finds a capability by id", () => {
     expect(getCapabilityById("sonarcloud")?.name).toBe(
@@ -169,7 +224,12 @@ describe("catalog lookups", () => {
   it("filters by category", () => {
     expect(
       getCapabilitiesByCategory("core").map((capability) => capability.id),
-    ).toEqual(["coding-agents", "editor-tools", "shell-tools"]);
+    ).toEqual([
+      "coding-agents",
+      "container-agent",
+      "editor-tools",
+      "shell-tools",
+    ]);
     expect(getCapabilitiesByCategory("nope")).toEqual([]);
   });
 });
@@ -195,7 +255,12 @@ describe("getRequiredAuthServices", () => {
 describe("validateCapabilityDependencies", () => {
   it("accepts a self-consistent selection", () => {
     expect(
-      validateCapabilityDependencies(["docker", "devcontainer-node"]),
+      validateCapabilityDependencies([
+        "docker",
+        "devcontainer-node",
+        "container-agent",
+        "coding-agents",
+      ]),
     ).toEqual({
       valid: true,
       missing: [],
