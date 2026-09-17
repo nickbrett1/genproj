@@ -84,27 +84,43 @@ generated before the tailnet wiring existed, or hand-trimmed, and a backport
 **must not** add the missing args as a side effect (it only appends
 `--stop-timeout`).
 
-| repo                | devcontainer | lang        | runArgs | postStartCommand | selection known | notes                                                                             |
-| ------------------- | ------------ | ----------- | ------- | ---------------- | --------------- | --------------------------------------------------------------------------------- |
-| genproj             | yes          | node        | full    | yes              | no              | **done** (commit `8cc24c1`)                                                       |
-| a2a-goose           | yes          | rust        | full    | yes              | yes             | publishes the release channel this capability consumes                            |
-| mailroom            | yes          | python      | full    | yes              | yes             | dagster; nested manifests                                                         |
-| nas-port-mcp        | yes          | python      | full    | yes              | yes             |                                                                                   |
-| parquet-peek        | yes          | node        | full    | yes              | yes             | sveltekit                                                                         |
-| pshelf              | yes          | node        | full    | yes              | yes             | sveltekit                                                                         |
-| agent-swarm         | yes          | node/ts     | full    | yes              | no              | hand-written README                                                               |
-| agy-telemetry       | yes          | python      | full    | yes              | no              | hand-written README                                                               |
-| circleci-mcp        | yes          | python      | full    | yes              | no              | hand-written README                                                               |
-| dagu-mcp            | yes          | python      | full    | yes              | no              | hand-written README                                                               |
-| deepseek-balance    | yes          | python      | full    | yes              | no              | hand-written README                                                               |
-| gaggle              | yes          | node        | full    | yes              | no              | README opens with an "abandoned" banner — decide whether to bother                |
-| huddle-concept      | yes          | node        | minimal | yes              | no              | hand-written README                                                               |
-| miniflux-feed-dedup | yes          | python      | full    | yes              | no              | hand-written README; described as genproj-generated                               |
-| stripe-toddler      | yes          | rust/node   | full    | yes              | no              | nested `worker/`, `ios/`                                                          |
-| vikunja-mcp         | yes          | python      | full    | yes              | no              | hand-written README; described as genproj-generated                               |
-| ftn                 | yes          | node        | full    | yes              | no              | portfolio README + hand-edited devcontainer.json — **do not** regenerate this one |
-| dagster-tutorial    | yes          | python      | minimal | **no**           | no              | no `postStartCommand` — needs one added, not just edited                          |
-| dbt-duckdb          | yes          | python/node | minimal | **no**           | no              | no `postStartCommand` — needs one added, not just edited                          |
+| repo                | devcontainer | lang        | runArgs | postStartCommand | tailnet wiring | state                    |
+| ------------------- | ------------ | ----------- | ------- | ---------------- | -------------- | ------------------------ |
+| genproj             | yes          | node        | full    | yes              | yes            | **done** (`8cc24c1`)     |
+| a2a-goose           | yes          | rust        | full    | yes              | yes            | **done** (`031085b`)     |
+| mailroom            | yes          | python      | full    | yes              | yes            | **done** (`5e74d2f`)     |
+| nas-port-mcp        | yes          | python      | full    | yes              | yes            | **done** (`9bfec48`)     |
+| parquet-peek        | yes          | node        | full    | yes              | yes            | **done** (`5d7e3a2`)     |
+| pshelf              | yes          | node        | full    | yes              | yes            | **done** (`4d71920`)     |
+| agent-swarm         | yes          | node/ts     | full    | yes              | yes            | **done** (`89e9d38`)     |
+| agy-telemetry       | yes          | python      | full    | yes              | yes            | **done** (`d2d61ba`)     |
+| circleci-mcp        | yes          | python      | full    | yes              | yes            | **done** (`74254b8`)     |
+| dagu-mcp            | yes          | python      | full    | yes              | yes            | **done** (`0a3d5b1`)     |
+| deepseek-balance    | yes          | python      | full    | yes              | yes            | **done** (`9ac54ee`)     |
+| miniflux-feed-dedup | yes          | python      | full    | yes              | yes            | **done** (`eadf11a`)     |
+| stripe-toddler      | yes          | rust/node   | full    | yes              | yes            | **done** (`7b7bfd2`)     |
+| vikunja-mcp         | yes          | python      | full    | yes              | yes            | **done** (`d4cc568`)     |
+| ftn                 | yes          | node        | full    | yes              | yes            | **done** (`e691c9ef0`)   |
+| huddle-concept      | yes          | node        | minimal | **no**           | **no**         | **done** (`9cde324`)     |
+| dagster-tutorial    | yes          | python      | minimal | **no**           | **no**         | **done** (`f2024a8`)     |
+| dbt-duckdb          | yes          | python/node | minimal | **no**           | **no**         | **done** (`1fc0aa5`)     |
+| gaggle              | yes          | node        | full    | yes              | yes            | **deferred** (abandoned) |
+
+`lang` / README notes, for the record: `mailroom` is dagster with nested manifests,
+`parquet-peek` / `pshelf` are sveltekit, `stripe-toddler` has nested `worker/` and
+`ios/`, and `agent-swarm`, `agy-telemetry`, `circleci-mcp`, `dagu-mcp`,
+`deepseek-balance`, `miniflux-feed-dedup`, `vikunja-mcp`, `huddle-concept` all have
+hand-written READMEs. `ftn` is a portfolio page with a hand-edited JSONC
+`devcontainer.json` and must never be regenerated.
+
+Three of these (`huddle-concept`, `dagster-tutorial`, `dbt-duckdb`) had **no
+post-start file at all**, so their backport is four edits rather than three: the
+new `.devcontainer/post-start-setup.sh` and the `postStartCommand` that runs it
+are additions, not edits. See §3.1.
+
+Those same three have `minimal` `runArgs` and **no tailnet wiring** — no
+`--cap-add=NET_ADMIN` / `--device=/dev/net/tun`, no tailscale state volume, no
+tailscale install in post-create. That is §7.
 
 Not candidates (no devcontainer): `goose-recipes`, `tdarr-nas`, `circleci-stats`,
 `openclaw-nas`, `devopen`, `dagu-dags`, `github-stats`.
@@ -133,6 +149,37 @@ bash -n scripts/agent-dev.sh
 jq '.runArgs += ["--stop-timeout","30"]' .devcontainer/devcontainer.json > /tmp/dc \
   && mv /tmp/dc .devcontainer/devcontainer.json
 ```
+
+### 3.1 Repos with no post-start file
+
+`huddle-concept`, `dagster-tutorial` and `dbt-duckdb` have no
+`.devcontainer/post-start-setup.sh` and no `postStartCommand`, so there is
+nothing to insert the hook _into_. They get a new file instead — deliberately
+minimal, since the genproj post-start template also restarts `sshd`, `tailscaled`
+and a socat tunnel that these repos never had and should not acquire by
+accident — plus the `postStartCommand` that runs it:
+
+```jsonc
+"postCreateCommand": "bash /workspaces/<repo>/.devcontainer/post-create-setup.sh",
+"postStartCommand": "bash /workspaces/<repo>/.devcontainer/post-start-setup.sh"
+```
+
+The new file carries the same `containerAgentService` block the template emits,
+plus the trailing `Services check/startup complete.` echo so the two shapes stay
+recognisable as each other:
+
+```bash
+echo "INFO: Checking the container agent..."
+if [ -x "/workspaces/<repo>/scripts/agent-dev.sh" ]; then
+    "/workspaces/<repo>/scripts/agent-dev.sh" start || true
+else
+    echo "WARN: scripts/agent-dev.sh not found, skipping the container agent"
+fi
+```
+
+`dbt-duckdb`'s `devcontainer.json` is JSONC (line and trailing comments), so
+`jq` cannot validate it. Insert textually and validate by stripping comments
+first, as with `ftn`.
 
 Then commit, in one commit per repo:
 
@@ -179,5 +226,43 @@ plus the hook stops the agent, and the `runArgs` entry is inert on its own.
 3. **The five repos whose selection is known** (mailroom, nas-port-mcp,
    parquet-peek, pshelf) — these could still be regenerated later if a
    capability is added, so doing them first keeps the two paths in step.
-4. **The rest**, in any order — they are independent. Skip or defer `gaggle`
-   (abandoned) and be deliberate about `ftn` (do not regenerate it, ever).
+4. **The rest**, in any order — they are independent. `gaggle` is **deferred**
+   (its README opens with an `⚠️ Abandoned — superseded by MCPHub` banner; an
+   agent is only worth giving to a repo that runs). `ftn` is done, and is the one
+   repo that must never be regenerated.
+
+## 7. The tailnet prerequisite, and the three repos that lack it
+
+The capability assumes the container is already on the tailnet: that is what
+decision B settled on — there is no `container-tailnet` capability, the
+_unconditional_ wiring in `getDevcontainerJsonExtras()` is the provider, and
+`container-agent` therefore depends only on `coding-agents`.
+
+Every repo in §2 has that wiring **except the three that also had no post-start
+file**. They were generated before it existed, and their `runArgs` were
+deliberately left alone:
+
+| what the agent needs                                                   | huddle-concept | dagster-tutorial | dbt-duckdb |
+| ---------------------------------------------------------------------- | -------------- | ---------------- | ---------- |
+| `--cap-add=NET_ADMIN`, `--device=/dev/net/tun` in `runArgs`            | missing        | missing          | missing    |
+| a `<repo>-tailscale-state` volume at `/var/lib/tailscale`              | missing        | missing          | missing    |
+| tailscale installed in post-create, `tailscaled` started in post-start | missing        | missing          | missing    |
+
+Consequence, stated plainly: **the agent will not start in those three yet.**
+`resolve_tailnet_name()` fails, `cmd_start` prints the loud "no tailnet name
+could be resolved" block, and returns 0 — the container comes up normally, which
+is exactly the fail-open contract, but there is no agent.
+
+Closing that is a separate decision, not an oversight in this runbook:
+
+- **Add the wiring** (the §7 table, four more edits each). It is the same change
+  a regeneration would make, and it makes the agent work. The cost is
+  `--device=/dev/net/tun` and `--cap-add=NET_ADMIN`, which are new privileges for
+  these containers and a hard requirement on a host that has `/dev/net/tun`; on a
+  host without it, adding them breaks container start outright rather than
+  degrading.
+- **Leave it.** The capability is present and inert, the hook explains itself on
+  every start, and a hand-added `A2A_GOOSE_TAILNET_NAME` remains the escape hatch
+  for a container reachable some other way.
+
+No other repo is affected, and nothing about the generator changes either way.
