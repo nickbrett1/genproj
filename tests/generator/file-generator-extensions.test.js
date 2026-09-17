@@ -220,4 +220,24 @@ describe("File Generator - Extensions", () => {
     expect(content["tmux-integrated.shell"]).toBe("/bin/zsh");
     expect(content["python.defaultInterpreterPath"]).toBeUndefined();
   });
+
+  it("should disable terminal-output port scraping by default", async () => {
+    const context = {
+      name: "test-project",
+      capabilities: [],
+      configuration: {},
+    };
+
+    const files = await generateAllFiles(context);
+    const settingsFile = files.find(
+      (f) => f.filePath === ".vscode/settings.json",
+    );
+    const content = JSON.parse(settingsFile.content);
+
+    // Memo "stop stale VS Code port forwards": ports scraped from terminal
+    // output are auto-forwarded and bound on every interface. Pin the
+    // process-only source and the loopback bind for every generated project.
+    expect(content["remote.autoForwardPortsSource"]).toBe("process");
+    expect(content["remote.localPortHost"]).toBe("localhost");
+  });
 });

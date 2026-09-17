@@ -108,5 +108,9 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`Docsify server running at http://localhost:${PORT}`);
+  // Never print a host:port literal here: VS Code's terminal-output port
+  // scanner matches it and auto-forwards the port (binding the host side on
+  // every interface). The port is declared in the devcontainer's forwardPorts
+  // instead. See README "Port forwarding".
+  console.log('Docsify docs server listening on the forwarded port.');
 });

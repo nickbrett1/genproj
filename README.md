@@ -113,6 +113,69 @@ added with both `~/.ssh/id_ed25519` and `~/.genproj-ssh/id_ed25519` as
 `IdentityFile`; from then on `ssh mac-studio whoami` → the host user, in every
 container, with no rebuild.
 
+### Port forwarding
+
+A devcontainer shares a network namespace with nothing and a host with
+everything. VS Code forwards ports on the **client**, and there are two ways it
+learns about a port, which is the whole problem:
+
+- **Declared** — `forwardPorts` in `devcontainer.json`. Intentional, and bound
+  where `remote.localPortHost` says.
+- **Scraped** — when `remote.autoForwardPortsSource` is `output` or `hybrid`, VS
+  Code parses `host:port` literals out of terminal and debug output. A printed
+  line is treated as a request to forward, and the host-side listener is bound on
+  **every interface** when `remote.localPortHost` is `allInterfaces`.
+
+The scrape is the dangerous one. The forwarded listener is created by the
+editor (`Code Helper` on macOS), and it **stays bound after the container end is
+dead** — it accepts TCP and never answers, retrying the tunnel forever. It also
+binds the _host_ port, so any host-level process that wants that port loses it
+to the editor, and the failure looks like "something is listening but never
+answers, and nothing is in `ps`".
+
+What genproj generates, and what every generated project must keep:
+
+- `.vscode/settings.json` sets `remote.autoForwardPortsSource: "process"` (no
+  terminal-output scraping) and `remote.localPortHost: "localhost"` (a forwarded
+  port binds loopback only, never the LAN). Both are workspace-scoped settings,
+  so the checked-in file is authoritative for the project.
+- Ports that genuinely have to cross the boundary are **declared** in
+  `forwardPorts` (`devcontainer.json`), never printed. The Cloudflare OAuth
+  callback is the one such host->container port: it is declared in
+  `forwardPorts` for a `cloudflare-wrangler` project, and the login script no
+  longer prints a `localhost:<port>` literal.
+- **Nothing prints a `host:port` literal.** Even with the setting above, output
+  scraping is one profile switch away; and a printed literal is exactly what the
+  scraper keys on. A bare port number is not matched — a `host:port` or a URL
+  is.
+
+### Rule for anything that picks a host port
+
+A process that binds a port **on the host** (an agent runtime, a service, a
+tunnel) must:
+
+1. Not choose a port whose literal has ever been printed in a terminal — those
+   are the editor's candidates.
+2. Not print it. Bring the port up and let the caller discover it, or pass it
+   out of band.
+3. Prefer a port **outside the OS ephemeral range** and outside any block a dev
+   container forwards, so the editor can never pick it first.
+
+### Operator diagnostic: "the port is in use but nothing is listening"
+
+Before believing `ps`, check for the editor's forwarder on the host:
+
+```bash
+lsof -nP -iTCP:<port> -sTCP:LISTEN
+```
+
+If the owner is `Code Helper` (macOS) or a `node`/remote-server process with no
+matching application listener, the port was auto-forwarded. Stop it in VS Code's
+**Ports** panel (right-click -> Stop Forwarding Port) — changing the setting does
+**not** remove existing entries, they are per-port and per-session state. Then
+fix the source: a printed `host:port` literal, or `remote.autoForwardPortsSource`
+back at `output`/`hybrid`.
+
 ## Development
 
 ```bash

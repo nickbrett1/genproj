@@ -561,22 +561,27 @@ WRANGLER_CALLBACK_PORT=${"${WRANGLER_CALLBACK_PORT:-8976}"}
 # 3. Check for port conflicts inside the container
 if ss -tuln | grep -q ":8976 "; then
   CONFLICT_PID=$(lsof -t -i:8976)
-  echo "❌ Error: Port 8976 is already in use inside this container (PID: $CONFLICT_PID)."
+  echo "❌ Error: the wrangler OAuth callback port is already in use inside this container (PID: $CONFLICT_PID)."
   echo "   If this is a stale 'socat' process, you can kill it with: kill $CONFLICT_PID"
   exit 1
 fi
 
 # If we are using a non-standard port, we need to bridge the gap from 8976
 if [ "$WRANGLER_CALLBACK_PORT" != "8976" ]; then
-  echo "INFO: Using non-standard port $WRANGLER_CALLBACK_PORT. Bridging from 8976..."
+  echo "INFO: Using non-standard OAuth callback port. Bridging from the default..."
   socat TCP-LISTEN:8976,fork,reuseaddr TCP:localhost:$WRANGLER_CALLBACK_PORT &
   SOCAT_PID=$!
   trap "kill $SOCAT_PID 2>/dev/null || true" EXIT
 fi
 
-echo "📢 IMPORTANT: Cloudflare OAuth ALWAYS redirects to localhost:8976 on your host machine."
-echo "   If you have multiple containers, ensure port 8976 is forwarded to THIS container in VS Code."
-echo "   (Check the 'Ports' tab in VS Code and ensure 8976 points to this project)"
+# NOTE: do not print the callback host:port here. VS Code's terminal-output port
+# scanner matches a host:port literal and forwards it, binding the host side on
+# every interface. The port is declared in the devcontainer's forwardPorts
+# instead, so it is forwarded (loopback-only) without a terminal literal - see
+# README "Port forwarding".
+echo "📢 Cloudflare OAuth opens a browser and redirects the login back into this container."
+echo "   The callback port is declared in .devcontainer/devcontainer.json (forwardPorts),"
+echo "   so VS Code forwards it automatically; no manual Ports-tab entry is needed."
 echo
 
 script -q -c "npx wrangler login --browser=false --callback-host=0.0.0.0 --callback-port=${"$WRANGLER_CALLBACK_PORT"} | stdbuf -oL sed 's/0\\.0\\.0\\.0/localhost/g'" /dev/null`;
@@ -936,9 +941,25 @@ export function getDevcontainerJsonExtras(context) {
   // exceptions) in generateGooseSetupScript(); the provider resolves from the
   // Doppler env at runtime. No bind mount for goose here.
 
+  // Declared forwardPorts, never terminal-scraped ones (memo "stop stale VS Code
+  // port forwards"): VS Code auto-forwards ports scraped out of terminal output
+  // and binds the host side on every interface; with `remote.localPortHost:
+  // "localhost"` (see vscode-settings-json.template) a *declared* forward binds
+  // loopback-only. The Cloudflare OAuth callback (the one genuine host->container
+  // port in a generated project) is declared here instead of being printed as a
+  // `localhost:8976` literal in the post-create output, which is what the output
+  // scraper keyed on.
+  const forwardPorts = [];
+  if (context.capabilities.includes("cloudflare-wrangler")) {
+    // Cloudflare's OAuth redirect is hard-coded to the host's port 8976; wrangler
+    // listens for it inside the container (WRANGLER_LOGIN_SCRIPT), so it has to
+    // be forwarded to reach the browser on the host.
+    forwardPorts.push(8976);
+  }
+
   return {
     devcontainerMounts: mounts.map((m) => `"${m}"`).join(",\n    "),
-    devcontainerForwardPorts: "[]",
+    devcontainerForwardPorts: JSON.stringify(forwardPorts),
   };
 }
 
