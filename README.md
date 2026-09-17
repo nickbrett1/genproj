@@ -82,6 +82,37 @@ has no equivalent of Vite's `?raw` import suffix, so
 `src/generator/templates.generated.js` — committed, and rebuilt on
 `pretest`/`prebuild`.
 
+### The host `~/.ssh` mount
+
+Every generated devcontainer bind-mounts the **host's** `~/.ssh` at `$HOME/.ssh`
+(`source=${localEnv:HOME}/.ssh,...,type=bind`). It is a bind mount, not a copy:
+the container's `~/.ssh/config` and keys _are_ the host's files, live. Two
+consequences follow, and neither is per-project:
+
+- **Host aliases and key authorization live on the host machine.** A container's
+  `ssh <alias>` resolves through the host's `~/.ssh/config`, and the key it
+  offers is the host's own key — so what the host can reach, the container can
+  reach, and a key the host has not authorized _on the target_ is refused no
+  matter how many times the project is regenerated. Add the alias (`Host <name>`
+  with `User`) and authorize the key **on the host**; every existing and future
+  container inherits it.
+- **`~/.ssh/config` must be world-readable (`644`).** The mount can keep the host
+  uid (macOS `501`) while the container runs as `1000`, and OpenSSH refuses a
+  config that is writable by others — `600` owned by `501` is unreadable in the
+  container. The file holds no secrets.
+
+Keys are a special case: OpenSSH in the container refuses a private key it does
+not own, so `GIT_GITHUB_AUTH_SETUP_SCRIPT` copies the mounted key into a
+container-owned `~/.genproj-ssh/` (or uses a forwarded agent) — it never chowns
+the mount. **Never mutate the mounted `~/.ssh` from inside a container; that is
+the host's directory.**
+
+Worked example (mac-studio, 2026-09-17): the host's `~/.ssh/id_ed25519` was
+authorized in its own `~/.ssh/authorized_keys` and a `Host mac-studio` block
+added with both `~/.ssh/id_ed25519` and `~/.genproj-ssh/id_ed25519` as
+`IdentityFile`; from then on `ssh mac-studio whoami` → the host user, in every
+container, with no rebuild.
+
 ## Development
 
 ```bash

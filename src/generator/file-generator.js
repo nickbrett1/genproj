@@ -921,6 +921,13 @@ export function getDevcontainerJsonExtras(context) {
   // (git@github.com:) with no PAT embedded in git config / remote URLs. The
   // post-create setup copies the key into a container-owned dir (never
   // chowns the mount) or uses a forwarded SSH agent.
+  // This is a live bind mount, not a copy: host `~/.ssh/config` aliases and
+  // host key authorization ARE the container's, so `ssh <alias>` in a
+  // container resolves host machine state — fix aliases and authorize keys on
+  // the host, never per project (README §The host `~/.ssh` mount). One caveat
+  // this mount imposes on the host: `~/.ssh/config` must be 644, because the
+  // container uid (1000) must be able to read a file that may keep the host
+  // uid (501) — see tests/generator/devcontainer-generation.test.js.
   mounts.push(`source=\${localEnv:HOME}/.ssh,target=${home}/.ssh,type=bind`);
   // Migration (goose-mcp-groups-migration §2 / handoff-goose-devcontainer-genproj):
   // MCPHub is now the goose data plane, so the host ~/.config/goose is NO
