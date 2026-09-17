@@ -329,6 +329,10 @@ describe("launcher configuration", () => {
     // payload root: the entry point has to be at dist/bin/<name>, and no earlier
     // stage can catch its absence (the sha256 matches a payload that cannot run).
     expect(readme).toContain("dist/bin/test-project");
+    // The launcher's half of the "which launcher is this host running?"
+    // contract, which only works if a payload knows what to read.
+    expect(readme).toContain("FETCH_LAUNCH_SHA256");
+    expect(readme).toContain("launcher.sha256");
   });
 });
 
@@ -391,6 +395,111 @@ describe("the launcher sources the host's env file", () => {
     expect(result.stdout.trim()).toBe("<unset>");
     expect(result.stderr).not.toContain("env file");
     expect(result.status).toBe(0);
+  });
+});
+
+describe("the launcher describes itself to the payload", () => {
+  // A host's status endpoint can only report the launcher a host is running if
+  // the launcher says what it is on the way to the exec. Static assertions
+  // cannot see a value, so this one runs: the payload prints what it inherited.
+  it("exports its path, the version it verified and its digest, after the env file", async () => {
+    const script = await scriptOf();
+
+    expect(script).toContain(
+      "export FETCH_LAUNCH_PATH FETCH_LAUNCH_VERSION FETCH_LAUNCH_SHA256",
+    );
+    // After the host's own env file, or host-local configuration could claim a
+    // launcher that is not the one running.
+    const call = script.indexOf("  describe_self\n");
+    expect(call).toBeGreaterThan(script.indexOf("  source_env_file\n"));
+    expect(call).toBeLessThan(
+      script.indexOf('exec "${CURRENT}/bin/${LAUNCHER_NAME}"'),
+    );
+  });
+
+  const sha256Of = (content) =>
+    createHash("sha256").update(content).digest("hex");
+
+  const host = async ({ publish = null, sha } = {}) => {
+    const dir = mkdtempSync(join(tmpdir(), "fetch-launch-describe-"));
+    const serve = join(dir, "serve");
+    mkdirSync(serve, { recursive: true });
+
+    // The payload is the only thing that can prove what it inherited.
+    const bin = join(dir, "releases", "1.0.0", "bin");
+    mkdirSync(bin, { recursive: true });
+    const payload = join(bin, "test-project");
+    writeFileSync(
+      payload,
+      '#!/bin/sh\nprintf "%s\\n" "${FETCH_LAUNCH_PATH:-<unset>}" ' +
+        '"${FETCH_LAUNCH_VERSION:-<unset>}" "${FETCH_LAUNCH_SHA256:-<unset>}"\n',
+    );
+    chmodSync(payload, 0o755);
+    symlinkSync(join(dir, "releases", "1.0.0"), join(dir, "current"), "dir");
+
+    const script = join(dir, "fetch-launch.sh");
+    const running = await scriptOf();
+    writeFileSync(script, running);
+    if (publish !== null) {
+      writeFileSync(join(serve, "fetch-launch.sh"), publish);
+    }
+    const launcher = publish
+      ? `,\n  "launcher": { "file": "fetch-launch.sh", "sha256": "${sha}" }`
+      : "";
+    // The payload is already current, so the asset is never fetched: what is
+    // under test is the environment, not the download.
+    writeFileSync(
+      join(serve, "manifest.json"),
+      `{
+  "name": "test-project",
+  "version": "1.0.0",
+  "tag": "v1.0.0",
+  "assets": {
+    "any": { "file": "test-project-any.tar.gz", "sha256": "unused" }
+  }${launcher}
+}
+`,
+    );
+
+    const result = spawnSync("bash", [script], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        DEPLOY_DIR: dir,
+        ENV_FILE: join(dir, "no-such-env-file"),
+        LAUNCHER_NAME: "test-project",
+        MANIFEST_URL: `file://${join(serve, "manifest.json")}`,
+      },
+    });
+
+    return { dir, script, running, result };
+  };
+
+  it("names itself and the release it verified, and hashes the file on disk", async () => {
+    const { script, running, result } = await host();
+    const [path, version, sha] = result.stdout.trim().split("\n");
+
+    expect(result.status).toBe(0);
+    expect(path).toBe(script);
+    expect(version).toBe("1.0.0");
+    expect(sha).toBe(sha256Of(running));
+  });
+
+  it("reports the launcher that will supervise the next start, not the one running", async () => {
+    // The digest is the answer to "is this host's launcher current?", and a
+    // self-update takes effect on the next start - so it has to be the file
+    // that was just swapped in, not the inode this process is reading.
+    const next = `${await scriptOf()}\n# replaced by the test\n`;
+    const { script, running, result } = await host({
+      publish: next,
+      sha: sha256Of(next),
+    });
+    const sha = result.stdout.trim().split("\n")[2];
+
+    expect(result.stderr).toContain("updated the launcher to 1.0.0");
+    expect(readFileSync(script, "utf8")).toBe(next);
+    expect(sha).toBe(sha256Of(next));
+    expect(sha).not.toBe(sha256Of(running));
   });
 });
 
