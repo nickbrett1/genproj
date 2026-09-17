@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   TemplateEngine,
+  WRANGLER_LOGIN_SCRIPT,
   generateMergedDevelopmentContainerFiles,
 } from "../../src/generator/file-generator.js";
 
@@ -667,5 +668,53 @@ describe("DevContainer kitchen-sink gating (memo §2.9 / audit §4.5)", () => {
     expect(setup.content).not.toContain(".wrangler");
     expect(setup.content).not.toContain("specdag");
     expect(setup.content).not.toContain("nanobanana");
+  });
+});
+
+describe("Declared forwardPorts (memo: stop stale VS Code port forwards)", () => {
+  it("declares the Cloudflare OAuth callback port instead of printing it", async () => {
+    const engine = new TemplateEngine();
+    await engine.initialize();
+
+    const context = {
+      projectName: "wrangler-ports",
+      capabilities: ["devcontainer-node", "cloudflare-wrangler"],
+      configuration: {},
+    };
+
+    const files = generateMergedDevelopmentContainerFiles(engine, context, [
+      "devcontainer-node",
+    ]);
+    const json = JSON.parse(
+      files.find((f) => f.filePath === ".devcontainer/devcontainer.json")
+        .content,
+    );
+
+    // The callback is forwarded because it is declared, not because a
+    // `localhost:8976` literal was scraped out of the post-create output.
+    expect(json.forwardPorts).toContain(8976);
+    expect(WRANGLER_LOGIN_SCRIPT).not.toContain("localhost:8976");
+    expect(WRANGLER_LOGIN_SCRIPT).not.toContain("Ports' tab");
+  });
+
+  it("does not declare a callback port for a project without wrangler", async () => {
+    const engine = new TemplateEngine();
+    await engine.initialize();
+
+    const context = {
+      projectName: "no-wrangler-ports",
+      capabilities: ["devcontainer-node"],
+      configuration: {},
+    };
+
+    const files = generateMergedDevelopmentContainerFiles(engine, context, [
+      "devcontainer-node",
+    ]);
+    const json = JSON.parse(
+      files.find((f) => f.filePath === ".devcontainer/devcontainer.json")
+        .content,
+    );
+
+    expect(json.forwardPorts).toEqual([]);
   });
 });
