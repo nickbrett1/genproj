@@ -1196,8 +1196,10 @@ function _applyDockerContainerConfig(
       - run:
           name: Build and Push Image
           command: |
-            docker buildx create --use --bootstrap || true
-            docker buildx build --platform ${buildPlatforms} \\
+            BUILDX_BUILDER_NAME="ci-$$CIRCLE_WORKFLOW_JOB_ID"
+            trap 'docker buildx rm "$$BUILDX_BUILDER_NAME" >/dev/null 2>&1 || true' EXIT
+            docker buildx create --bootstrap --name "$$BUILDX_BUILDER_NAME" >/dev/null
+            docker buildx build --builder "$$BUILDX_BUILDER_NAME" --platform ${buildPlatforms} \\
               --cache-from type=registry,ref=$CACHE_REF \\
               --cache-to type=registry,ref=$CACHE_REF,mode=max \\
               -t $IMAGE:$CIRCLE_SHA1 -t $IMAGE:latest --push .
@@ -2141,9 +2143,12 @@ ${_bkAgents(queue)}    env:
           exit 1
         fi
         echo "$$GHCR_TOKEN" | docker login ghcr.io -u "$$GHCR_USERNAME" --password-stdin
-      - docker buildx create --use --bootstrap || true
+      - |
+        BUILDX_BUILDER_NAME="bk-$$BUILDKITE_PIPELINE_SLUG-$$BUILDKITE_JOB_ID"
+        trap 'docker buildx rm "$$BUILDX_BUILDER_NAME" >/dev/null 2>&1 || true' EXIT
+        docker buildx create --bootstrap --name "$$BUILDX_BUILDER_NAME" >/dev/null
       - >
-        docker buildx build --platform ${buildPlatforms}
+        docker buildx build --builder "$$BUILDX_BUILDER_NAME" --platform ${buildPlatforms}
         --cache-from type=registry,ref=$$CACHE_REF
         --cache-to type=registry,ref=$$CACHE_REF,mode=max
         -t $$IMAGE:$$BUILDKITE_COMMIT -t $$IMAGE:latest --push .
