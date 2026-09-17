@@ -56,8 +56,20 @@ fi
 # nothing — the same fail-open reasoning as the artifact fetch above. The
 # list is empty for a project that declares no targets, which makes the whole
 # loop a no-op.
+#
+# The payload's execute bit is normalised here, at pack time, because it does
+# not survive the trip on its own: the build step's `cp` and the release step's
+# `curl -o` both create the file under the machine's umask. A tarball packed
+# without this shipped `-rw-r--r--` and the launcher refused the payload it
+# could not exec — "nothing executable at .../current/bin/<name>"
+# (mac-studio, 2026-09-16). Pack time is the durable place to fix it: this step
+# is generated but the file it corrects is produced by a machine nobody
+# controls, and a host's first cold start is exactly when it would be noticed.
 for target in {{githubReleaseTargetsJoined}}; do
   if [ -d "build/$target" ]; then
+    if [ -d "build/$target/bin" ]; then
+      find "build/$target/bin" -type f -exec chmod 0755 {} +
+    fi
     tar -czf "$OUT_DIR/{{projectName}}-$target.tar.gz" -C "build/$target" .
     echo "packaged build/$target/ as {{projectName}}-$target.tar.gz"
   else
