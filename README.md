@@ -187,6 +187,25 @@ npm run lint         # prettier --check && eslint
 ./scripts/setup-wrangler-config.sh dev   # wrangler.template.jsonc -> wrangler.jsonc
 ```
 
+## This container's agent
+
+genproj's own devcontainer runs its own `a2a-goose` agent, registered in the hub
+as `genproj-dev` — the same `container-agent` capability
+([spec 008](specs/008-genproj-container-agent/spec.md)) that every project
+generated from this service now gets. Turns are billed through LiteLLM at
+`http://nas:4000`.
+
+```bash
+scripts/agent-dev.sh start    # write secrets + config, fetch the launcher, run it
+scripts/agent-dev.sh status   # running or not, the card URL, the log tail
+scripts/agent-dev.sh stop     # SIGTERM, wait for a clean deregister, confirm gone
+```
+
+`start` runs from the devcontainer's post-start hook, so the agent is normally
+already up. Secrets come from the `genproj` Doppler project into
+`~/.config/a2a-goose/env` (mode 0600) — never into the image or `containerEnv`.
+`agent-dev.sh` is app-owned: regenerating the project never overwrites it.
+
 ## Deployment
 
 CI is Buildkite (`.buildkite/pipeline.yml`): build and test on every push, deploy
