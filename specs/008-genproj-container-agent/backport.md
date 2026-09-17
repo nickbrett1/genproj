@@ -266,3 +266,65 @@ Closing that is a separate decision, not an oversight in this runbook:
   for a container reachable some other way.
 
 No other repo is affected, and nothing about the generator changes either way.
+
+## 8. The second prerequisite: the four secrets are not where the script looks
+
+Found by running the thing, not by reading it. In genproj's own container
+(the reference implementation):
+
+```console
+$ ./scripts/agent-dev.sh start
+  No secrets were available from Doppler, so ~/.config/a2a-goose/env is empty.
+$ ./scripts/agent-dev.sh status
+  agent genproj-dev: not running
+  ... a2a-goose: cannot read env:A2A_GOOSE_BEARER_TOKEN: the bearer token is not set.
+```
+
+Everything upstream of that is correct — the tailnet name resolved
+(`genproj.tail86fd19.ts.net`), the launcher cold-started itself, `fetch-launch`
+installed 0.1.42 and verified goose 1.51.0, and the card was assembled for
+`genproj-dev`, the right name. It stops on the secrets.
+
+`read_secret()` shells out to plain `doppler secrets get "$key" --plain`, so it
+reads whichever project/config the **repo's own `doppler.yaml`** selects
+(genproj → project `genproj`, config `dev`). That config holds
+`BUILDKITE_TOKEN`, `SERVICE_SECRET` and the cluster vars — none of the four:
+
+| key                        | required by          | where it actually lives                          |
+| -------------------------- | -------------------- | ------------------------------------------------ |
+| `A2A_GOOSE_BEARER_TOKEN`   | the agent's own card | **nowhere yet** — has to be created              |
+| `GOOSE_SERVER__SECRET_KEY` | the goose ACP child  | **nowhere yet** — has to be created              |
+| `LITELLM_MASTER_KEY`       | registry auth        | project `litellm`, configs `prd`/`stg`/`dev`     |
+| `LITELLM_BASE_URL`         | registry address     | not a secret — the capability's `litellmBaseUrl` |
+
+So there are two halves to closing this, and only the second is code:
+
+1. **Create the two missing secrets** (`A2A_GOOSE_BEARER_TOKEN`,
+   `GOOSE_SERVER__SECRET_KEY`) in a config the containers can read. A bearer
+   token is `openssl rand -hex 32`; the shared secret is whatever the
+   registry/LiteLLM side already expects. This is provisioning, not a template
+   change.
+2. **Teach `read_secret()` where to look**, because "the repo's own project"
+   is the wrong project for three of the four. The fix is small — give each key
+   a project/config rather than relying on `doppler.yaml`:
+
+   ```bash
+   read_secret() { # key project config
+     doppler secrets get "$1" --project "$2" --config "$3" --plain 2>/dev/null || true
+   }
+   ```
+
+   and stop reading `LITELLM_BASE_URL` from Doppler at all — it is already a
+   capability setting with the same default.
+
+   Note this is a template change, so it changes every future generation too,
+   which is the right place for it: the lookup is not repo-specific.
+
+A third, smaller thing the same run exposed: `write_env_file` writes an empty
+file and `cmd_start` then starts the agent anyway, so the loud "no secrets" block
+is followed by a launch that fails with a `refusing to start` refusal from
+a2a-goose. Fail-open still holds (exit 0, container usable), but the first
+message should be the last one — a missing `A2A_GOOSE_BEARER_TOKEN` is a
+definite refusal, not a "will likely fail to register". Stopping after
+`write_env_file` when the file it wrote has no bearer token makes the output
+honest and skips a doomed launch.
