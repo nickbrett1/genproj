@@ -67,11 +67,20 @@ CARD_PORT=10001
 ACP_URL="http://127.0.0.1:3284/acp"
 LITELLM_BASE_URL="http://nas:4000"
 
-# The card's public URL MUST NOT be loopback - the agent refuses to start on one
-# - and it must name an address the LiteLLM container can resolve: the
-# container's Tailscale name. A configured value wins; an empty one is derived
-# from `tailscale status --json` at start time.
-TAILNET_NAME="${A2A_GOOSE_TAILNET_NAME:-}"
+# The address the card advertises MUST NOT be loopback - the agent refuses to
+# start on one - and it must be an address the LITELLM PROXY can resolve,
+# because the proxy is the process that dials it, not this container. A Tailscale
+# NAME does not survive that test: resolving one needs MagicDNS, which the
+# proxy's host may not run. Measured on the NAS, 2026-09-18: from that host,
+# http://genproj.tail86fd19.ts.net:10001 -> "Could not resolve host", while
+# http://100.72.205.65:10001 -> HTTP 200. A LiteLLM that cannot resolve the card
+# URL registers the agent and then fails every call to it with -32603.
+#
+# So the default is the container's own tailnet IPv4, and a configured value - an
+# IP, or a name you have checked the proxy can resolve - wins over it.
+# A2A_GOOSE_TAILNET_NAME is the spelling this used before the address became an
+# IP; it is still read so a script seeded earlier keeps working.
+CARD_ADDRESS="${A2A_GOOSE_CARD_ADDRESS:-${A2A_GOOSE_TAILNET_NAME:-}}"
 
 log() {
   printf '%s agent-dev[%s]: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$$" "$*" >&2
@@ -93,11 +102,18 @@ agent-dev.sh - start, stop and inspect this devcontainer's own a2a-goose agent.
   scripts/agent-dev.sh status   running or not, the card URL, a log tail
 
 Environment passthrough:
-  DEPLOY_DIR    default: $HOME/.local/share/a2a-goose
-  ENV_FILE      default: $HOME/.config/a2a-goose/env  (sourced with set -a)
-  MANIFEST_URL  default: the a2a-goose release manifest
-  TIMEOUT       default: 10 (seconds per HTTP request)
-  NO_FETCH=1    skip the fetch and start what is installed
+  DEPLOY_DIR         default: $HOME/.local/share/a2a-goose
+  ENV_FILE           default: $HOME/.config/a2a-goose/env  (sourced with set -a)
+  MANIFEST_URL       default: the a2a-goose release manifest
+  TIMEOUT            default: 10 (seconds per HTTP request)
+  NO_FETCH=1         skip the fetch and start what is installed
+  A2A_GOOSE_CARD_ADDRESS  default: this container's tailnet IPv4 (the address the
+                     card advertises; it must be one the LiteLLM proxy can
+                     resolve, so an IP unless the proxy runs MagicDNS)
+  A2A_GOOSE_PROVIDER_PROJECT / _CONFIG
+                     default: goose/prd - where goose's own provider settings
+                     (GOOSE_PROVIDER, GOOSE_MODEL, the API key) are read from
+  GOOSE_DISABLE_KEYRING  default: 1 - there is no keyring in a container
 
 To start it automatically with the container, add this to
 .devcontainer/post-start-setup.sh:
@@ -110,30 +126,70 @@ fi
 POST_START_HOOK
 }
 
-# The agent's Tailscale name, resolved locally (no network needed). Fails rather
+# The address to advertise, resolved locally (no network needed). Fails rather
 # than falling back to something loopback, which the agent would refuse anyway:
 # a wrong publicUrl must not be written and then discovered as a startup refusal.
-resolve_tailnet_name() {
-  [ -n "${TAILNET_NAME}" ] && return 0
+#
+# This container's own tailnet IPv4 first - it is the one form every node that
+# can route here can dial - and the Tailscale name only if no address can be
+# had, since a name is useful exactly when the proxy runs MagicDNS.
+resolve_card_address() {
+  [ -n "${CARD_ADDRESS}" ] && return 0
   command -v tailscale >/dev/null 2>&1 || return 1
-  local json name
+
+  local address
+  address="$(tailscale ip -4 2>/dev/null | head -1 || true)"
+  if [ -n "${address}" ]; then
+    CARD_ADDRESS="${address}"
+    return 0
+  fi
+
+  local json
   json="$(tailscale status --json 2>/dev/null || true)"
   [ -n "${json}" ] || return 1
   if command -v jq >/dev/null 2>&1; then
-    name="$(printf '%s' "${json}" | jq -r '.Self.DNSName // empty' 2>/dev/null || true)"
+    address="$(printf '%s' "${json}" | jq -r '.Self.TailscaleIPs[0] // empty' 2>/dev/null || true)"
+    if [ -z "${address}" ]; then
+      address="$(printf '%s' "${json}" | jq -r '.Self.DNSName // empty' 2>/dev/null || true)"
+      address="${address%.}"
+    fi
   else
-    name="$(
-      printf '%s' "${json}" |
-        tr ',' '\n' |
-        sed -n 's/.*"DNSName"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' |
+    # No jq: read this node's own entry. Cutting the document at "Peer" keeps a
+    # peer's address from being mistaken for ours; Self is emitted first.
+    local self
+    self="$(printf '%s' "${json}" | tr -d '\n' | sed 's/"Peer".*//')"
+    address="$(
+      printf '%s' "${self}" |
+        tr ',[]' '\n\n\n' |
+        sed -n 's/^[[:space:]]*"\([0-9]\{1,3\}\(\.[0-9]\{1,3\}\)\{3\}\)"[[:space:]]*$/\1/p' |
         head -1
     )"
+    if [ -z "${address}" ]; then
+      address="$(
+        printf '%s' "${self}" |
+          tr ',' '\n' |
+          sed -n 's/.*"DNSName"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' |
+          head -1
+      )"
+      address="${address%.}"
+    fi
   fi
-  name="${name%.}"
-  [ -n "${name}" ] || return 1
-  TAILNET_NAME="${name}"
+
+  [ -n "${address}" ] || return 1
+  CARD_ADDRESS="${address}"
   return 0
 }
+
+# goose does not only need the agent's secrets - it needs its OWN provider
+# settings, and this script is what starts its goose. The devcontainer's shell
+# reaches goose through a Doppler wrapper (`doppler run --project goose --config
+# prd -- goose`, see ~/.zshrc), which is where GOOSE_PROVIDER and the model come
+# from; the agent starts goose directly, so it reads the same project here rather
+# than inventing a second source. Without these the agent registers happily and
+# every turn fails with "Failed to resolve provider: Configuration value not
+# found: GOOSE_PROVIDER" - measured on genproj-dev, 2026-09-18.
+PROVIDER_PROJECT="${A2A_GOOSE_PROVIDER_PROJECT:-goose}"
+PROVIDER_CONFIG="${A2A_GOOSE_PROVIDER_CONFIG:-prd}"
 
 # One secret, straight out of Doppler. Empty on any failure (not logged in, no
 # network, key absent) so a caller can tell "no value" from "not fetched".
@@ -155,6 +211,24 @@ read_secret() {
   printf '%s' "${value}"
 }
 
+# One of goose's own settings: the provider project first (the wrapper's source
+# of truth), then the same place the agent's secrets come from, so a repo that
+# carries its own goose provider still wins over the shared one.
+read_provider_secret() {
+  local key="$1" value=""
+  command -v doppler >/dev/null 2>&1 || {
+    printf ''
+    return 0
+  }
+  value="$(
+    doppler secrets get "${key}" --project "${PROVIDER_PROJECT}" --config "${PROVIDER_CONFIG}" --plain 2>/dev/null || true
+  )"
+  if [ -z "${value}" ]; then
+    value="$(read_secret "${key}")"
+  fi
+  printf '%s' "${value}"
+}
+
 # $ENV_FILE holds ONLY secrets, mode 0600, and is sourced by the launcher with
 # `set -a`. It is never carried on a command line and never placed in
 # `containerEnv`. A failed fetch keeps whatever is already there - it must not
@@ -168,6 +242,17 @@ write_env_file() {
       content="${content}${key}=${value}"$'\n'
     fi
   done
+  # goose's own provider settings, for the goose this script starts.
+  for key in GOOSE_PROVIDER GOOSE_MODEL GOOSE_PROVIDER__API_KEY LITELLM_HOST LITELLM_API_KEY; do
+    value="$(read_provider_secret "${key}")"
+    if [ -n "${value}" ]; then
+      content="${content}${key}=${value}"$'\n'
+    fi
+  done
+  # There is no keyring in a container, so goose must not go looking for the
+  # provider key in one: the env file is the store. An explicit value in the
+  # environment wins, so an operator can turn it back on.
+  content="${content}GOOSE_DISABLE_KEYRING=${GOOSE_DISABLE_KEYRING:-1}"$'\n'
   local written="${ENV_FILE}"
   if [ -z "${content}" ]; then
     if [ -f "${ENV_FILE}" ]; then
@@ -195,6 +280,17 @@ write_env_file() {
       "you can read ${COMMON_PROJECT}/${COMMON_CONFIG}, and retry when you can."
     return 1
   fi
+
+  # Not fatal - goose may still find a provider in its own config file - but it is
+  # the difference between an agent that answers and one that registers and then
+  # refuses every turn, which is worth saying out loud at start time.
+  if ! grep -q '^GOOSE_PROVIDER=' "${written}" 2>/dev/null; then
+    loud "The agent is starting with no goose provider configured." \
+      "No GOOSE_PROVIDER could be read from ${PROVIDER_PROJECT}/${PROVIDER_CONFIG}, and this devcontainer's own" \
+      "goose config is extensions-only." \
+      "It will register, and then fail every turn with 'Failed to resolve provider'." \
+      "Fix: run 'doppler login' (or point A2A_GOOSE_PROVIDER_PROJECT / _CONFIG at the right config) and restart."
+  fi
   return 0
 }
 
@@ -206,7 +302,7 @@ write_config_file() {
   cat >"${CONFIG_FILE}" <<YAML
 server:
   bind: "0.0.0.0:${CARD_PORT}"
-  publicUrl: "http://${TAILNET_NAME}:${CARD_PORT}"
+  publicUrl: "http://${CARD_ADDRESS}:${CARD_PORT}"
   bearerTokenEnv: "A2A_GOOSE_BEARER_TOKEN"
 
 card:
@@ -276,11 +372,12 @@ cold_start() {
 cmd_start() {
   mkdir -p "${CONFIG_DIR}" "${STATE_DIR}" 2>/dev/null || true
 
-  if ! resolve_tailnet_name; then
-    loud "The agent was NOT started: no tailnet name could be resolved." \
+  if ! resolve_card_address; then
+    loud "The agent was NOT started: no address to advertise could be resolved." \
       "server.publicUrl must not be loopback, so the agent is not started on a" \
-      "guess. Join the container to the tailnet (or set tailnetName in the" \
-      "container-agent capability) and retry."
+      "guess. Join the container to the tailnet, or set the address explicitly" \
+      "(A2A_GOOSE_CARD_ADDRESS, or tailnetName in the container-agent" \
+      "capability), and retry."
     return 0
   fi
 
@@ -335,7 +432,7 @@ cmd_start() {
   fi
 
   log "the agent ${AGENT_NAME} is starting (pid ${pid})"
-  log "card: http://${TAILNET_NAME}:${CARD_PORT}/"
+  log "card: http://${CARD_ADDRESS}:${CARD_PORT}/"
   return 0
 }
 
@@ -378,11 +475,23 @@ cmd_status() {
     printf 'agent %s: not running\n' "${AGENT_NAME}"
   fi
 
-  if [ -z "${TAILNET_NAME}" ]; then resolve_tailnet_name >/dev/null 2>&1 || true; fi
-  if [ -n "${TAILNET_NAME}" ]; then
-    printf 'card: http://%s:%s/\n' "${TAILNET_NAME}" "${CARD_PORT}"
+  if [ -z "${CARD_ADDRESS}" ]; then resolve_card_address >/dev/null 2>&1 || true; fi
+  if [ -n "${CARD_ADDRESS}" ]; then
+    printf 'card: http://%s:%s/\n' "${CARD_ADDRESS}" "${CARD_PORT}"
   else
-    printf 'card: unknown (no tailnet name resolved)\n'
+    printf 'card: unknown (no address resolved)\n'
+  fi
+
+  # A registered agent with no provider refuses every turn, so report it beside
+  # the card rather than leaving it for whoever makes the first call.
+  if [ -f "${ENV_FILE}" ]; then
+    local provider
+    provider="$(sed -n 's/^GOOSE_PROVIDER=//p' "${ENV_FILE}" | head -1)"
+    if [ -n "${provider}" ]; then
+      printf 'goose provider: %s\n' "${provider}"
+    else
+      printf 'goose provider: none in %s (turns will fail to resolve one)\n' "${ENV_FILE}"
+    fi
   fi
 
   if [ -f "${LOG_FILE}" ]; then

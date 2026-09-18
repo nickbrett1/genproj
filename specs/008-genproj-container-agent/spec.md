@@ -23,18 +23,18 @@ The shape of the problem is worth stating, because it decides the design:
 
 Machine-readable contract: `contracts/container-agent.capability.json`. Summary:
 
-| field                 | value                                                                                                               |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `id`                  | `container-agent`                                                                                                   |
-| `category`            | `core` — it is part of every container, not an optional extra                                                       |
-| `locked`              | `true` — a client must not offer to deselect it                                                                     |
-| `selectedByDefault`   | `true`                                                                                                              |
-| `dependencies`        | `["coding-agents"]`                                                                                                 |
-| `conflicts`           | `[]`                                                                                                                |
-| `requiresAuth`        | `[]`                                                                                                                |
-| `authServices`        | `[]` — secrets come from Doppler at start time, so nothing is provisioned at generation time                        |
-| `externalServices`    | `[]` — the release channel is consumed by the container, not by the generator                                       |
-| `configurationSchema` | `litellmBaseUrl` (`http://nas:4000`), `nameSuffix` (`-dev`), `tailnetName` (`""` → derived from `tailscale status`) |
+| field                 | value                                                                                                                                  |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                  | `container-agent`                                                                                                                      |
+| `category`            | `core` — it is part of every container, not an optional extra                                                                          |
+| `locked`              | `true` — a client must not offer to deselect it                                                                                        |
+| `selectedByDefault`   | `true`                                                                                                                                 |
+| `dependencies`        | `["coding-agents"]`                                                                                                                    |
+| `conflicts`           | `[]`                                                                                                                                   |
+| `requiresAuth`        | `[]`                                                                                                                                   |
+| `authServices`        | `[]` — secrets come from Doppler at start time, so nothing is provisioned at generation time                                           |
+| `externalServices`    | `[]` — the release channel is consumed by the container, not by the generator                                                          |
+| `configurationSchema` | `litellmBaseUrl` (`http://nas:4000`), `nameSuffix` (`-dev`), `tailnetName` (`""` → the container's own tailnet IPv4, derived at start) |
 
 ### 2.1 It is not droppable, and not only in the UI
 
@@ -70,12 +70,13 @@ devcontainer start
         ▼
 post-start-setup.sh ──► scripts/agent-dev.sh start            (idempotent, fails open)
         │
-        ├─ resolve the tailnet name   tailnetName config, else `tailscale status --json`
+        ├─ resolve the card address   tailnetName config, else `tailscale ip -4`, else
+        │                             `tailscale status --json` (an IP by default - see §3.4)
         │                             (fail loudly rather than write a loopback publicUrl)
         ├─ write ~/.config/a2a-goose/env      0600, secrets from Doppler (own config, else common), never containerEnv
         ├─ write ~/.config/a2a-goose/config.yaml
         │       card.name / registry.agentName = <repo><nameSuffix>
-        │       server.bind 0.0.0.0:10001, server.publicUrl http://<tailnetName>:10001
+        │       server.bind 0.0.0.0:10001, server.publicUrl http://<cardAddress>:10001
         │       goose.acp.url http://127.0.0.1:3284/acp, goose.defaults.cwd /workspaces/<repo>
         ├─ ensure the launcher        cold start only: curl releases/latest/download/fetch-launch.sh
         └─ run it backgrounded        output to ~/.local/state/a2a-goose/agent.log, pid file beside it
@@ -109,6 +110,52 @@ docker stop ──► SIGTERM ──► deregister ──► goose child exits (
 Each is looked up in the repo's **own** Doppler config first — so a repo that wants its own token keeps it — and then in the shared `common` project (`common/prd`, overridable with `A2A_GOOSE_COMMON_PROJECT` / `A2A_GOOSE_COMMON_CONFIG`). The fallback is the point: these are per-agent-installation values that every container needs the same copy of, and the alternative is putting them in each repo's config and re-provisioning all of them when one rotates. `LITELLM_BASE_URL` is the one duplicate of the capability's own `litellmBaseUrl`; the config file's value is what the agent dials, and the env copy exists only so the env file is complete.
 
 A start with no `A2A_GOOSE_BEARER_TOKEN` is **not** attempted. a2a-goose refuses to start without it, so launching anyway would turn a knowable "no token" into a refusal buried in a log; `write_env_file` says the reason once and cmd_start returns. Fail-open still holds — exit 0, the container is untouched — but the message is the reason rather than a preamble to one.
+
+### 3.4 Why the card advertises an IP, not the Tailscale name
+
+The address on the card is not for a human to read — it is what **the LiteLLM proxy dials** when a caller asks for this agent. So the only question that matters is what the proxy's host can resolve, and a Tailscale name is exactly what it may not be able to:
+
+```console
+$ # on the NAS, the host LiteLLM runs on
+$ curl http://genproj.tail86fd19.ts.net:10001/.well-known/agent-card.json
+curl: (6) Could not resolve host: genproj.tail86fd19.ts.net
+$ curl -o /dev/null -w '%{http_code}\n' http://100.72.205.65:10001/.well-known/agent-card.json
+200
+```
+
+That host runs no MagicDNS, so the name resolves for an interactive shell on a joined machine and for nothing on the box that matters. The failure mode is quiet and expensive: registration succeeds (the agent opens the connection), the roster lists the agent, and every call to it fails with LiteLLM's `-32603 ... Name or service not known` — measured against `genproj-dev` on 2026-09-18. An IP resolves for any node that can route to the container, which is precisely the set of nodes that can call it. The Tailscale name is still what `scripts/cloud_login.sh` pins (`--hostname=<repo>`), because it is how a human finds the node in `tailscale status`; it is simply not what the card advertises.
+
+Resolution order, all local, no network: `A2A_GOOSE_CARD_ADDRESS` / the capability's `tailnetName` → `tailscale ip -4` → `.Self.TailscaleIPs[0]` from `tailscale status --json` → `.Self.DNSName` (the name only when no address can be had). The config key keeps its name — it is in the published capability, and a repo may have set it — but what it holds is an address, and `A2A_GOOSE_TAILNET_NAME` is still read so a script seeded before this change keeps working. If nothing resolves the start fails open with a loud message, never with a loopback `publicUrl` — a2a-goose refuses to start on one.
+
+### 3.5 Why the agent carries goose's own provider settings
+
+A terminal in these containers reaches goose through a Doppler wrapper in `.zshrc`:
+
+```
+doppler run --project common --config dev -- \
+  doppler run --forward-signals --project goose --config prd -- goose "$@"
+```
+
+The agent does not: it starts `goose serve` itself, from `post-start`, with the environment it was given. The devcontainer's goose config is deliberately extensions-only ("provider resolves from Doppler env at runtime"), so there was no provider anywhere and every turn failed:
+
+```console
+$ ask_agent(agent="genproj-dev", …)
+goose refused the request (-32603): Internal error
+  ("Failed to resolve provider: Configuration value not found: GOOSE_PROVIDER")
+```
+
+`write_env_file` therefore also writes goose's provider settings, read from the same project the wrapper uses — `goose/prd` by default, overridable with `A2A_GOOSE_PROVIDER_PROJECT` / `A2A_GOOSE_PROVIDER_CONFIG` — falling back to the repo's own config and then `common`:
+
+| key                       | why                                                           |
+| ------------------------- | ------------------------------------------------------------- |
+| `GOOSE_PROVIDER`          | which provider goose uses (`litellm`)                         |
+| `GOOSE_MODEL`             | which model, so the container matches the hosts               |
+| `GOOSE_PROVIDER__API_KEY` | the provider's key                                            |
+| `LITELLM_HOST`            | the base URL goose's litellm provider dials                   |
+| `LITELLM_API_KEY`         | and its key                                                   |
+| `GOOSE_DISABLE_KEYRING=1` | there is no keyring in a container; the env file is the store |
+
+A missing provider is **not** fatal to the start — goose may still find an `active_provider` in its own config file — so it is reported loudly and `cmd_start` continues (fail-open still holds), and `status` prints the provider it will use. The distinction matters: the bearer token is a certain refusal (a2a-goose will not start), while a missing provider is a certain refusal _per turn_, which shows up at the first call rather than at start.
 
 ## 4. Backport: what lets an existing container gain an agent
 

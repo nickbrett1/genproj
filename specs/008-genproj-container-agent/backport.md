@@ -270,17 +270,17 @@ Their `--sysctl net.ipv6.conf.all.disable_ipv6=1` is untouched, and their
 
 The script logs into Doppler (the agent's tokens live there) and runs
 `tailscale up --hostname=<repo>`. The hostname is the point: it sets the name the
-container joins under, and that name is what `resolve_tailnet_name()` reads from
-`tailscale status --json` and advertises on the card. Both sections skip
-themselves when already done and warn rather than fail when their tool is
-missing, so running it twice is harmless.
+container joins under, which is how a human recognises the node in
+`tailscale status`. (The card advertises the node's tailnet **IP**, not that
+name — see §9.) Both sections skip themselves when already done and warn rather
+than fail when their tool is missing, so running it twice is harmless.
 
 These three get no automatic copy of this, deliberately: an interactive login on
 every boot is how a container ends up hanging on a prompt. Run it once per
 container. The tailnet state persists in the `<repo>-tailscale-state` volume.
 
-Until it is run, the agent fails open with the "no tailnet name" message, which
-is the designed behaviour and not a silent failure.
+Until it is run, the agent fails open with the "no address to advertise could be
+resolved" message, which is the designed behaviour and not a silent failure.
 
 ### 7.1 The generator is unaffected
 
@@ -364,3 +364,86 @@ is the same 50-odd lines in each: the two `COMMON_*` defaults, the fallback in
 first backport needs this second pass. It is the price of app-ownership, and it
 is cheaper than the alternative — a genproj-owned script that a regeneration may
 clobber, which would fight every repo that has ever edited it.
+
+## 10. The two defects the live container found, and the second re-seed
+
+§9's lesson arrived again within the hour — twice, on defects the running
+container found rather than a reader. Both were on the path from "registered" to
+"answers", and neither was visible from the generator's own tests, because both
+are about what the _caller_ and the _goose child_ need.
+
+### 10.1 The address the card advertises
+
+`genproj-dev` registered, the roster listed it — and every call to it failed:
+
+```console
+$ # the proxy's own answer to /a2a/3762df35-…
+LiteLLM 500: Internal error: Network communication error fetching agent card from
+  http://genproj.tail86fd19.ts.net:10001/.well-known/agent.json:
+  Cannot connect to host genproj.tail86fd19.ts.net:10001 [Name or service not known]
+```
+
+The card advertised the container's **Tailscale name**, and the host LiteLLM runs
+on has no MagicDNS — so the name resolved for a human shell and for nothing that
+matters. Both host agents had always advertised their tailnet **IP**, which is why
+only the container agent was broken. The fix (spec §3.4, and the template in
+`src/generator/templates/scripts-agent-dev.sh.template`) makes the IP the default
+and the name the fallback, keeping `A2A_GOOSE_TAILNET_NAME` as a still-read
+spelling of the override.
+
+Two things made this cheap to find and are worth repeating:
+
+- **`list_agents` was already showing the symptom.** The a2a-mcp tool fetches each
+  agent's own card to report its turn ceiling; it failed silently for this agent
+  (fail-open), so `genproj-dev` was the one row on the roster with no ceiling
+  line. A missing line was the tell for an unreachable agent.
+- **The registrar is not a checker.** Registration succeeded because the agent
+  opens that connection itself. Only the proxy's _later_ fetch of the card fails.
+  A green "registered" log line is not evidence the agent is callable.
+
+### 10.2 The goose the agent starts had no provider
+
+The address fix made the agent reachable, and the very next call — the first
+turn anyone had ever sent it — failed one layer further in:
+
+```console
+$ ask_agent(agent="genproj-dev", …)
+goose refused the request (-32603): Internal error
+  ("Failed to resolve provider: Configuration value not found: GOOSE_PROVIDER")
+```
+
+The agent reaches LiteLLM, the card is fetched, the turn is routed — and the
+goose the agent started has no provider, because there is nobody in that path to
+supply one. A terminal in these containers gets goose's provider from the
+Doppler wrapper in `.zshrc` (`doppler run --project goose --config prd -- goose`);
+the agent starts `goose serve` itself from `post-start`, and the devcontainer's
+goose config is extensions-only by design. So the env file now carries goose's
+provider settings too, read from the same `goose/prd` project (spec §3.5), and
+`status` prints the provider it will use.
+
+Worth stating plainly: **this is the third time a template fix has needed a
+re-seed**, and this one was only findable by sending a turn. Registration, a
+correct card and an answered card fetch all looked healthy; the failure was in
+the last hop, which nothing had exercised.
+
+Both fixes rode the same re-seed — the repos received two commits, or would have
+received one had they not been re-seeded in between. The final state is what the
+table below records. Each repo's copy was verified byte-identical to the
+canonical script by name substitution _before_ being overwritten, so the pass
+could only touch the address, provider and resolver logic and nothing a repo had
+edited:
+
+| repo          | commit    | repo                | commit    |
+| ------------- | --------- | ------------------- | --------- |
+| genproj       | this PR   | deepseek-balance    | `21cb7ce` |
+| a2a-goose     | `816af59` | miniflux-feed-dedup | `fa6417e` |
+| mailroom      | `176ba16` | stripe-toddler      | `95e41f9` |
+| nas-port-mcp  | `7bb455f` | vikunja-mcp         | `e6375d7` |
+| parquet-peek  | `59cfab4` | ftn                 | `0d2685c` |
+| pshelf        | `9555af2` | huddle-concept      | `475875c` |
+| agent-swarm   | `ced4962` | dagster-tutorial    | `d15cab7` |
+| agy-telemetry | `a0b9f74` | dbt-duckdb          | `952f208` |
+| circleci-mcp  | `a441b0c` | dagu-mcp            | `c0d30bf` |
+
+`gaggle` is still the one repo with no agent (§2), so it has no script to
+re-seed and is untouched.
