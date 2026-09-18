@@ -88,6 +88,30 @@ describe("container-agent: emitted files", () => {
     // The env file is written, never passed as an argument.
     expect(script.content).not.toMatch(/SECRET_KEY=.*doppler secrets get/);
   });
+
+  it("falls back to the shared common project for its secrets", async () => {
+    const script = byPath(await withAgent(), "scripts/agent-dev.sh");
+    // The repo's own Doppler config first, so a repo that wants its own token
+    // keeps it, then the shared project every container can read.
+    expect(script.content).toContain(
+      'doppler secrets get "${key}" --project "${COMMON_PROJECT}" --config "${COMMON_CONFIG}" --plain',
+    );
+    expect(script.content).toContain(
+      'COMMON_PROJECT="${A2A_GOOSE_COMMON_PROJECT:-common}"',
+    );
+    expect(script.content).toContain(
+      'COMMON_CONFIG="${A2A_GOOSE_COMMON_CONFIG:-prd}"',
+    );
+  });
+
+  it("does not launch into a refusal it can already see coming", async () => {
+    const script = byPath(await withAgent(), "scripts/agent-dev.sh");
+    // a2a-goose refuses to start without a bearer token, so a start with none
+    // reports that reason and returns instead of logging a refusal later.
+    expect(script.content).toContain("^A2A_GOOSE_BEARER_TOKEN=");
+    expect(script.content).toContain("write_env_file || return 0");
+    expect(script.content).toContain("no A2A_GOOSE_BEARER_TOKEN is available");
+  });
 });
 
 describe("container-agent: devcontainer.json", () => {
