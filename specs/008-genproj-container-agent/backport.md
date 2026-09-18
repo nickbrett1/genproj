@@ -65,10 +65,10 @@ in-place backport is a one-off for the repos that predate it.
   });' > scripts/agent-dev.sh
   ```
 
-  Only the project name varies between repos: the agent name is
-  `<repo><nameSuffix>` with the default suffix `-dev`, and the workspace is
-  `/workspaces/<repo>`. Everything else (card port, ACP URL, LiteLLM base URL,
-  the launcher contract) is identical.
+  Only the project name varies between repos: the agent name is `<repo>-dev`
+  and the workspace is `/workspaces/<repo>`. Everything else (card port, ACP
+  URL, the launcher contract) is identical, and the LiteLLM base URL is read
+  from Doppler at start time rather than baked in.
 
 - The container must be **on the tailnet** and joined to it, and `~/.doppler`
   must hold a Doppler login: the agent resolves the tailnet name at start and
@@ -324,10 +324,11 @@ Two things to know about this arrangement:
   registry registration, and the agent's log is where that shows up. If that
   matters more than the convenience, the alternative is to keep reading that one
   key from `litellm/prd` explicitly rather than from `common`.
-- **`LITELLM_BASE_URL` is in `common` only to make the env file complete.** The
-  address the agent dials comes from the config file's `registry.litellmBaseUrl`,
-  which is the capability's `litellmBaseUrl` setting. The env copy is a
-  duplicate of a non-secret.
+- **`LITELLM_BASE_URL` is a non-secret read at start time.** The address the
+  agent dials is written to `registry.litellmBaseUrl` from this same Doppler
+  lookup (the capability no longer carries a `litellmBaseUrl` setting, because
+  the address differs for whoever runs genproj), and the env copy makes the env
+  file complete.
 
 Also fixed while in there: a start with no bearer token is no longer attempted.
 `write_env_file` reports the reason once and cmd_start returns, instead of

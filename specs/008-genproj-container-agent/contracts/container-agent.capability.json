@@ -12,23 +12,7 @@
   "externalServices": [],
   "configurationSchema": {
     "type": "object",
-    "properties": {
-      "litellmBaseUrl": {
-        "type": "string",
-        "default": "http://nas:4000",
-        "description": "Base URL of the LiteLLM proxy the agent registers with and bills its turns through."
-      },
-      "nameSuffix": {
-        "type": "string",
-        "default": "-dev",
-        "description": "Appended to the repo name to form the agent's name (`<repo><nameSuffix>`). That name is the registry key, so changing it registers a new agent rather than renaming the existing one."
-      },
-      "tailnetName": {
-        "type": "string",
-        "default": "",
-        "description": "The address the agent card advertises. It must be one the LiteLLM proxy can resolve, because the proxy is what dials the card: an IP is safe, a Tailscale name needs MagicDNS to be running on the proxy's host. Empty means derive the container's own tailnet IPv4 at start time."
-      }
-    }
+    "properties": {}
   },
   "emittedFiles": [
     {

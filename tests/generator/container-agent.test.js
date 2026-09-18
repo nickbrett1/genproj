@@ -38,6 +38,18 @@ const withAgent = (overrides = {}) =>
 const byPath = (files, filePath) =>
   files.find((file) => file.filePath === filePath);
 
+// A stub `doppler` that answers `doppler secrets get <key>` from a lookup and
+// fails for anything else. $3 is the key (see read_secret in the template).
+const dopplerStub = (keys) =>
+  [
+    "#!/bin/sh",
+    'key="$3"',
+    'case "$key" in',
+    ...Object.entries(keys).map(([k, v]) => `  ${k}) echo "${v}" ;;`),
+    "  *) exit 1 ;;",
+    "esac",
+  ].join("\n");
+
 const DEV_CONTAINER = ".devcontainer/devcontainer.json";
 const POST_START = ".devcontainer/post-start-setup.sh";
 
@@ -53,20 +65,33 @@ describe("container-agent: emitted files", () => {
     expect(script.content.match(/{{[^}]+}}/g)).toBeNull();
   });
 
-  it("names the agent <repo><nameSuffix> and defaults the suffix to -dev", async () => {
+  it("names the agent <repo>-dev, with the suffix hardcoded", async () => {
     const script = byPath(await withAgent(), "scripts/agent-dev.sh");
     expect(script.content).toContain('AGENT_NAME="parquet-peek-dev"');
   });
 
-  it("honours a configured nameSuffix", async () => {
+  it("ignores the removed container-agent settings", async () => {
+    // nameSuffix, tailnetName and litellmBaseUrl are no longer configuration:
+    // the name and address are fixed/runtime concerns and the LiteLLM base URL
+    // comes from Doppler.
     const script = byPath(
-      await withAgent({ "container-agent": { nameSuffix: "-agent" } }),
+      await withAgent({
+        "container-agent": {
+          nameSuffix: "-agent",
+          tailnetName: "nas-box",
+          litellmBaseUrl: "http://litellm.internal:4000",
+        },
+      }),
       "scripts/agent-dev.sh",
     );
-    expect(script.content).toContain('AGENT_NAME="parquet-peek-agent"');
+    expect(script.content).toContain('AGENT_NAME="parquet-peek-dev"');
+    expect(script.content).toContain(
+      'CARD_ADDRESS="${A2A_GOOSE_CARD_ADDRESS:-${A2A_GOOSE_TAILNET_NAME:-}}"',
+    );
+    expect(script.content).not.toContain("litellm.internal");
   });
 
-  it("derives the card's address at runtime when the capability does not pin one", async () => {
+  it("derives the card's address at runtime, with no baked-in value", async () => {
     // The card's publicUrl must not be loopback, so an unset address falls
     // through to tailscale rather than to a guess.
     const script = byPath(await withAgent(), "scripts/agent-dev.sh");
@@ -81,14 +106,13 @@ describe("container-agent: emitted files", () => {
     );
   });
 
-  it("lets a configured address win over the runtime lookup", async () => {
-    const script = byPath(
-      await withAgent({ "container-agent": { tailnetName: "nas-box" } }),
-      "scripts/agent-dev.sh",
-    );
+  it("reads the LiteLLM base URL from Doppler, never baking one in", async () => {
+    const script = byPath(await withAgent(), "scripts/agent-dev.sh");
+    expect(script.content).not.toContain("http://nas:4000");
     expect(script.content).toContain(
-      'CARD_ADDRESS="${A2A_GOOSE_CARD_ADDRESS:-${A2A_GOOSE_TAILNET_NAME:-nas-box}}"',
+      'litellm_base_url="$(read_secret LITELLM_BASE_URL)"',
     );
+    expect(script.content).toContain('litellmBaseUrl: "${litellm_base_url}"');
   });
 
   // What the address resolver actually returns, run against a stub tailscale.
@@ -240,16 +264,6 @@ describe("container-agent: the goose the script starts", () => {
     LITELLM_API_KEY: "sk-litellm",
   };
 
-  const dopplerStub = (keys) =>
-    [
-      "#!/bin/sh",
-      'key="$3"',
-      'case "$key" in',
-      ...Object.entries(keys).map(([k, v]) => `  ${k}) echo "${v}" ;;`),
-      "  *) exit 1 ;;",
-      "esac",
-    ].join("\n");
-
   const writeEnvFile = async (keys) => {
     const dir = mkdtempSync(join(tmpdir(), "agent-dev-env-"));
     const bin = join(dir, "bin");
@@ -333,6 +347,59 @@ describe("container-agent: the goose the script starts", () => {
     const script = byPath(await withAgent(), "scripts/agent-dev.sh");
     expect(script.content).toContain("goose provider: %s");
     expect(script.content).toContain("turns will fail to resolve one");
+  });
+});
+
+describe("container-agent: the agent config", () => {
+  // The LiteLLM base URL is deployment-specific, so the rendered script reads
+  // it from Doppler rather than taking it from a genproj setting.
+  const writeConfigFile = async (keys) => {
+    const dir = mkdtempSync(join(tmpdir(), "agent-dev-config-"));
+    const bin = join(dir, "bin");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(bin, "doppler"), dopplerStub(keys), { mode: 0o755 });
+    const script = byPath(await withAgent(), "scripts/agent-dev.sh");
+    const scriptPath = join(dir, "agent-dev.sh");
+    writeFileSync(scriptPath, script.content);
+    const driver = join(dir, "run.sh");
+    writeFileSync(
+      driver,
+      [
+        "set -uo pipefail",
+        `source ${scriptPath} 2>/dev/null`,
+        "write_config_file",
+      ].join("\n"),
+    );
+    const home = join(dir, "home");
+    mkdirSync(home, { recursive: true });
+    const result = spawnSync("bash", [driver], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        HOME: home,
+        PATH: `${bin}:${process.env.PATH}`,
+      },
+    });
+    const configFile = join(home, ".config", "a2a-goose", "config.yaml");
+    return {
+      contents: existsSync(configFile) ? readFileSync(configFile, "utf8") : "",
+      stderr: result.stderr,
+    };
+  };
+
+  it("takes litellmBaseUrl from the Doppler LITELLM_BASE_URL", async () => {
+    const { contents } = await writeConfigFile({
+      LITELLM_BASE_URL: "http://litellm.internal:4000",
+    });
+    expect(contents).toContain(
+      'litellmBaseUrl: "http://litellm.internal:4000"',
+    );
+  });
+
+  it("says so, but stays fail-open, when no LITELLM_BASE_URL is available", async () => {
+    const { contents, stderr } = await writeConfigFile({});
+    expect(contents).toContain('litellmBaseUrl: ""');
+    expect(stderr).toContain("No LITELLM_BASE_URL could be read from Doppler");
   });
 });
 
@@ -433,29 +500,27 @@ describe("container-agent: template data", () => {
     expect(data).toMatchObject({
       containerAgentProjectName: "vikunja-mcp",
       containerAgentName: "vikunja-mcp-dev",
-      containerAgentNameSuffix: "-dev",
-      containerAgentTailnetName: "",
       containerAgentWorkspacePath: "/workspaces/vikunja-mcp",
-      containerAgentLitellmBaseUrl: "http://nas:4000",
       containerAgentRepoSlug: "nickbrett1/a2a-goose",
     });
   });
 
-  it("reads litellmBaseUrl and nameSuffix from the capability configuration", () => {
+  it("is not configurable: the old settings no longer change the output", () => {
     const data = getCapabilityTemplateData("container-agent", {
       capabilities: ["devcontainer-rust", "container-agent"],
       configuration: {
         "container-agent": {
           litellmBaseUrl: "http://litellm.internal:4000",
           nameSuffix: "-ci",
+          tailnetName: "nas-box",
         },
       },
       projectName: "huddle",
     });
-    expect(data.containerAgentLitellmBaseUrl).toBe(
-      "http://litellm.internal:4000",
-    );
-    expect(data.containerAgentName).toBe("huddle-ci");
+    expect(data.containerAgentName).toBe("huddle-dev");
+    expect(data).not.toHaveProperty("containerAgentLitellmBaseUrl");
+    expect(data).not.toHaveProperty("containerAgentNameSuffix");
+    expect(data).not.toHaveProperty("containerAgentTailnetName");
     expect(data.containerAgentPostStartHook).toContain("agent-dev.sh");
   });
 });

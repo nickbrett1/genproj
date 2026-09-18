@@ -1901,16 +1901,13 @@ doppler setup --no-interactive --project ${dopplerProject} --config dev
   // README states it rather than making the reader re-derive it.
   const containerAgentSection = context.capabilities.includes("container-agent")
     ? (() => {
-        const agentConfig = context.configuration?.["container-agent"] || {};
-        const nameSuffix = agentConfig.nameSuffix || "-dev";
-        const litellmBaseUrl = agentConfig.litellmBaseUrl || "http://nas:4000";
-        const agentName = `${projectName}${nameSuffix}`;
+        const agentName = `${projectName}-dev`;
         return `## The container's agent
 
 This devcontainer brings up its own \`a2a-goose\` agent, registered in the hub as
 \`${agentName}\` - one agent per repo, so a restart reclaims the same entry
-instead of adding a second one. Turns are billed through LiteLLM at
-\`${litellmBaseUrl}\`.
+instead of adding a second one. Turns are billed through the LiteLLM proxy
+configured in Doppler (\`LITELLM_BASE_URL\`).
 
 \`\`\`bash
 scripts/agent-dev.sh start    # write secrets + config, fetch the launcher, run it

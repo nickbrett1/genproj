@@ -2394,29 +2394,22 @@ function getFetchLaunchTemplateData(context) {
  * The template data for `scripts/agent-dev.sh` — the container's own a2a-goose
  * agent.
  *
- * The agent is named `<repo><nameSuffix>` and registered under that name, so a
- * start reclaims a stale row by name rather than adding a second agent. The
- * values here are the ones the shell template cannot derive for itself: the
- * fixed names, the workspace path, and the release repo the launcher fetches
- * from.
+ * The agent is named `<repo>-dev` and registered under that name, so a start
+ * reclaims a stale row by name rather than adding a second agent. The values
+ * here are the ones the shell template cannot derive for itself: the fixed
+ * names, the workspace path, and the release repo the launcher fetches from.
  *
- * `tailnetName` is the address the card advertises, and is deliberately allowed
- * to be empty: the public URL must not be loopback, so when the capability does
- * not pin one the rendered script resolves the container's own tailnet IPv4 at
- * start time (an IP, not the Tailscale name - the LiteLLM proxy is the process
- * that dials the card, and it does not necessarily run MagicDNS). Reading the
- * config with defaults mirrors {@link resolveDopplerTarget} / `applyDefaults`.
+ * Nothing here is configurable. The `-dev` suffix and the card address are
+ * fixed/runtime concerns, and the LiteLLM base URL is deployment-specific, so
+ * the rendered script reads it from Doppler (`LITELLM_BASE_URL`) at start time
+ * rather than baking one in at generation time.
  *
  * @param {Object} context - Generation context (configuration, projectName, name)
  * @returns {Object} Template data for scripts/agent-dev.sh
  */
 function getContainerAgentTemplateData(context) {
   const projectName = context.projectName || context.name || "my-project";
-  const config = context.configuration?.["container-agent"] || {};
-  const nameSuffix = config.nameSuffix || "-dev";
-  const tailnetName = config.tailnetName || "";
-  const litellmBaseUrl = config.litellmBaseUrl || "http://nas:4000";
-  const agentName = `${projectName}${nameSuffix}`;
+  const agentName = `${projectName}-dev`;
   const workspacePath = `/workspaces/${projectName}`;
   const repoSlug = "nickbrett1/a2a-goose";
 
@@ -2432,10 +2425,7 @@ function getContainerAgentTemplateData(context) {
   return {
     containerAgentProjectName: projectName,
     containerAgentName: agentName,
-    containerAgentNameSuffix: nameSuffix,
-    containerAgentTailnetName: tailnetName,
     containerAgentWorkspacePath: workspacePath,
-    containerAgentLitellmBaseUrl: litellmBaseUrl,
     containerAgentRepoSlug: repoSlug,
     containerAgentPostStartHook: postStartHook,
   };

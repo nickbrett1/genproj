@@ -3,8 +3,8 @@
 # agent-dev.sh - start, stop and inspect THIS devcontainer's own a2a-goose agent.
 #
 # Every generated devcontainer brings up and registers its own agent, named
-# "{{containerAgentName}}" (the repo name plus the "{{containerAgentNameSuffix}}"
-# suffix). ONE AGENT PER REPO IS THE CONTRACT: the registry row is keyed by that
+# "{{containerAgentName}}" (the repo name plus the "-dev" suffix).
+# ONE AGENT PER REPO IS THE CONTRACT: the registry row is keyed by that
 # name, so a `start` RECLAIMS the row a previous container left behind rather
 # than adding a second one - a stale "{{containerAgentName}}" is overwritten by
 # name, never duplicated.
@@ -65,7 +65,6 @@ COMMON_CONFIG="${A2A_GOOSE_COMMON_CONFIG:-prd}"
 
 CARD_PORT=10001
 ACP_URL="http://127.0.0.1:3284/acp"
-LITELLM_BASE_URL="{{containerAgentLitellmBaseUrl}}"
 
 # The address the card advertises MUST NOT be loopback - the agent refuses to
 # start on one - and it must be an address the LITELLM PROXY can resolve,
@@ -76,11 +75,11 @@ LITELLM_BASE_URL="{{containerAgentLitellmBaseUrl}}"
 # http://100.72.205.65:10001 -> HTTP 200. A LiteLLM that cannot resolve the card
 # URL registers the agent and then fails every call to it with -32603.
 #
-# So the default is the container's own tailnet IPv4, and a configured value - an
-# IP, or a name you have checked the proxy can resolve - wins over it.
-# A2A_GOOSE_TAILNET_NAME is the spelling this used before the address became an
-# IP; it is still read so a script seeded earlier keeps working.
-CARD_ADDRESS="${A2A_GOOSE_CARD_ADDRESS:-${A2A_GOOSE_TAILNET_NAME:-{{containerAgentTailnetName}}}}"
+# So the default is the container's own tailnet IPv4, and an address set in the
+# environment wins over it. A2A_GOOSE_TAILNET_NAME is the spelling this used
+# before the address became an IP; it is still read so a script seeded earlier
+# keeps working.
+CARD_ADDRESS="${A2A_GOOSE_CARD_ADDRESS:-${A2A_GOOSE_TAILNET_NAME:-}}"
 
 log() {
   printf '%s agent-dev[%s]: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$$" "$*" >&2
@@ -296,6 +295,17 @@ write_env_file() {
 # $CONFIG_FILE and pointed at by $A2A_GOOSE_CONFIG.
 write_config_file() {
   mkdir -p "${CONFIG_DIR}" || return 1
+  # The LiteLLM base URL is deployment-specific, so it is read from Doppler -
+  # this repo's config first, then the shared one - rather than fixed at
+  # generation time. Empty means the agent registers against nothing and every
+  # call to it fails; that is worth saying out loud, but it is not fatal.
+  local litellm_base_url
+  litellm_base_url="$(read_secret LITELLM_BASE_URL)"
+  if [ -z "${litellm_base_url}" ]; then
+    loud "No LITELLM_BASE_URL could be read from Doppler - the agent will" \
+      "register against an empty base URL and every call to it will fail." \
+      "Set LITELLM_BASE_URL in this repo's config, or in ${COMMON_PROJECT}/${COMMON_CONFIG}."
+  fi
   umask 077
   cat >"${CONFIG_FILE}" <<YAML
 server:
@@ -319,7 +329,7 @@ goose:
       - "${WORKSPACE}"
 
 registry:
-  litellmBaseUrl: "${LITELLM_BASE_URL}"
+  litellmBaseUrl: "${litellm_base_url}"
   masterKeyEnv: "LITELLM_MASTER_KEY"
   agentName: "${AGENT_NAME}"
   # Re-registering by name is what reclaims the row a previous container left.
@@ -374,8 +384,7 @@ cmd_start() {
     loud "The agent was NOT started: no address to advertise could be resolved." \
       "server.publicUrl must not be loopback, so the agent is not started on a" \
       "guess. Join the container to the tailnet, or set the address explicitly" \
-      "(A2A_GOOSE_CARD_ADDRESS, or tailnetName in the container-agent" \
-      "capability), and retry."
+      "(A2A_GOOSE_CARD_ADDRESS), and retry."
     return 0
   fi
 
