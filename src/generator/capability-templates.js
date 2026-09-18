@@ -349,6 +349,20 @@ export const capabilityTemplates = {
       templateId: "lighthouse-ci-config",
     },
   ],
+  micropython: [
+    {
+      id: "find-board",
+      filePath: "scripts/find-board.sh",
+      templateId: "scripts-find-board-sh",
+      isExecutable: true,
+    },
+    {
+      id: "post-create-micropython",
+      filePath: ".devcontainer/post-create-micropython.sh",
+      templateId: "devcontainer-post-create-micropython-sh",
+      isExecutable: true,
+    },
+  ],
 };
 
 export default capabilityTemplates;

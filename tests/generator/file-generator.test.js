@@ -44,7 +44,7 @@ const nodeJsonTemplateContent = `{
 
 const javaDockerfileTemplateContent = `FROM mcr.microsoft.com/devcontainers/java
 RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \\
-    && apt-get -y install --no-install-recommends git socat curl gnupg openssh-server mosh micro libevent-dev libncurses-dev pkg-config bison build-essential xclip{{uvInstallation}}{{dopplerInstallation}}
+    && apt-get -y install --no-install-recommends git socat curl gnupg openssh-server mosh micro libevent-dev libncurses-dev pkg-config bison build-essential xclip{{uvInstallation}}{{dopplerInstallation}}{{micropythonInstallation}}
 
 
 # Build a current tmux from source (Debian bookworm's apt tmux is old).
@@ -116,7 +116,7 @@ USER vscode
 
 const pythonDockerfileTemplateContent = `FROM mcr.microsoft.com/devcontainers/python
 RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \\
-    && apt-get -y install --no-install-recommends git socat curl gnupg nodejs npm openssh-server mosh micro libevent-dev libncurses-dev pkg-config bison build-essential xclip{{uvInstallation}}{{dopplerInstallation}}
+    && apt-get -y install --no-install-recommends git socat curl gnupg nodejs npm openssh-server mosh micro libevent-dev libncurses-dev pkg-config bison build-essential xclip{{uvInstallation}}{{dopplerInstallation}}{{micropythonInstallation}}
 
 
 # Build a current tmux from source (Debian bookworm's apt tmux is old).
@@ -188,7 +188,7 @@ USER vscode
 
 const nodeDockerfileTemplateContent = `FROM mcr.microsoft.com/devcontainers/typescript-node
 RUN apt-get update \\
-    && apt-get -y install --no-install-recommends git socat curl gnupg gnupg2 apt-transport-https ca-certificates openssh-server mosh micro libevent-dev libncurses-dev pkg-config bison build-essential xclip{{uvInstallation}}{{dopplerInstallation}}{{docsifyInstallation}}
+    && apt-get -y install --no-install-recommends git socat curl gnupg gnupg2 apt-transport-https ca-certificates openssh-server mosh micro libevent-dev libncurses-dev pkg-config bison build-essential xclip{{uvInstallation}}{{dopplerInstallation}}{{micropythonInstallation}}{{docsifyInstallation}}
 
 
 # Build a current tmux from source (Debian bookworm's apt tmux is old).

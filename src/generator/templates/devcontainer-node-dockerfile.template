@@ -1,6 +1,6 @@
 FROM mcr.microsoft.com/devcontainers/typescript-node
 RUN apt-get update \
-    && apt-get -y install --no-install-recommends git socat curl gnupg gnupg2 apt-transport-https ca-certificates openssh-server mosh micro libevent-dev libncurses-dev pkg-config bison build-essential xclip{{uvInstallation}}{{dopplerInstallation}}{{docsifyInstallation}}
+    && apt-get -y install --no-install-recommends git socat curl gnupg gnupg2 apt-transport-https ca-certificates openssh-server mosh micro libevent-dev libncurses-dev pkg-config bison build-essential xclip{{uvInstallation}}{{dopplerInstallation}}{{micropythonInstallation}}{{docsifyInstallation}}
 
 
 # Build a current tmux from source (Debian bookworm's apt tmux is old).

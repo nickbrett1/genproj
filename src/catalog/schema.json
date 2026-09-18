@@ -65,7 +65,8 @@
             "deployment",
             "project-structure",
             "monitoring",
-            "apple-development"
+            "apple-development",
+            "embedded"
           ]
         },
         "icon": {

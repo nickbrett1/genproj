@@ -31,6 +31,8 @@ import {
   SETUP_WRANGLER_SCRIPT,
   DOPPLER_INSTALL_SCRIPT,
   specKitInstallationFragments,
+  micropythonInstallationFragment,
+  micropythonRunArgs,
   generateViteConfigFile,
   generatePyProjectToml,
   generateRustCrateFiles,
@@ -225,6 +227,25 @@ function createMergedDevelopmentContainerJson(
     mergedJson.customizations.vscode.extensions = [...allExtensions];
   }
 
+  // micropython: mirror the real generator's USB passthrough grant so the
+  // preview shows the same runArgs the generated project gets.
+  if (allCapabilities.includes("micropython")) {
+    const micropythonCapability = capabilities.find(
+      (c) => c.id === "micropython",
+    );
+    const micropythonConfig = applyDefaults(
+      micropythonCapability,
+      projectConfig.configuration?.micropython || {},
+    );
+    const runArgs = Array.isArray(mergedJson.runArgs)
+      ? [...mergedJson.runArgs]
+      : [];
+    for (const arg of micropythonRunArgs(micropythonConfig)) {
+      if (!runArgs.includes(arg)) runArgs.push(arg);
+    }
+    mergedJson.runArgs = runArgs;
+  }
+
   const content = `${JSON.stringify(mergedJson, undefined, 2)}\n`;
   return {
     path: ".devcontainer/devcontainer.json",
@@ -262,6 +283,10 @@ function createDevelopmentContainerDockerfile(
       capabilityConfig: baseConfig,
       capability: baseCap,
       ...specKitInstallationFragments(allCapabilities),
+      micropythonInstallation: micropythonInstallationFragment(
+        allCapabilities,
+        { ...projectConfig, capabilities: allCapabilities },
+      ),
       dopplerInstallation: allCapabilities.includes("doppler")
         ? ` \\\n    && ${DOPPLER_INSTALL_SCRIPT} \\\n    && apt-get update && apt-get install -y doppler`
         : "",
@@ -344,6 +369,11 @@ function createDevelopmentContainerShellFiles(
             "{{projectName}}",
             projectConfig.name || "my-project",
           )
+        : "",
+      micropythonSetup: allCapabilities.includes("micropython")
+        ? `echo "INFO: Setting up MicroPython board toolchain..."
+(cd /workspaces/${projectConfig.name || "my-project"} && bash .devcontainer/post-create-micropython.sh) || echo "WARN: MicroPython setup reported problems; the devcontainer is still usable."
+`
         : "",
       gitSafeDirectory: GIT_SAFE_DIR_SCRIPT.replaceAll(
         "{{projectName}}",

@@ -1225,6 +1225,84 @@
       ],
       "links": [],
       "website": "https://playwright.dev/"
+    },
+    {
+      "id": "micropython",
+      "name": "MicroPython / RP2040",
+      "description": "Adds the MicroPython board toolchain (mpremote) plus the USB passthrough plumbing needed to drive an RP2040 from inside the devcontainer. OrbStack forwards the board's CDC-ACM REPL into the Linux VM automatically, but a container only sees it when the device is granted explicitly - this capability emits that grant and a port auto-detect helper. The container keeps the macOS node name (/dev/tty.usbmodem<serial>), which changes with the USB port, so the port is discovered at runtime. Note the grant is deliberately broad: OrbStack assigns the node a dynamic character major, and the device-cgroup-rule grammar accepts only a single major or '*', so scoping the grant to USB serial is not expressible - the container can open any host character device. Access is exclusive: while the container holds the port, host tools such as Thonny cannot open it.",
+      "category": "embedded",
+      "icon": "code",
+      "iconColor": "green",
+      "selectedByDefault": false,
+      "provides": [],
+      "dependencies": ["devcontainer-python"],
+      "conflicts": [],
+      "requiresAuth": [],
+      "authServices": [],
+      "externalServices": [],
+      "configurationSchema": {
+        "type": "object",
+        "properties": {
+          "deviceAccess": {
+            "type": "string",
+            "enum": ["cgroup-rule", "privileged"],
+            "enumLabels": {
+              "cgroup-rule": "cgroup rule (recommended)",
+              "privileged": "privileged (escape hatch)"
+            },
+            "default": "cgroup-rule",
+            "description": "How the container is granted the serial device. \"cgroup-rule\" (default, bench-verified) binds the host /dev into the container and allows the whole character-device cgroup class, so the container always starts whether or not the board is attached, and the board is hot-pluggable. It is deliberately not scoped to USB serial: OrbStack assigns a dynamic major and the rule grammar takes only a single major or '*'. \"privileged\" is the escape hatch, for the case where the cgroup-rule mechanism stops working on a future OrbStack; it grants every device class plus all capabilities, so it is broader than the default on every axis. There is deliberately no pinned-device mode - see the capability spec, section 5."
+          },
+          "deviceGlob": {
+            "type": "string",
+            "default": "/dev/tty.usbmodem*",
+            "description": "Pattern used at RUNTIME by scripts/find-board.sh to enumerate candidate ports. OrbStack preserves the macOS node name, so this is the usbmodem form and NOT /dev/ttyACM0. Only change it for a board that enumerates as a generic USB-serial adapter (then it is ttyUSB* on Linux, tty.usbserial* on the macOS side)."
+          },
+          "board": {
+            "type": "string",
+            "enum": ["pico-w", "pico-2-w", "galactic-unicorn", "other"],
+            "enumLabels": {
+              "pico-w": "Raspberry Pi Pico W (RP2040)",
+              "pico-2-w": "Raspberry Pi Pico 2 W (RP2350)",
+              "galactic-unicorn": "Pimoroni Galactic Unicorn (RP2040)",
+              "other": "Other / not sure"
+            },
+            "default": "other",
+            "description": "Board this repo targets. Drives the README's firmware pointer and, where known, the firmware repo. The Pico W and Pico 2 W MicroPython builds are not interchangeable, and flashing the wrong one is the classic first-day mistake, so the generated README states the check rather than assuming it."
+          },
+          "packages": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": ["mpremote"],
+            "description": "PyPI packages installed into the devcontainer's Python environment for board work, e.g. [\"mpremote\", \"esptool\"]. mpremote is the CLI the whole workflow is built on; the agent-driven iteration loop in the design memo depends on it being scriptable, and find-board.sh uses it to identify which candidate port is the board."
+          }
+        }
+      },
+      "vscodeExtensions": [],
+      "benefits": [
+        "Drive the board from inside the devcontainer - no host-side toolchain to install or keep in sync",
+        "mpremote is scriptable, so an agent can iterate on firmware far faster than clicking in Thonny",
+        "The devcontainer opens whether or not the board is attached, and the board is hot-pluggable",
+        "The board is identified by probing it rather than by guessing at a port name that changes on every replug",
+        "The exclusivity constraint, the breadth of the device grant and the OrbStack forwarding model are all documented in the generated README, not left to be rediscovered"
+      ],
+      "links": [
+        {
+          "label": "mpremote",
+          "url": "https://docs.micropython.org/en/latest/reference/mpremote.html"
+        },
+        {
+          "label": "OrbStack USB",
+          "url": "https://docs.orbstack.dev/machines/usb"
+        },
+        {
+          "label": "Pimoroni Unicorn firmware",
+          "url": "https://github.com/pimoroni/unicorn"
+        }
+      ],
+      "website": "https://micropython.org/"
     }
   ]
 }

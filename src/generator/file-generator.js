@@ -73,6 +73,9 @@ const docsifyIndex = templateFiles["docsify-index.template"];
 const docsifyReadme = templateFiles["docsify-readme.template"];
 const devcontainerServeDocumentsCjs =
   templateFiles["devcontainer-serve-docs-cjs.template"];
+const scriptsFindBoardSh = templateFiles["scripts-find-board-sh.template"];
+const devcontainerPostCreateMicropythonSh =
+  templateFiles["devcontainer-post-create-micropython-sh.template"];
 // webapp/src/lib/utils/file-generator.js
 
 import { capabilities } from "../catalog/index.js";
@@ -624,6 +627,44 @@ export function specKitInstallationFragments(capabilities) {
     : { uvInstallation: "", specKitInstallation: "" };
 }
 
+/**
+ * The `runArgs` grant owned by `micropython`, selected by `deviceAccess`.
+ *
+ * There is deliberately no pinned-`--device` branch: Docker never expands a
+ * glob in `--device` (F8), and a concrete path makes the container refuse to
+ * start when the board is absent (T4a). `cgroup-rule` is the bench-verified
+ * default (T3/T5); `privileged` is the escape hatch and is broader on every
+ * axis. See the capability spec, section 5.
+ */
+export function micropythonRunArgs(config = {}) {
+  switch (config.deviceAccess) {
+    case "privileged":
+      return ["--privileged"];
+    case "cgroup-rule":
+    default:
+      // 'c *:* rmw' is the only major-agnostic spelling: OrbStack assigns a
+      // dynamic major (236 on the bench, NOT the classic 188), and the grammar
+      // takes a single integer or '*' -- never a range or list (F10). The
+      // cgroup rule alone does not create the node, so the host /dev is bound
+      // over the container's.
+      return ["--device-cgroup-rule=c *:* rmw", "--volume=/dev:/dev"];
+  }
+}
+
+/**
+ * The Dockerfile fragment owned by `micropython`: add the container user to the
+ * `dialout` group, because the forwarded node is root:dialout 0660 (F5).
+ * Visibility is not access -- without this every open() is EPERM.
+ *
+ * A helper rather than an inline ternary so the callers stay under their
+ * cognitive-complexity ceilings.
+ */
+export function micropythonInstallationFragment(capabilities, context) {
+  if (!capabilities.includes("micropython")) return "";
+  const user = resolveProjectLanguage(context) === "node" ? "node" : "vscode";
+  return ` \\\n    && groupadd -f dialout \\\n    && usermod -aG dialout ${user}`;
+}
+
 const templateImports = {
   "devcontainer-java-dockerfile": devcontainerJavaDockerfile,
   "devcontainer-java-json": devcontainerJavaJson,
@@ -684,6 +725,9 @@ const templateImports = {
   "docsify-index": docsifyIndex,
   "docsify-readme": docsifyReadme,
   "devcontainer-serve-docs-cjs": devcontainerServeDocumentsCjs,
+  "scripts-find-board-sh": scriptsFindBoardSh,
+  "devcontainer-post-create-micropython-sh":
+    devcontainerPostCreateMicropythonSh,
 };
 
 export class TemplateEngine {
@@ -1101,6 +1145,28 @@ function generateAndMergeDevcontainerJson(
     mergedDevelopmentContainerJson.runArgs = runArgs;
   }
 
+  // micropython: the USB passthrough grant. The device-cgroup-rule widens
+  // access but does not create the node; the /dev bind is what makes it
+  // appear. Appended (and deduped) rather than set, so the tailnet flags the
+  // base already carries survive.
+  if (context.capabilities.includes("micropython")) {
+    const micropythonCapability = capabilities.find(
+      (c) => c.id === "micropython",
+    );
+    const micropythonConfig = applyDefaults(
+      micropythonCapability,
+       
+      context.configuration?.micropython || {},
+    );
+    const runArgs = Array.isArray(mergedDevelopmentContainerJson.runArgs)
+      ? [...mergedDevelopmentContainerJson.runArgs]
+      : [];
+    for (const arg of micropythonRunArgs(micropythonConfig)) {
+      if (!runArgs.includes(arg)) runArgs.push(arg);
+    }
+    mergedDevelopmentContainerJson.runArgs = runArgs;
+  }
+
   return {
     filePath: ".devcontainer/devcontainer.json",
     content: `${JSON.stringify(mergedDevelopmentContainerJson, undefined, 2)}\n`,
@@ -1141,6 +1207,10 @@ export function generateMergedDevelopmentContainerFiles(
       // the only thing that installs it, so both exist iff the capability is
       // selected. Splitting them would leave uv orphaned in every project.
       ...specKitInstallationFragments(context.capabilities),
+      micropythonInstallation: micropythonInstallationFragment(
+        context.capabilities,
+        context,
+      ),
       dopplerInstallation: context.capabilities.includes("doppler")
         ? ` \\\n    && ${DOPPLER_INSTALL_SCRIPT} \\\n    && apt-get update && apt-get install -y doppler`
         : "",
@@ -1253,6 +1323,11 @@ fi
                 "{{projectName}}",
                 () => context.projectName || context.name || "my-project",
               )
+            : "",
+          micropythonSetup: context.capabilities.includes("micropython")
+            ? `echo "INFO: Setting up MicroPython board toolchain..."
+(cd /workspaces/${context.projectName || context.name || "my-project"} && bash .devcontainer/post-create-micropython.sh) || echo "WARN: MicroPython setup reported problems; the devcontainer is still usable."
+`
             : "",
           gitSafeDirectory: GIT_SAFE_DIR_SCRIPT.replaceAll(
             "{{projectName}}",
@@ -1853,6 +1928,71 @@ Doppler into \`~/.config/a2a-goose/env\` (mode 0600) and never into the image or
       })()
     : "";
 
+  // micropython: the board workflow carries three facts a reader cannot
+  // rediscover cheaply -- the exact MicroPython build for the board, that
+  // access is exclusive, and that the device grant is deliberately broad. The
+  // grant's breadth is security-relevant, so the README states it plainly
+  // rather than letting it be discovered by accident (capability spec §3e/§5).
+  const micropythonSection = context.capabilities.includes("micropython")
+    ? (() => {
+        const micropythonConfig = context.configuration?.micropython || {};
+        const board = micropythonConfig.board || "other";
+        const boardNotes = {
+          "pico-w":
+            "This repo targets the **Raspberry Pi Pico W** (RP2040). Install the **Pico W** MicroPython build (`RPI_PICO_W`); the Pico 2 W build will not run on it.",
+          "pico-2-w":
+            "This repo targets the **Raspberry Pi Pico 2 W** (RP2350). Install the **Pico 2 W** MicroPython build; the Pico W (RP2040) build will not run on it.",
+          "galactic-unicorn":
+            "This repo targets the **Pimoroni Galactic Unicorn** (RP2040). Its firmware lives at https://github.com/pimoroni/unicorn.",
+          other:
+            "Check that the board's MicroPython build matches its chip before flashing — flashing the wrong build (e.g. Pico W vs Pico 2 W) is the classic first-day mistake.",
+        };
+        return `## MicroPython board
+
+${boardNotes[board] || boardNotes.other}
+
+The toolchain lives **inside the devcontainer** — there is no host-side install
+to keep in sync. OrbStack forwards the board's CDC-ACM REPL into the Linux VM
+**automatically**, so you do **not** need \`orb usb attach\` for this device. A
+container, however, only sees the node when the device is granted explicitly,
+which this devcontainer does.
+
+The board keeps its macOS node name inside the container
+(\`/dev/tty.usbmodem<serial>\`), which **changes with the USB port**, so never
+hard-code it. Resolve it at runtime:
+
+\`\`\`bash
+mpremote connect "$(scripts/find-board.sh)" exec 'print(1+1)'   # smoke test -> 2
+\`\`\`
+
+\`scripts/find-board.sh\` enumerates candidate ports and **probes** each one (a
+MicroPython REPL answers immediately) rather than guessing from a count; more
+than one \`tty.usbmodem\` node can be present.
+
+### Access is exclusive
+
+While the container holds the port, host tools such as Thonny (or a host-side
+\`mpremote\`) cannot open it, and vice versa. Close Thonny before probing from
+the container. The port is released when the container stops.
+
+### The device grant is deliberately broad
+
+This devcontainer grants the whole character-device cgroup class
+(\`--device-cgroup-rule=c *:* rmw\`) and binds the host \`/dev\` in
+(\`--volume=/dev:/dev\`). That is **not** scoped to the serial port: the
+container can open any host character device. Scoping it is not expressible —
+OrbStack assigns the node a *dynamic* character major, and the rule grammar
+accepts only a single major or \`*\`, never a range or list — so a guessed
+major fails with a silent \`EPERM\` on a node that looks perfectly present. It
+is still strictly narrower than \`--privileged\`; set \`deviceAccess:
+"privileged"\` only if the cgroup-rule mechanism stops working on a future
+OrbStack. To pin a single node by hand (and accept that the devcontainer only
+opens while the board is attached), replace the two runArgs with
+\`--device=/dev/tty.usbmodem<serial>\`.
+`;
+      })()
+    : "";
+
   const content = `# ${projectName}
 
 ${description}
@@ -1862,6 +2002,7 @@ ${quickstart}
 ${dopplerSection}
 ${deploySection}
 ${containerAgentSection}
+${micropythonSection}
 ## Generated by genproj
 
 This project was generated using the genproj tool.

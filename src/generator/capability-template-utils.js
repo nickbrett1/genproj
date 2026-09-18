@@ -2518,6 +2518,20 @@ export function getCapabilityTemplateData(capabilityId, context) {
     "fetch-launch": getFetchLaunchTemplateData,
     "container-agent": getContainerAgentTemplateData,
     dependabot: getDependabotTemplateData,
+    micropython: (ctx) => {
+      // Defaults are applied here (not in collectSingleTemplateFile, which
+      // passes the raw config) so a project that never opened the capability's
+      // config form still renders a working glob and package list.
+      const cfg = ctx.configuration?.micropython || {};
+      const packages =
+        Array.isArray(cfg.packages) && cfg.packages.length > 0
+          ? cfg.packages
+          : ["mpremote"];
+      return {
+        micropythonDeviceGlob: cfg.deviceGlob || "/dev/tty.usbmodem*",
+        micropythonPackages: packages.join(" "),
+      };
+    },
     "docker-container": getDockerContainerTemplateData,
     doppler: (ctx) => {
       const target = resolveDopplerTarget(ctx);

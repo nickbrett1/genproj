@@ -45,6 +45,7 @@ const EXPECTED_IDS = [
   "dependabot",
   "lighthouse-ci",
   "playwright",
+  "micropython",
 ];
 
 describe("catalog metadata", () => {

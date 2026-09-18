@@ -58,6 +58,8 @@ fi
 
 {{pythonSetup}}
 
+{{micropythonSetup}}
+
 {{nodeSetup}}
 
 {{gitSafeDirectory}}
