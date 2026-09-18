@@ -244,6 +244,7 @@ predate it, and their `runArgs` had been left minimal. All three now have it
 | `source=<repo>-tailscale-state,target=/var/lib/tailscale,type=volume` | a new `mounts` array    |
 | install Tailscale, start `tailscaled`                                 | appended to post-create |
 | start `tailscaled`                                                    | inserted in post-start  |
+| `scripts/cloud_login.sh` (joins the tailnet, once)                    | a new file (see below)  |
 
 Order matters in post-start: the daemon is started **before** the agent hook,
 because `agent-dev.sh start` resolves the container's tailnet name from
@@ -257,13 +258,29 @@ on a host without it the container fails to start outright rather than degrading
 Their `--sysctl net.ipv6.conf.all.disable_ipv6=1` is untouched, and their
 `--stop-timeout 30` was already there.
 
-**One thing is still manual, and is not a defect:** the container has Tailscale
-installed and running but is not _joined_. Joining is interactive
-(`sudo tailscale up`) and the state persists in the volume, so it is once per
-container. The genproj-style repos get the same step from
-`scripts/cloud-login.sh`; these three have no such script, so run it by hand.
-Until then the agent fails open with the "no tailnet name" message, which is the
-designed behaviour and not a silent failure.
+**Joining the tailnet is the one step the wiring cannot do for itself**, because
+`tailscale up` is interactive. The genproj-style repos already had
+`scripts/cloud_login.sh` for it; these three did not, so they now do:
+
+| repo             | what happened                                        | commit    |
+| ---------------- | ---------------------------------------------------- | --------- |
+| dagster-tutorial | `scripts/cloud_login.sh` created                     | `292ef4f` |
+| dbt-duckdb       | `scripts/cloud_login.sh` created                     | `09fc2d6` |
+| huddle-concept   | already had one; the Tailscale login was added to it | `0765963` |
+
+The script logs into Doppler (the agent's tokens live there) and runs
+`tailscale up --hostname=<repo>`. The hostname is the point: it sets the name the
+container joins under, and that name is what `resolve_tailnet_name()` reads from
+`tailscale status --json` and advertises on the card. Both sections skip
+themselves when already done and warn rather than fail when their tool is
+missing, so running it twice is harmless.
+
+These three get no automatic copy of this, deliberately: an interactive login on
+every boot is how a container ends up hanging on a prompt. Run it once per
+container. The tailnet state persists in the `<repo>-tailscale-state` volume.
+
+Until it is run, the agent fails open with the "no tailnet name" message, which
+is the designed behaviour and not a silent failure.
 
 ### 7.1 The generator is unaffected
 
