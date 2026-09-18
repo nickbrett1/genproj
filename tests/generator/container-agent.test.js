@@ -12,7 +12,14 @@
  *      docker-run flag at all.
  */
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -212,6 +219,120 @@ describe("container-agent: emitted files", () => {
     expect(script.content).toContain("^A2A_GOOSE_BEARER_TOKEN=");
     expect(script.content).toContain("write_env_file || return 0");
     expect(script.content).toContain("no A2A_GOOSE_BEARER_TOKEN is available");
+  });
+});
+
+describe("container-agent: the goose the script starts", () => {
+  // The devcontainer's shell reaches goose through a Doppler wrapper; the agent
+  // starts goose itself, so it has to carry goose's own provider settings into
+  // the env file. Without them the agent registers and every turn fails with
+  // "Failed to resolve provider: Configuration value not found: GOOSE_PROVIDER"
+  // - found live on genproj-dev, 2026-09-18.
+  const SECRETS = {
+    A2A_GOOSE_BEARER_TOKEN: "bearer-xyz",
+    LITELLM_MASTER_KEY: "master-xyz",
+    LITELLM_BASE_URL: "http://nas:4000",
+    GOOSE_SERVER__SECRET_KEY: "server-xyz",
+    GOOSE_PROVIDER: "litellm",
+    GOOSE_MODEL: "deepseek-v4-flash",
+    GOOSE_PROVIDER__API_KEY: "sk-provider",
+    LITELLM_HOST: "http://nas:4000",
+    LITELLM_API_KEY: "sk-litellm",
+  };
+
+  const dopplerStub = (keys) =>
+    [
+      "#!/bin/sh",
+      'key="$3"',
+      'case "$key" in',
+      ...Object.entries(keys).map(([k, v]) => `  ${k}) echo "${v}" ;;`),
+      "  *) exit 1 ;;",
+      "esac",
+    ].join("\n");
+
+  const writeEnvFile = async (keys) => {
+    const dir = mkdtempSync(join(tmpdir(), "agent-dev-env-"));
+    const bin = join(dir, "bin");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(bin, "doppler"), dopplerStub(keys), { mode: 0o755 });
+    const script = byPath(await withAgent(), "scripts/agent-dev.sh");
+    const scriptPath = join(dir, "agent-dev.sh");
+    writeFileSync(scriptPath, script.content);
+    const driver = join(dir, "run.sh");
+    writeFileSync(
+      driver,
+      [
+        "set -uo pipefail",
+        "unset GOOSE_DISABLE_KEYRING",
+        `source ${scriptPath} 2>/dev/null`,
+        "write_env_file",
+        `printf 'rc=%s\\n' "$?"`,
+      ].join("\n"),
+    );
+    const home = join(dir, "home");
+    mkdirSync(home, { recursive: true });
+    const result = spawnSync("bash", [driver], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        HOME: home,
+        PATH: `${bin}:${process.env.PATH}`,
+      },
+    });
+    const envFile = join(home, ".config", "a2a-goose", "env");
+    const contents = existsSync(envFile) ? readFileSync(envFile, "utf8") : "";
+    return {
+      contents,
+      stderr: result.stderr,
+      mode: existsSync(envFile) ? statSync(envFile).mode & 0o777 : null,
+    };
+  };
+
+  it("writes goose's provider settings beside the agent's own secrets", async () => {
+    const { contents, mode } = await writeEnvFile(SECRETS);
+    expect(contents).toContain("A2A_GOOSE_BEARER_TOKEN=bearer-xyz");
+    expect(contents).toContain("GOOSE_PROVIDER=litellm");
+    expect(contents).toContain("GOOSE_MODEL=deepseek-v4-flash");
+    expect(contents).toContain("GOOSE_PROVIDER__API_KEY=sk-provider");
+    // goose would look for the key in a keyring that a container does not have.
+    expect(contents).toContain("GOOSE_DISABLE_KEYRING=1");
+    expect(mode).toBe(0o600);
+  });
+
+  it("stays fail-open, but says the turns will fail, when no provider is available", async () => {
+    const agentKeysOnly = { ...SECRETS };
+    for (const key of [
+      "GOOSE_PROVIDER",
+      "GOOSE_MODEL",
+      "GOOSE_PROVIDER__API_KEY",
+      "LITELLM_HOST",
+      "LITELLM_API_KEY",
+    ]) {
+      delete agentKeysOnly[key];
+    }
+    const { contents, stderr } = await writeEnvFile(agentKeysOnly);
+    expect(contents).toContain("A2A_GOOSE_BEARER_TOKEN=bearer-xyz");
+    expect(contents).not.toContain("GOOSE_PROVIDER=");
+    // Not a refusal - goose may find a provider in its own config file - but the
+    // start says what will happen.
+    expect(stderr).toContain("no goose provider configured");
+  });
+
+  it("reads the provider from goose/prd by default, overridable", async () => {
+    const script = byPath(await withAgent(), "scripts/agent-dev.sh");
+    expect(script.content).toContain(
+      'PROVIDER_PROJECT="${A2A_GOOSE_PROVIDER_PROJECT:-goose}"',
+    );
+    expect(script.content).toContain(
+      'PROVIDER_CONFIG="${A2A_GOOSE_PROVIDER_CONFIG:-prd}"',
+    );
+    expect(script.content).toContain("read_provider_secret");
+  });
+
+  it("reports the provider in status, so a silent agent is visible", async () => {
+    const script = byPath(await withAgent(), "scripts/agent-dev.sh");
+    expect(script.content).toContain("goose provider: %s");
+    expect(script.content).toContain("turns will fail to resolve one");
   });
 });
 

@@ -365,11 +365,16 @@ first backport needs this second pass. It is the price of app-ownership, and it
 is cheaper than the alternative — a genproj-owned script that a regeneration may
 clobber, which would fight every repo that has ever edited it.
 
-## 10. The address a container advertises, and the second re-seed
+## 10. The two defects the live container found, and the second re-seed
 
-§9's lesson arrived again within the hour, on a defect the live container found
-rather than a reader. `genproj-dev` registered, the roster listed it — and every
-call to it failed:
+§9's lesson arrived again within the hour — twice, on defects the running
+container found rather than a reader. Both were on the path from "registered" to
+"answers", and neither was visible from the generator's own tests, because both
+are about what the _caller_ and the _goose child_ need.
+
+### 10.1 The address the card advertises
+
+`genproj-dev` registered, the roster listed it — and every call to it failed:
 
 ```console
 $ # the proxy's own answer to /a2a/3762df35-…
@@ -396,22 +401,49 @@ Two things made this cheap to find and are worth repeating:
   opens that connection itself. Only the proxy's _later_ fetch of the card fails.
   A green "registered" log line is not evidence the agent is callable.
 
-The same one-file re-seed as §9 was applied to every repo that carries
-`scripts/agent-dev.sh`. Each was verified byte-identical to the canonical script
-by name substitution _before_ being overwritten, so the pass could only touch
-the address logic and nothing a repo had edited:
+### 10.2 The goose the agent starts had no provider
+
+The address fix made the agent reachable, and the very next call — the first
+turn anyone had ever sent it — failed one layer further in:
+
+```console
+$ ask_agent(agent="genproj-dev", …)
+goose refused the request (-32603): Internal error
+  ("Failed to resolve provider: Configuration value not found: GOOSE_PROVIDER")
+```
+
+The agent reaches LiteLLM, the card is fetched, the turn is routed — and the
+goose the agent started has no provider, because there is nobody in that path to
+supply one. A terminal in these containers gets goose's provider from the
+Doppler wrapper in `.zshrc` (`doppler run --project goose --config prd -- goose`);
+the agent starts `goose serve` itself from `post-start`, and the devcontainer's
+goose config is extensions-only by design. So the env file now carries goose's
+provider settings too, read from the same `goose/prd` project (spec §3.5), and
+`status` prints the provider it will use.
+
+Worth stating plainly: **this is the third time a template fix has needed a
+re-seed**, and this one was only findable by sending a turn. Registration, a
+correct card and an answered card fetch all looked healthy; the failure was in
+the last hop, which nothing had exercised.
+
+Both fixes rode the same re-seed — the repos received two commits, or would have
+received one had they not been re-seeded in between. The final state is what the
+table below records. Each repo's copy was verified byte-identical to the
+canonical script by name substitution _before_ being overwritten, so the pass
+could only touch the address, provider and resolver logic and nothing a repo had
+edited:
 
 | repo          | commit    | repo                | commit    |
 | ------------- | --------- | ------------------- | --------- |
-| genproj       | this PR   | deepseek-balance    | `3553079` |
-| a2a-goose     | `b60f57a` | miniflux-feed-dedup | `875cf7b` |
-| mailroom      | `25c67b7` | stripe-toddler      | `2089908` |
-| nas-port-mcp  | `2d3711d` | vikunja-mcp         | `7c4a4a4` |
-| parquet-peek  | `b770df1` | ftn                 | `a0acd69` |
-| pshelf        | `9990656` | huddle-concept      | `321a22e` |
-| agent-swarm   | `c782443` | dagster-tutorial    | `29e9d7e` |
-| agy-telemetry | `a76621c` | dbt-duckdb          | `83652c9` |
-| circleci-mcp  | `e604539` | dagu-mcp            | `b5e3169` |
+| genproj       | this PR   | deepseek-balance    | `21cb7ce` |
+| a2a-goose     | `816af59` | miniflux-feed-dedup | `fa6417e` |
+| mailroom      | `176ba16` | stripe-toddler      | `95e41f9` |
+| nas-port-mcp  | `7bb455f` | vikunja-mcp         | `e6375d7` |
+| parquet-peek  | `59cfab4` | ftn                 | `0d2685c` |
+| pshelf        | `9555af2` | huddle-concept      | `475875c` |
+| agent-swarm   | `ced4962` | dagster-tutorial    | `d15cab7` |
+| agy-telemetry | `a0b9f74` | dbt-duckdb          | `952f208` |
+| circleci-mcp  | `a441b0c` | dagu-mcp            | `c0d30bf` |
 
 `gaggle` is still the one repo with no agent (§2), so it has no script to
 re-seed and is untouched.

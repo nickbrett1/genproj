@@ -127,6 +127,36 @@ That host runs no MagicDNS, so the name resolves for an interactive shell on a j
 
 Resolution order, all local, no network: `A2A_GOOSE_CARD_ADDRESS` / the capability's `tailnetName` → `tailscale ip -4` → `.Self.TailscaleIPs[0]` from `tailscale status --json` → `.Self.DNSName` (the name only when no address can be had). The config key keeps its name — it is in the published capability, and a repo may have set it — but what it holds is an address, and `A2A_GOOSE_TAILNET_NAME` is still read so a script seeded before this change keeps working. If nothing resolves the start fails open with a loud message, never with a loopback `publicUrl` — a2a-goose refuses to start on one.
 
+### 3.5 Why the agent carries goose's own provider settings
+
+A terminal in these containers reaches goose through a Doppler wrapper in `.zshrc`:
+
+```
+doppler run --project common --config dev -- \
+  doppler run --forward-signals --project goose --config prd -- goose "$@"
+```
+
+The agent does not: it starts `goose serve` itself, from `post-start`, with the environment it was given. The devcontainer's goose config is deliberately extensions-only ("provider resolves from Doppler env at runtime"), so there was no provider anywhere and every turn failed:
+
+```console
+$ ask_agent(agent="genproj-dev", …)
+goose refused the request (-32603): Internal error
+  ("Failed to resolve provider: Configuration value not found: GOOSE_PROVIDER")
+```
+
+`write_env_file` therefore also writes goose's provider settings, read from the same project the wrapper uses — `goose/prd` by default, overridable with `A2A_GOOSE_PROVIDER_PROJECT` / `A2A_GOOSE_PROVIDER_CONFIG` — falling back to the repo's own config and then `common`:
+
+| key                       | why                                                           |
+| ------------------------- | ------------------------------------------------------------- |
+| `GOOSE_PROVIDER`          | which provider goose uses (`litellm`)                         |
+| `GOOSE_MODEL`             | which model, so the container matches the hosts               |
+| `GOOSE_PROVIDER__API_KEY` | the provider's key                                            |
+| `LITELLM_HOST`            | the base URL goose's litellm provider dials                   |
+| `LITELLM_API_KEY`         | and its key                                                   |
+| `GOOSE_DISABLE_KEYRING=1` | there is no keyring in a container; the env file is the store |
+
+A missing provider is **not** fatal to the start — goose may still find an `active_provider` in its own config file — so it is reported loudly and `cmd_start` continues (fail-open still holds), and `status` prints the provider it will use. The distinction matters: the bearer token is a certain refusal (a2a-goose will not start), while a missing provider is a certain refusal _per turn_, which shows up at the first call rather than at start.
+
 ## 4. Backport: what lets an existing container gain an agent
 
 The capability reaches repos that already exist through the same machinery, which is why two merge properties had to be true:
