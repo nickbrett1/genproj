@@ -84,27 +84,27 @@ generated before the tailnet wiring existed, or hand-trimmed, and a backport
 **must not** add the missing args as a side effect (it only appends
 `--stop-timeout`).
 
-| repo                | devcontainer | lang        | runArgs | postStartCommand | tailnet wiring | state                    |
-| ------------------- | ------------ | ----------- | ------- | ---------------- | -------------- | ------------------------ |
-| genproj             | yes          | node        | full    | yes              | yes            | **done** (`8cc24c1`)     |
-| a2a-goose           | yes          | rust        | full    | yes              | yes            | **done** (`031085b`)     |
-| mailroom            | yes          | python      | full    | yes              | yes            | **done** (`5e74d2f`)     |
-| nas-port-mcp        | yes          | python      | full    | yes              | yes            | **done** (`9bfec48`)     |
-| parquet-peek        | yes          | node        | full    | yes              | yes            | **done** (`5d7e3a2`)     |
-| pshelf              | yes          | node        | full    | yes              | yes            | **done** (`4d71920`)     |
-| agent-swarm         | yes          | node/ts     | full    | yes              | yes            | **done** (`89e9d38`)     |
-| agy-telemetry       | yes          | python      | full    | yes              | yes            | **done** (`d2d61ba`)     |
-| circleci-mcp        | yes          | python      | full    | yes              | yes            | **done** (`74254b8`)     |
-| dagu-mcp            | yes          | python      | full    | yes              | yes            | **done** (`0a3d5b1`)     |
-| deepseek-balance    | yes          | python      | full    | yes              | yes            | **done** (`9ac54ee`)     |
-| miniflux-feed-dedup | yes          | python      | full    | yes              | yes            | **done** (`eadf11a`)     |
-| stripe-toddler      | yes          | rust/node   | full    | yes              | yes            | **done** (`7b7bfd2`)     |
-| vikunja-mcp         | yes          | python      | full    | yes              | yes            | **done** (`d4cc568`)     |
-| ftn                 | yes          | node        | full    | yes              | yes            | **done** (`e691c9ef0`)   |
-| huddle-concept      | yes          | node        | minimal | **no**           | **no**         | **done** (`9cde324`)     |
-| dagster-tutorial    | yes          | python      | minimal | **no**           | **no**         | **done** (`f2024a8`)     |
-| dbt-duckdb          | yes          | python/node | minimal | **no**           | **no**         | **done** (`1fc0aa5`)     |
-| gaggle              | yes          | node        | full    | yes              | yes            | **deferred** (abandoned) |
+| repo                | devcontainer | lang        | runArgs | postStartCommand | tailnet wiring | state                           |
+| ------------------- | ------------ | ----------- | ------- | ---------------- | -------------- | ------------------------------- |
+| genproj             | yes          | node        | full    | yes              | yes            | **done** (`8cc24c1`)            |
+| a2a-goose           | yes          | rust        | full    | yes              | yes            | **done** (`031085b`)            |
+| mailroom            | yes          | python      | full    | yes              | yes            | **done** (`5e74d2f`)            |
+| nas-port-mcp        | yes          | python      | full    | yes              | yes            | **done** (`9bfec48`)            |
+| parquet-peek        | yes          | node        | full    | yes              | yes            | **done** (`5d7e3a2`)            |
+| pshelf              | yes          | node        | full    | yes              | yes            | **done** (`4d71920`)            |
+| agent-swarm         | yes          | node/ts     | full    | yes              | yes            | **done** (`89e9d38`)            |
+| agy-telemetry       | yes          | python      | full    | yes              | yes            | **done** (`d2d61ba`)            |
+| circleci-mcp        | yes          | python      | full    | yes              | yes            | **done** (`74254b8`)            |
+| dagu-mcp            | yes          | python      | full    | yes              | yes            | **done** (`0a3d5b1`)            |
+| deepseek-balance    | yes          | python      | full    | yes              | yes            | **done** (`9ac54ee`)            |
+| miniflux-feed-dedup | yes          | python      | full    | yes              | yes            | **done** (`eadf11a`)            |
+| stripe-toddler      | yes          | rust/node   | full    | yes              | yes            | **done** (`7b7bfd2`)            |
+| vikunja-mcp         | yes          | python      | full    | yes              | yes            | **done** (`d4cc568`)            |
+| ftn                 | yes          | node        | full    | yes              | yes            | **done** (`e691c9ef0`)          |
+| huddle-concept      | yes          | node        | minimal | **no**           | yes (added)    | **done** (`9cde324`, `ffe4c29`) |
+| dagster-tutorial    | yes          | python      | minimal | **no**           | yes (added)    | **done** (`f2024a8`, `39cd5f5`) |
+| dbt-duckdb          | yes          | python/node | minimal | **no**           | yes (added)    | **done** (`1fc0aa5`, `4158b72`) |
+| gaggle              | yes          | node        | full    | yes              | yes            | **deferred** (abandoned)        |
 
 `lang` / README notes, for the record: `mailroom` is dagster with nested manifests,
 `parquet-peek` / `pshelf` are sveltekit, `stripe-toddler` has nested `worker/` and
@@ -231,100 +231,119 @@ plus the hook stops the agent, and the `runArgs` entry is inert on its own.
    agent is only worth giving to a repo that runs). `ftn` is done, and is the one
    repo that must never be regenerated.
 
-## 7. The tailnet prerequisite, and the three repos that lack it
+## 7. The tailnet prerequisite — closed
 
-The capability assumes the container is already on the tailnet: that is what
-decision B settled on — there is no `container-tailnet` capability, the
-_unconditional_ wiring in `getDevcontainerJsonExtras()` is the provider, and
-`container-agent` therefore depends only on `coding-agents`.
+The capability assumes the container is already on the tailnet, and every repo in
+§2 has that wiring **except the three that also had no post-start file**. They
+predate it, and their `runArgs` had been left minimal. All three now have it
+(`ffe4c29`, `39cd5f5`, `4158b72`), as four additions each:
 
-Every repo in §2 has that wiring **except the three that also had no post-start
-file**. They were generated before it existed, and their `runArgs` were
-deliberately left alone:
+| what was added                                                        | where                   |
+| --------------------------------------------------------------------- | ----------------------- |
+| `--cap-add NET_ADMIN`, `--device /dev/net/tun`                        | `runArgs`               |
+| `source=<repo>-tailscale-state,target=/var/lib/tailscale,type=volume` | a new `mounts` array    |
+| install Tailscale, start `tailscaled`                                 | appended to post-create |
+| start `tailscaled`                                                    | inserted in post-start  |
 
-| what the agent needs                                                   | huddle-concept | dagster-tutorial | dbt-duckdb |
-| ---------------------------------------------------------------------- | -------------- | ---------------- | ---------- |
-| `--cap-add=NET_ADMIN`, `--device=/dev/net/tun` in `runArgs`            | missing        | missing          | missing    |
-| a `<repo>-tailscale-state` volume at `/var/lib/tailscale`              | missing        | missing          | missing    |
-| tailscale installed in post-create, `tailscaled` started in post-start | missing        | missing          | missing    |
+Order matters in post-start: the daemon is started **before** the agent hook,
+because `agent-dev.sh start` resolves the container's tailnet name from
+`tailscale status --json` and refuses to guess. Starting the agent first would
+produce the loud "no tailnet name could be resolved" block on every boot even
+though the daemon was about to come up.
 
-Consequence, stated plainly: **the agent will not start in those three yet.**
-`resolve_tailnet_name()` fails, `cmd_start` prints the loud "no tailnet name
-could be resolved" block, and returns 0 — the container comes up normally, which
-is exactly the fail-open contract, but there is no agent.
+Note what this deliberately does **not** do. It adds the two privileges, which is
+a real change: `--device=/dev/net/tun` needs a host that has the tun device, and
+on a host without it the container fails to start outright rather than degrading.
+Their `--sysctl net.ipv6.conf.all.disable_ipv6=1` is untouched, and their
+`--stop-timeout 30` was already there.
 
-Closing that is a separate decision, not an oversight in this runbook:
+**One thing is still manual, and is not a defect:** the container has Tailscale
+installed and running but is not _joined_. Joining is interactive
+(`sudo tailscale up`) and the state persists in the volume, so it is once per
+container. The genproj-style repos get the same step from
+`scripts/cloud-login.sh`; these three have no such script, so run it by hand.
+Until then the agent fails open with the "no tailnet name" message, which is the
+designed behaviour and not a silent failure.
 
-- **Add the wiring** (the §7 table, four more edits each). It is the same change
-  a regeneration would make, and it makes the agent work. The cost is
-  `--device=/dev/net/tun` and `--cap-add=NET_ADMIN`, which are new privileges for
-  these containers and a hard requirement on a host that has `/dev/net/tun`; on a
-  host without it, adding them breaks container start outright rather than
-  degrading.
-- **Leave it.** The capability is present and inert, the hook explains itself on
-  every start, and a hand-added `A2A_GOOSE_TAILNET_NAME` remains the escape hatch
-  for a container reachable some other way.
+### 7.1 The generator is unaffected
 
-No other repo is affected, and nothing about the generator changes either way.
+Nothing changed in `getDevcontainerJsonExtras()` or the devcontainer templates:
+the wiring is emitted unconditionally already, so a _generated_ repo has always
+had it. This was the one gap between "generated" and "backported" — and it is the
+argument for decision B holding: the provider existed, these three just never
+received it.
 
-## 8. The second prerequisite: the four secrets are not where the script looks
+## 8. The secrets — closed, and where they live now
 
-Found by running the thing, not by reading it. In genproj's own container
-(the reference implementation):
+Found by running the agent, not by reading it: the reference container came up,
+resolved its tailnet name, cold-started the launcher, fetched 0.1.42, verified
+goose 1.51.0, assembled the card as `genproj-dev` — and then a2a-goose refused to
+start with `cannot read env:A2A_GOOSE_BEARER_TOKEN`.
+
+`read_secret()` was reading the **repo's own** `doppler.yaml` project/config
+(genproj → `genproj/dev`, which holds `BUILDKITE_TOKEN` and `SERVICE_SECRET`).
+Two of the four keys existed nowhere, and `LITELLM_MASTER_KEY` lived in the
+`litellm` project. Both halves are now fixed.
+
+**Provisioned** — in the shared `common` project, all of `dev`, `stg`, `prd`, so
+every container can read them without a per-repo copy:
+
+| key                        | value                                       |
+| -------------------------- | ------------------------------------------- |
+| `A2A_GOOSE_BEARER_TOKEN`   | generated (`openssl rand -hex 32`)          |
+| `GOOSE_SERVER__SECRET_KEY` | generated (`openssl rand -hex 32`)          |
+| `LITELLM_MASTER_KEY`       | **copied** from `litellm/prd`               |
+| `LITELLM_BASE_URL`         | `http://nas:4000` (not a secret; see below) |
+
+**Coded** — `read_secret()` tries the repo's own config first, then
+`common/prd` (overridable with `A2A_GOOSE_COMMON_PROJECT` /
+`A2A_GOOSE_COMMON_CONFIG`), so a repo that wants its own token keeps winning. It
+is a template change, so it applies to every future generation too.
+
+Two things to know about this arrangement:
+
+- **`LITELLM_MASTER_KEY` is now duplicated**, and `litellm/prd` remains the
+  source of truth. Rotating it in one place and not the other silently breaks
+  registry registration, and the agent's log is where that shows up. If that
+  matters more than the convenience, the alternative is to keep reading that one
+  key from `litellm/prd` explicitly rather than from `common`.
+- **`LITELLM_BASE_URL` is in `common` only to make the env file complete.** The
+  address the agent dials comes from the config file's `registry.litellmBaseUrl`,
+  which is the capability's `litellmBaseUrl` setting. The env copy is a
+  duplicate of a non-secret.
+
+Also fixed while in there: a start with no bearer token is no longer attempted.
+`write_env_file` reports the reason once and cmd_start returns, instead of
+launching into a refusal that only the log explains.
+
+Verified live in genproj's own container after both changes:
 
 ```console
-$ ./scripts/agent-dev.sh start
-  No secrets were available from Doppler, so ~/.config/a2a-goose/env is empty.
-$ ./scripts/agent-dev.sh status
-  agent genproj-dev: not running
-  ... a2a-goose: cannot read env:A2A_GOOSE_BEARER_TOKEN: the bearer token is not set.
+$ ./scripts/agent-dev.sh start && ./scripts/agent-dev.sh status
+agent genproj-dev: running (pid 47454)
+card: http://genproj.tail86fd19.ts.net:10001/
+... "registered with LiteLLM" agent_id 3762df35-ac30-46f9-a5d6-b736a3afbe39
 ```
 
-Everything upstream of that is correct — the tailnet name resolved
-(`genproj.tail86fd19.ts.net`), the launcher cold-started itself, `fetch-launch`
-installed 0.1.42 and verified goose 1.51.0, and the card was assembled for
-`genproj-dev`, the right name. It stops on the secrets.
+and `list_agents` shows it, with the card carrying the turn-deadline extension
+(`promptSecs: 900`, `cancelSecs: 10`) — acceptance §5.
 
-`read_secret()` shells out to plain `doppler secrets get "$key" --plain`, so it
-reads whichever project/config the **repo's own `doppler.yaml`** selects
-(genproj → project `genproj`, config `dev`). That config holds
-`BUILDKITE_TOKEN`, `SERVICE_SECRET` and the cluster vars — none of the four:
+## 9. Rolling the script fix out to the repos that already have it
 
-| key                        | required by          | where it actually lives                          |
-| -------------------------- | -------------------- | ------------------------------------------------ |
-| `A2A_GOOSE_BEARER_TOKEN`   | the agent's own card | **nowhere yet** — has to be created              |
-| `GOOSE_SERVER__SECRET_KEY` | the goose ACP child  | **nowhere yet** — has to be created              |
-| `LITELLM_MASTER_KEY`       | registry auth        | project `litellm`, configs `prd`/`stg`/`dev`     |
-| `LITELLM_BASE_URL`         | registry address     | not a secret — the capability's `litellmBaseUrl` |
+`scripts/agent-dev.sh` is **app-owned**: regeneration deliberately never
+overwrites it. That is the right call, and it has a consequence for exactly this
+kind of change — a template fix does not reach the repos that received the file
+earlier. So the fix was re-seeded per repo: regenerate the script for that repo's
+name from the current generator, commit only that file, push.
 
-So there are two halves to closing this, and only the second is code:
+All 17 repos that had been backported were re-seeded (a2a-goose, mailroom,
+nas-port-mcp, parquet-peek, pshelf, agent-swarm, agy-telemetry, circleci-mcp,
+dagu-mcp, deepseek-balance, miniflux-feed-dedup, stripe-toddler, vikunja-mcp,
+ftn, plus the three of §7 in the same commit as their tailnet wiring). The diff
+is the same 50-odd lines in each: the two `COMMON_*` defaults, the fallback in
+`read_secret`, the bearer-token check, and `write_env_file || return 0`.
 
-1. **Create the two missing secrets** (`A2A_GOOSE_BEARER_TOKEN`,
-   `GOOSE_SERVER__SECRET_KEY`) in a config the containers can read. A bearer
-   token is `openssl rand -hex 32`; the shared secret is whatever the
-   registry/LiteLLM side already expects. This is provisioning, not a template
-   change.
-2. **Teach `read_secret()` where to look**, because "the repo's own project"
-   is the wrong project for three of the four. The fix is small — give each key
-   a project/config rather than relying on `doppler.yaml`:
-
-   ```bash
-   read_secret() { # key project config
-     doppler secrets get "$1" --project "$2" --config "$3" --plain 2>/dev/null || true
-   }
-   ```
-
-   and stop reading `LITELLM_BASE_URL` from Doppler at all — it is already a
-   capability setting with the same default.
-
-   Note this is a template change, so it changes every future generation too,
-   which is the right place for it: the lookup is not repo-specific.
-
-A third, smaller thing the same run exposed: `write_env_file` writes an empty
-file and `cmd_start` then starts the agent anyway, so the loud "no secrets" block
-is followed by a launch that fails with a `refusing to start` refusal from
-a2a-goose. Fail-open still holds (exit 0, container usable), but the first
-message should be the last one — a missing `A2A_GOOSE_BEARER_TOKEN` is a
-definite refusal, not a "will likely fail to register". Stopping after
-`write_env_file` when the file it wrote has no bearer token makes the output
-honest and skips a doomed launch.
+**The lesson worth keeping:** anything that lands in `agent-dev.sh` after the
+first backport needs this second pass. It is the price of app-ownership, and it
+is cheaper than the alternative — a genproj-owned script that a regeneration may
+clobber, which would fight every repo that has ever edited it.

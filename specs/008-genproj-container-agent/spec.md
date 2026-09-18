@@ -72,7 +72,7 @@ post-start-setup.sh ──► scripts/agent-dev.sh start            (idempotent,
         │
         ├─ resolve the tailnet name   tailnetName config, else `tailscale status --json`
         │                             (fail loudly rather than write a loopback publicUrl)
-        ├─ write ~/.config/a2a-goose/env      0600, secrets from Doppler, never containerEnv
+        ├─ write ~/.config/a2a-goose/env      0600, secrets from Doppler (own config, else common), never containerEnv
         ├─ write ~/.config/a2a-goose/config.yaml
         │       card.name / registry.agentName = <repo><nameSuffix>
         │       server.bind 0.0.0.0:10001, server.publicUrl http://<tailnetName>:10001
@@ -94,6 +94,21 @@ docker stop ──► SIGTERM ──► deregister ──► goose child exits (
 ### 3.2 Why post-start, not post-create
 
 `post-create` runs once, at build time. `post-start` runs on every start and resume. An agent registered in `post-create` is absent for every session that did not rebuild the container — which is nearly all of them. The hook is in post-start because being present is the whole feature.
+
+### 3.3 Where the secrets come from, and why that is not `authServices`
+
+`authServices` is empty and stays empty: nothing is provisioned at generation time, so there is no service for the generator to authorise against. The agent reads four values at start time instead, and writes them to `~/.config/a2a-goose/env` (mode 0600, sourced by the launcher with `set -a`, never in `containerEnv`, never on a command line):
+
+| key                        | why the agent needs it                                           |
+| -------------------------- | ---------------------------------------------------------------- |
+| `A2A_GOOSE_BEARER_TOKEN`   | the card's bearer token — a2a-goose refuses to start without one |
+| `GOOSE_SERVER__SECRET_KEY` | handed to the goose child as its `X-Secret-Key`                  |
+| `LITELLM_MASTER_KEY`       | registry authentication                                          |
+| `LITELLM_BASE_URL`         | the registry address                                             |
+
+Each is looked up in the repo's **own** Doppler config first — so a repo that wants its own token keeps it — and then in the shared `common` project (`common/prd`, overridable with `A2A_GOOSE_COMMON_PROJECT` / `A2A_GOOSE_COMMON_CONFIG`). The fallback is the point: these are per-agent-installation values that every container needs the same copy of, and the alternative is putting them in each repo's config and re-provisioning all of them when one rotates. `LITELLM_BASE_URL` is the one duplicate of the capability's own `litellmBaseUrl`; the config file's value is what the agent dials, and the env copy exists only so the env file is complete.
+
+A start with no `A2A_GOOSE_BEARER_TOKEN` is **not** attempted. a2a-goose refuses to start without it, so launching anyway would turn a knowable "no token" into a refusal buried in a log; `write_env_file` says the reason once and cmd_start returns. Fail-open still holds — exit 0, the container is untouched — but the message is the reason rather than a preamble to one.
 
 ## 4. Backport: what lets an existing container gain an agent
 
