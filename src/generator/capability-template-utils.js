@@ -2400,9 +2400,11 @@ function getFetchLaunchTemplateData(context) {
  * fixed names, the workspace path, and the release repo the launcher fetches
  * from.
  *
- * `tailnetName` is deliberately allowed to be empty: the card's public URL must
- * not be loopback, so when the capability does not pin a name the rendered
- * script resolves it at start time from `tailscale status --json`. Reading the
+ * `tailnetName` is the address the card advertises, and is deliberately allowed
+ * to be empty: the public URL must not be loopback, so when the capability does
+ * not pin one the rendered script resolves the container's own tailnet IPv4 at
+ * start time (an IP, not the Tailscale name - the LiteLLM proxy is the process
+ * that dials the card, and it does not necessarily run MagicDNS). Reading the
  * config with defaults mirrors {@link resolveDopplerTarget} / `applyDefaults`.
  *
  * @param {Object} context - Generation context (configuration, projectName, name)

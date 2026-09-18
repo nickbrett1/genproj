@@ -11,6 +11,11 @@
  *      the only reason the agents in repos that already exist can be given the
  *      docker-run flag at all.
  */
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, it, expect } from "vitest";
 import { generateAllFiles } from "../../src/generator/file-generator.js";
 import { getCapabilityTemplateData } from "../../src/generator/capability-template-utils.js";
@@ -54,24 +59,120 @@ describe("container-agent: emitted files", () => {
     expect(script.content).toContain('AGENT_NAME="parquet-peek-agent"');
   });
 
-  it("derives the tailnet name at runtime when the capability does not pin one", async () => {
-    // The card's publicUrl must not be loopback, so an unset name falls through
-    // to `tailscale status --json` rather than to a guess.
+  it("derives the card's address at runtime when the capability does not pin one", async () => {
+    // The card's publicUrl must not be loopback, so an unset address falls
+    // through to tailscale rather than to a guess.
     const script = byPath(await withAgent(), "scripts/agent-dev.sh");
     expect(script.content).toContain(
-      'TAILNET_NAME="${A2A_GOOSE_TAILNET_NAME:-}"',
+      'CARD_ADDRESS="${A2A_GOOSE_CARD_ADDRESS:-${A2A_GOOSE_TAILNET_NAME:-}}"',
     );
-    expect(script.content).toContain("tailscale status --json");
+    expect(script.content).toContain("tailscale ip -4");
+    expect(script.content).toContain(".Self.TailscaleIPs[0]");
+    expect(script.content).toContain(".Self.DNSName");
+    expect(script.content).toContain(
+      'publicUrl: "http://${CARD_ADDRESS}:${CARD_PORT}"',
+    );
   });
 
-  it("lets a configured tailnetName win over the runtime lookup", async () => {
+  it("lets a configured address win over the runtime lookup", async () => {
     const script = byPath(
       await withAgent({ "container-agent": { tailnetName: "nas-box" } }),
       "scripts/agent-dev.sh",
     );
     expect(script.content).toContain(
-      'TAILNET_NAME="${A2A_GOOSE_TAILNET_NAME:-nas-box}"',
+      'CARD_ADDRESS="${A2A_GOOSE_CARD_ADDRESS:-${A2A_GOOSE_TAILNET_NAME:-nas-box}}"',
     );
+  });
+
+  // What the address resolver actually returns, run against a stub tailscale.
+  // Textual assertions are not enough here: the bug this replaces was a
+  // `jq`/`sed` expression that read a *name* where the caller needed an address,
+  // and only running it shows which address comes out.
+  describe("the address it advertises", () => {
+    // Addresses here are what a stubbed `tailscale` answers with; nothing is
+    // dialled, and the tailnet's own 100.x range is how the real output looks.
+    /* eslint-disable sonarjs/no-hardcoded-ip */
+    const IP = "100.72.205.65";
+    const JSON_WITH_NAME = JSON.stringify({
+      Self: {
+        DNSName: "genproj.tail86fd19.ts.net.",
+        TailscaleIPs: [IP, "fd7a:115c::1"],
+      },
+      Peer: {
+        n1: {
+          DNSName: "peer.tail86fd19.ts.net.",
+          TailscaleIPs: ["100.99.99.99"],
+        },
+      },
+    });
+
+    const stub = (body) => `#!/bin/sh\n${body}\n`;
+
+    const runResolver = async (tailscale) => {
+      const dir = mkdtempSync(join(tmpdir(), "agent-dev-address-"));
+      const bin = join(dir, "bin");
+      mkdirSync(bin, { recursive: true });
+      if (tailscale) {
+        const path = join(bin, "tailscale");
+        writeFileSync(path, tailscale, { mode: 0o755 });
+      }
+      const script = byPath(await withAgent(), "scripts/agent-dev.sh");
+      const [resolver] = script.content.match(
+        /^resolve_card_address\(\) \{[\s\S]*?\n\}/m,
+      );
+      const runner = join(dir, "run.sh");
+      writeFileSync(
+        runner,
+        [
+          "set -uo pipefail",
+          'CARD_ADDRESS=""',
+          resolver,
+          // A resolver that refuses says so; it must never fall back to loopback.
+          `if resolve_card_address; then printf '%s' "$CARD_ADDRESS"; else printf 'UNRESOLVED'; fi`,
+        ].join("\n"),
+      );
+      const result = spawnSync("bash", [runner], {
+        encoding: "utf8",
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+      });
+      return result.stdout.trim();
+    };
+
+    it("prefers the tailnet IP, even when the name is right there", async () => {
+      const address = await runResolver(
+        stub(
+          `case "$1" in\n  ip) echo "${IP}" ;;\n  status) printf '%s' '${JSON_WITH_NAME}' ;;\nesac`,
+        ),
+      );
+      expect(address).toBe(IP);
+    });
+
+    it("reads this node's own address, not a peer's, when ip -4 is unavailable", async () => {
+      const address = await runResolver(
+        stub(
+          `case "$1" in\n  ip) exit 1 ;;\n  status) printf '%s' '${JSON_WITH_NAME}' ;;\nesac`,
+        ),
+      );
+      expect(address).toBe(IP);
+      expect(address).not.toBe("100.99.99.99");
+    });
+
+    it("falls back to the name only when there is no address at all", async () => {
+      const address = await runResolver(
+        stub(
+          `case "$1" in\n  ip) exit 1 ;;\n  status) printf '%s' '{"Self":{"DNSName":"genproj.tail86fd19.ts.net."},"Peer":{}}' ;;\nesac`,
+        ),
+      );
+      expect(address).toBe("genproj.tail86fd19.ts.net");
+    });
+
+    it("reports nothing rather than guessing when tailscale cannot answer", async () => {
+      const address = await runResolver(
+        stub(`case "$1" in\n  ip) exit 1 ;;\n  status) exit 1 ;;\nesac`),
+      );
+      expect(address).toBe("UNRESOLVED");
+    });
+    /* eslint-enable sonarjs/no-hardcoded-ip */
   });
 
   it("fails open: start exits 0 with a loud message and never needs the network", async () => {

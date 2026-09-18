@@ -94,7 +94,7 @@
           "tailnetName": {
             "type": "string",
             "default": "",
-            "description": "The container's Tailscale name the agent card advertises; empty means derive at runtime from `tailscale status --json`."
+            "description": "The address the agent card advertises. It must be one the LiteLLM proxy can resolve, because the proxy is what dials the card: an IP is safe, a Tailscale name needs MagicDNS to be running on the proxy's host. Empty means derive the container's own tailnet IPv4 at start time."
           }
         }
       },

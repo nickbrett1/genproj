@@ -270,17 +270,17 @@ Their `--sysctl net.ipv6.conf.all.disable_ipv6=1` is untouched, and their
 
 The script logs into Doppler (the agent's tokens live there) and runs
 `tailscale up --hostname=<repo>`. The hostname is the point: it sets the name the
-container joins under, and that name is what `resolve_tailnet_name()` reads from
-`tailscale status --json` and advertises on the card. Both sections skip
-themselves when already done and warn rather than fail when their tool is
-missing, so running it twice is harmless.
+container joins under, which is how a human recognises the node in
+`tailscale status`. (The card advertises the node's tailnet **IP**, not that
+name — see §9.) Both sections skip themselves when already done and warn rather
+than fail when their tool is missing, so running it twice is harmless.
 
 These three get no automatic copy of this, deliberately: an interactive login on
 every boot is how a container ends up hanging on a prompt. Run it once per
 container. The tailnet state persists in the `<repo>-tailscale-state` volume.
 
-Until it is run, the agent fails open with the "no tailnet name" message, which
-is the designed behaviour and not a silent failure.
+Until it is run, the agent fails open with the "no address to advertise could be
+resolved" message, which is the designed behaviour and not a silent failure.
 
 ### 7.1 The generator is unaffected
 
@@ -364,3 +364,54 @@ is the same 50-odd lines in each: the two `COMMON_*` defaults, the fallback in
 first backport needs this second pass. It is the price of app-ownership, and it
 is cheaper than the alternative — a genproj-owned script that a regeneration may
 clobber, which would fight every repo that has ever edited it.
+
+## 10. The address a container advertises, and the second re-seed
+
+§9's lesson arrived again within the hour, on a defect the live container found
+rather than a reader. `genproj-dev` registered, the roster listed it — and every
+call to it failed:
+
+```console
+$ # the proxy's own answer to /a2a/3762df35-…
+LiteLLM 500: Internal error: Network communication error fetching agent card from
+  http://genproj.tail86fd19.ts.net:10001/.well-known/agent.json:
+  Cannot connect to host genproj.tail86fd19.ts.net:10001 [Name or service not known]
+```
+
+The card advertised the container's **Tailscale name**, and the host LiteLLM runs
+on has no MagicDNS — so the name resolved for a human shell and for nothing that
+matters. Both host agents had always advertised their tailnet **IP**, which is why
+only the container agent was broken. The fix (spec §3.4, and the template in
+`src/generator/templates/scripts-agent-dev.sh.template`) makes the IP the default
+and the name the fallback, keeping `A2A_GOOSE_TAILNET_NAME` as a still-read
+spelling of the override.
+
+Two things made this cheap to find and are worth repeating:
+
+- **`list_agents` was already showing the symptom.** The a2a-mcp tool fetches each
+  agent's own card to report its turn ceiling; it failed silently for this agent
+  (fail-open), so `genproj-dev` was the one row on the roster with no ceiling
+  line. A missing line was the tell for an unreachable agent.
+- **The registrar is not a checker.** Registration succeeded because the agent
+  opens that connection itself. Only the proxy's _later_ fetch of the card fails.
+  A green "registered" log line is not evidence the agent is callable.
+
+The same one-file re-seed as §9 was applied to every repo that carries
+`scripts/agent-dev.sh`. Each was verified byte-identical to the canonical script
+by name substitution _before_ being overwritten, so the pass could only touch
+the address logic and nothing a repo had edited:
+
+| repo          | commit    | repo                | commit    |
+| ------------- | --------- | ------------------- | --------- |
+| genproj       | this PR   | deepseek-balance    | `3553079` |
+| a2a-goose     | `b60f57a` | miniflux-feed-dedup | `875cf7b` |
+| mailroom      | `25c67b7` | stripe-toddler      | `2089908` |
+| nas-port-mcp  | `2d3711d` | vikunja-mcp         | `7c4a4a4` |
+| parquet-peek  | `b770df1` | ftn                 | `a0acd69` |
+| pshelf        | `9990656` | huddle-concept      | `321a22e` |
+| agent-swarm   | `c782443` | dagster-tutorial    | `29e9d7e` |
+| agy-telemetry | `a76621c` | dbt-duckdb          | `83652c9` |
+| circleci-mcp  | `e604539` | dagu-mcp            | `b5e3169` |
+
+`gaggle` is still the one repo with no agent (§2), so it has no script to
+re-seed and is untouched.
