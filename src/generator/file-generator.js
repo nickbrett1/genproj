@@ -1155,7 +1155,6 @@ function generateAndMergeDevcontainerJson(
     );
     const micropythonConfig = applyDefaults(
       micropythonCapability,
-       
       context.configuration?.micropython || {},
     );
     const runArgs = Array.isArray(mergedDevelopmentContainerJson.runArgs)
