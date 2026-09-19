@@ -171,6 +171,40 @@ capabilities without sections, and a client renders no section headings at all �
 which is why the two changes are pushed together and why ftn does **not** need
 to be.
 
+## The ftn deploy that this needed, and the one it does not
+
+The client change still had to land once, and that deploy was blocked — not by
+this work. `ftn`'s production deploy had been failing since the previous
+category fix (`e3668da`, the `embedded` category), for a reason that has nothing
+to do with categories:
+
+```
+✘ [ERROR] A request to the Cloudflare API (…/workers/ftn-production/versions/latest) failed.
+  This deployment includes 68 variables, which exceeds the Workers Free limit of
+  64 variables per Worker (secrets + text). [code: 10055]
+```
+
+The sync pushes the **whole** shared `common/prd` bus merged with webapp's own
+config — 61 secrets, plus 7 text variables already on the Worker, is 68. Most of
+that bus is read by other things: the container agents (repo-root
+`scripts/agent-dev.sh`, `.agents/`), and CI. So the fix is to stop shipping it
+into this Worker: `webapp/scripts/worker-secret-exclusions.txt` names the keys
+this Worker does not read (23 of them — 61 → 38, against a budget of 57), and the
+sync script drops them and then checks its own count, failing with a readable
+message instead of the API's `10055` four retries deep.
+
+The guard that keeps that list honest is the point: every excluded key must be
+absent from everything the Worker is built from and runs
+(`webapp/src`, `webapp/worker`, `webapp/scripts`, `.buildkite`, `.github`,
+`wrangler.template.jsonc`), and `tests/sync-doppler-secrets.test.js` asserts it —
+executing the real script against a stubbed `doppler`/`npx` rather than
+pattern-matching its source. A key that later becomes used fails the test
+instead of failing in production.
+
+This is a fix to the deploy path, not the category work: had the ftn deploy been
+healthy, this spec would have needed one ftn deploy and would have needed no
+further ones.
+
 ## Follow-ups
 
 - The ftn static copy at `src/lib/utils/capabilities.js` /
