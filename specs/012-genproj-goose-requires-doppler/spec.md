@@ -108,8 +108,43 @@ wrote it for four capabilities.
 - Full suite **671 passed**; `prettier --check .` clean; `eslint` 0 errors
   (pre-existing warnings only).
 
+### Live before/after (`POST /v1/preview`, unauthenticated)
+
+`{"selectedCapabilities": ["devcontainer-node"]}` — goose-bearing files, before
+build 115 / after it:
+
+| File                        | Before     | After |
+| --------------------------- | ---------- | ----- |
+| `.devcontainer/Dockerfile`  | GOOSE_ARCH | —     |
+| `.devcontainer/.zshrc`      | goose      | —     |
+| `.devcontainer/post-start…` | goose      | —     |
+
+With `doppler` in the selection all three come back, and the Dockerfile carries
+`RUN GOOSE_ARCH=…` again.
+
+### Regeneration (performed 2026-09-19)
+
+The live Worker was deployed from build 115, then `nickbrett1/galactic-unicorn`
+was regenerated through the live MCP `generate_project` tool with
+`["micropython", "code-quality-python", "coding-agents"]` (the
+`micropython` configuration of spec 010, unchanged). Its output now carries the
+wrapper (`goose()` → `doppler run … -- goose "$@"` at `.zshrc:164`, worktree
+block at `:297`, `zsh -n` clean), `RUN GOOSE_ARCH=…` in the Dockerfile, and the
+goose config/recipes in `post-create-setup.sh`. The `micropython` `runArgs` are
+unchanged (`--device-cgroup-rule=c *:* rmw` + `--volume=/dev:/dev`), so spec 010
+has not been regressed.
+
+An **existing** container keeps its old `~/.zshrc` — that file is copied at
+image build — so the fix reaches a checkout on "Rebuild and Reopen in
+Container", not on `git pull`.
+
 ## Follow-ups
 
+- `scripts/cloud_login.sh` is emitted for every selection, including one with no
+  Doppler, no Tailscale and no Cloudflare section to log into, and its header
+  comment names goose ("the critical path for goose"). The script's emission
+  condition is a separate defect — it should be gated on having any login to
+  perform — and was left alone here rather than folded into the goose gate.
 - `sonarcloud` and `sveltekit` register a goose MCP extension without declaring
   `doppler`, so the extension is now simply absent unless the selection also
   carries goose. If a SvelteKit-without-Doppler repo should still get the svelte
