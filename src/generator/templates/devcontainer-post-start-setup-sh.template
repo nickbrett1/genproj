@@ -21,14 +21,7 @@ if ! pgrep -f 'socat TCP-LISTEN:9222' >/dev/null; then
 fi
 
 {{docsifyService}}
-
-echo "INFO: Checking goose version..."
-if command -v goose >/dev/null 2>&1; then
-    goose update || echo "WARN: goose update failed, keeping current version"
-else
-    echo "WARN: goose not found, skipping update"
-fi
-
+{{gooseUpdate}}
 {{containerAgentService}}
 
 echo "INFO: Services check/startup complete."

@@ -497,12 +497,55 @@ describe("DevContainer Generation Tests", () => {
     expect(setup.content).not.toContain('insteadOf "https://github.com/"');
   });
 
-  it("includes the multi-session worktree workflow in the generated .zshrc by default", async () => {
+  it("omits goose entirely when the selection resolves no doppler (spec 012)", async () => {
     const engine = new TemplateEngine();
     await engine.initialize();
 
     const context = {
       capabilities: ["devcontainer-node"],
+      configuration: {},
+    };
+
+    const files = generateMergedDevelopmentContainerFiles(engine, context, [
+      "devcontainer-node",
+    ]);
+
+    const zshrcFile = files.find((f) => f.filePath === ".devcontainer/.zshrc");
+    expect(zshrcFile).toBeDefined();
+    const zshrc = zshrcFile.content;
+
+    // goose is only offered where it can run: the only supported invocation is
+    // the GOOSE_ALIAS Doppler wrapper, so without doppler there is no binary,
+    // no wrapper and no worktree block. The bare binary this used to bind
+    // started and then died with "No provider configured".
+    expect(zshrc).not.toContain("Goose Multi-Session Worktree Workflow");
+    expect(zshrc).not.toContain("_wt_ensure()");
+    expect(zshrc).not.toContain("goose()");
+    expect(zshrc).not.toContain("GOOSE_ALIAS");
+    expect(zshrc).not.toContain('goose() { _wt_ensure command goose "$@"; }');
+    expect(zshrc).not.toContain("doppler");
+
+    const dockerfile = files.find(
+      (f) => f.filePath === ".devcontainer/Dockerfile",
+    ).content;
+    expect(dockerfile).not.toContain("goose");
+    expect(dockerfile).not.toContain("GOOSE_ARCH");
+
+    // Socket handling: hoisted locals + nullglob (N) qualifiers (no
+    // 'sockets=(  )' noise, no 'no matches found' glob errors at startup).
+    expect(zshrc).toContain("local current_user sockets socket");
+    expect(zshrc).toContain("vscode-remote-containers-ipc-*.sock(N)");
+    expect(zshrc).toContain("vscode-ssh-auth-*.sock(N)");
+    expect(zshrc).not.toMatch(/\n\s+local sockets\b/);
+    expect(zshrc).not.toMatch(/\n\s+local socket\b/);
+  });
+
+  it("includes goose and the multi-session worktree workflow when doppler is resolved (spec 012)", async () => {
+    const engine = new TemplateEngine();
+    await engine.initialize();
+
+    const context = {
+      capabilities: ["devcontainer-node", "doppler"],
       configuration: {},
     };
 
@@ -521,16 +564,18 @@ describe("DevContainer Generation Tests", () => {
     expect(zshrc).toContain("_wt_merge()");
     expect(zshrc).toContain("_wt_audit()");
     expect(zshrc).toContain("_wt_remove()");
-    // Without the doppler capability the plain-binary wrapper is installed behind a guard
-    expect(zshrc).toContain("typeset -f goose");
-    expect(zshrc).toContain('goose() { _wt_ensure command goose "$@"; }');
-    // Socket handling: hoisted locals + nullglob (N) qualifiers (no
-    // 'sockets=(  )' noise, no 'no matches found' glob errors at startup).
-    expect(zshrc).toContain("local current_user sockets socket");
-    expect(zshrc).toContain("vscode-remote-containers-ipc-*.sock(N)");
-    expect(zshrc).toContain("vscode-ssh-auth-*.sock(N)");
-    expect(zshrc).not.toMatch(/\n\s+local sockets\b/);
-    expect(zshrc).not.toMatch(/\n\s+local socket\b/);
+    // The worktree block does not bind the bare binary any more: it is only
+    // emitted where goose exists, and goose() is the Doppler wrapper above.
+    expect(zshrc).not.toContain('goose() { _wt_ensure command goose "$@"; }');
+    expect(zshrc).not.toContain("typeset -f goose");
+
+    // The install travels with the same predicate, so a devcontainer can never
+    // have the wrapper without the binary (or vice versa).
+    const dockerfile = files.find(
+      (f) => f.filePath === ".devcontainer/Dockerfile",
+    ).content;
+    expect(dockerfile).toContain("RUN GOOSE_ARCH=");
+    expect(dockerfile).toContain("aaif-goose/goose/releases");
   });
 
   it("overrides goose() with the Doppler wrapper when the doppler capability is selected", async () => {
@@ -563,8 +608,9 @@ describe("DevContainer Generation Tests", () => {
     // devcontainer that selects the doppler capability.
     expect(zshrc).not.toContain("}) already defined");
     expect(zshrc).toContain(
-      "# If a Doppler wrapper already defined goose() above, it already routes through",
+      "# --- Entry point: run goose inside this shell's worktree ---",
     );
+    expect(zshrc).toContain("which routes through _wt_ensure itself");
     // Doppler auth pre-flight: a fresh devcontainer/codespace has no Doppler
     // auth, and 'doppler run' would otherwise die with the cryptic "Doppler
     // Error: you must provide a token". The wrapper must fail with guidance

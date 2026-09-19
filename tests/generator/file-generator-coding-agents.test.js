@@ -71,7 +71,12 @@ describe("File Generator - Coding Agents", () => {
   it("should write an extensions-only goose config.yaml and NOT bind-mount the host goose config", async () => {
     const context = {
       name: "test-project",
-      capabilities: ["coding-agents", "devcontainer-node"],
+      // Resolved selection: `coding-agents` declares `doppler`, and the Worker
+      // expands dependencies before generating (buildProjectContext), so the
+      // generator never sees the bare capability. goose is written iff the
+      // selection resolves doppler (spec 012) — this context is what production
+      // passes.
+      capabilities: ["coding-agents", "doppler", "devcontainer-node"],
       configuration: {},
     };
 

@@ -21,6 +21,8 @@ const devcontainerRustDockerfile =
   templateFiles["devcontainer-rust-dockerfile.template"];
 const devcontainerRustJson = templateFiles["devcontainer-rust-json.template"];
 const devcontainerZshrcFull = templateFiles["devcontainer-zshrc-full.template"];
+const devcontainerZshrcGooseWt =
+  templateFiles["devcontainer-zshrc-goose-wt.template"];
 const devcontainerZshrc = templateFiles["devcontainer-zshrc.template"];
 const devcontainerTmuxConf = templateFiles["devcontainer-tmux-conf.template"];
 const dopplerYaml = templateFiles["doppler-yaml.template"];
@@ -631,6 +633,98 @@ export function specKitInstallationFragments(capabilities) {
 }
 
 /**
+ * Whether the generated devcontainer carries goose at all.
+ *
+ * `doppler` is the predicate rather than `coding-agents`, because the only
+ * supported way to run goose in a generated devcontainer is the {@link
+ * GOOSE_ALIAS} wrapper, which runs it under `doppler run`: goose takes its
+ * provider from the `LITELLM_*` env of the `goose` Doppler project, and a bare
+ * binary dies with `error: No provider configured` (spec 012). Every capability
+ * that wants goose resolves doppler along with it — `coding-agents` and
+ * `container-agent` declare it outright, `xcode-development` inherits it
+ * through `coding-agents`, and `circleci` declares it for its MCP tokens — so
+ * this one lookup means "goose can actually run here", with no capability list
+ * to go stale as the catalog grows.
+ *
+ * @param {string[]} capabilities Resolved capability IDs.
+ * @returns {boolean} True when goose is installed, wrapped and configured.
+ */
+export function hasGoose(capabilities) {
+  return capabilities.includes("doppler");
+}
+
+/**
+ * The Dockerfile fragment owned by goose: install the release binary as a
+ * standalone RUN, injected iff {@link hasGoose}.
+ *
+ * Deliberately a whole `RUN` rather than a mid-chain fragment: it has no
+ * natural successor in the devcontainer RUN (it ended that instruction), and a
+ * fragment spliced into a `\`-continued chain cannot be empty without leaving
+ * the chain dangling.
+ */
+export const GOOSE_INSTALL_FRAGMENT = `RUN GOOSE_ARCH="$(uname -m | sed 's/arm64/aarch64/')" \\
+    && GOOSE_TAG="$(curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 https://api.github.com/repos/aaif-goose/goose/releases/latest | sed -n 's/.*"tag_name": "\\([^"]*\\)".*/\\1/p')" \\
+    && if [ -z "$GOOSE_TAG" ]; then echo "WARN: could not resolve latest goose tag; falling back to 'stable' release"; GOOSE_TAG=stable; fi \\
+    && GOOSE_URL="https://github.com/aaif-goose/goose/releases/download/\${GOOSE_TAG}/goose-\${GOOSE_ARCH}-unknown-linux-gnu.tar.bz2" \\
+    && echo "Downloading goose \${GOOSE_TAG} (\${GOOSE_ARCH})..." \\
+    && curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o /tmp/goose.tar.bz2 "$GOOSE_URL" \\
+    && mkdir -p /tmp/goose-extract \\
+    && tar -xjf /tmp/goose.tar.bz2 -C /tmp/goose-extract \\
+    && install -m 0755 /tmp/goose-extract/goose "$HOME/.local/bin/goose" \\
+    && "$HOME/.local/bin/goose" --version \\
+    && rm -rf /tmp/goose.tar.bz2 /tmp/goose-extract`;
+
+/**
+ * The `{{gooseInstall}}` value for the devcontainer Dockerfiles: the goose
+ * install RUN when goose is present, an empty line otherwise.
+ *
+ * A helper rather than an inline ternary because the callers are large
+ * functions already at their cognitive-complexity ceilings (same reason
+ * {@link specKitInstallationFragments} exists).
+ *
+ * @param {string[]} capabilities Resolved capability IDs.
+ * @returns {string} The Dockerfile fragment, or "".
+ */
+export function gooseInstallFragment(capabilities) {
+  return hasGoose(capabilities) ? GOOSE_INSTALL_FRAGMENT : "";
+}
+
+/**
+ * The `{{gooseUpdate}}` block for `.devcontainer/post-start-setup.sh`, injected
+ * iff {@link hasGoose}.
+ *
+ * Without the capability gate this ran in every devcontainer and printed
+ * `WARN: goose not found, skipping update` on every start of a repo that has no
+ * goose — a warning about a command the repo never offered.
+ */
+export const GOOSE_UPDATE_SCRIPT = `
+echo "INFO: Checking goose version..."
+if command -v goose >/dev/null 2>&1; then
+    goose update || echo "WARN: goose update failed, keeping current version"
+fi
+`;
+
+/**
+ * The goose worktree zshrc block (`.devcontainer/.zshrc` tail), appended iff
+ * {@link hasGoose}: `goose` runs in this shell's feature worktree, plus the
+ * `wt audit` / `wt remove` helpers for the worktrees it creates.
+ *
+ * It lives in its own template because it is conditionally appended rather
+ * than substituted into a placeholder, and it must stay *after* the
+ * `{{gooseAlias}}` definition it depends on. With no goose there are no goose
+ * sessions, so there is nothing to bind a worktree to.
+ *
+ * @param {TemplateEngine} templateEngine Initialised engine.
+ * @param {string[]} capabilities Resolved capability IDs.
+ * @returns {string} The block, or "".
+ */
+export function gooseWorktreeZshrc(templateEngine, capabilities) {
+  return hasGoose(capabilities)
+    ? templateEngine.generateFile("devcontainer-zshrc-goose-wt", {})
+    : "";
+}
+
+/**
  * The `runArgs` grant owned by `micropython`, selected by `deviceAccess`.
  *
  * There is deliberately no pinned-`--device` branch: Docker never expands a
@@ -682,6 +776,7 @@ const templateImports = {
   "devcontainer-rust-dockerfile": devcontainerRustDockerfile,
   "devcontainer-rust-json": devcontainerRustJson,
   "devcontainer-zshrc-full": devcontainerZshrcFull,
+  "devcontainer-zshrc-goose-wt": devcontainerZshrcGooseWt,
   "devcontainer-zshrc": devcontainerZshrc,
   "devcontainer-tmux-conf": devcontainerTmuxConf,
   "playwright-config": playwrightConfig,
@@ -1219,6 +1314,8 @@ export function generateMergedDevelopmentContainerFiles(
       docsifyInstallation: context.capabilities.includes("docsify")
         ? " \\\n    && npm install -g docsify-cli"
         : "",
+      // goose is installed only where it can run (spec 012) — see hasGoose.
+      gooseInstall: gooseInstallFragment(context.capabilities),
     },
   );
 
@@ -1234,17 +1331,18 @@ export function generateMergedDevelopmentContainerFiles(
     },
     {
       filePath: ".devcontainer/.zshrc",
-      content: templateEngine.generateFile("devcontainer-zshrc-full", {
-        ...context,
-        projectName: context.projectName || context.name || "my-project",
-        agyDevAlias: context.capabilities.includes("doppler")
-          ? AGY_DEV_ALIAS.replaceAll(
-              "{{dopplerProject}}",
-              () => resolveDopplerTarget(context).project,
-            )
-          : "",
-        gooseAlias: context.capabilities.includes("doppler") ? GOOSE_ALIAS : "",
-      }),
+      content:
+        templateEngine.generateFile("devcontainer-zshrc-full", {
+          ...context,
+          projectName: context.projectName || context.name || "my-project",
+          agyDevAlias: context.capabilities.includes("doppler")
+            ? AGY_DEV_ALIAS.replaceAll(
+                "{{dopplerProject}}",
+                () => resolveDopplerTarget(context).project,
+              )
+            : "",
+          gooseAlias: hasGoose(context.capabilities) ? GOOSE_ALIAS : "",
+        }) + gooseWorktreeZshrc(templateEngine, context.capabilities),
     },
     {
       filePath: ".devcontainer/.p10k.zsh",
@@ -1278,6 +1376,8 @@ else
 fi
 `
           : "",
+        // goose updates itself on start, but only where goose exists (spec 012).
+        gooseUpdate: hasGoose(context.capabilities) ? GOOSE_UPDATE_SCRIPT : "",
         docsifyService: context.capabilities.includes("docsify")
           ? `\n# Start documentation server\n# Ensure symlink for specs exists in docs folder for the documentation server\nif [ ! -L /workspaces/${context.projectName || context.name || "my-project"}/docs/specs ] && [ ! -e /workspaces/${context.projectName || context.name || "my-project"}/docs/specs ]; then\n    echo "INFO: Creating specs symlink in docs folder..."\n    ln -s ../specs /workspaces/${context.projectName || context.name || "my-project"}/docs/specs\nfi\n\necho "INFO: Checking documentation server status..."\nif ! pgrep -f 'serve-docs.cjs' >/dev/null; then\n    echo "INFO: Documentation server not running. Starting custom Node server..."\n    if [ -f "/workspaces/${context.projectName || context.name || "my-project"}/.devcontainer/serve-docs.cjs" ]; then\n        sudo start-stop-daemon --start --background --oknodo --pidfile /var/run/serve-docs.pid --make-pidfile --chuid $(id -un):$(id -gn) --exec "/usr/local/bin/node" -- /workspaces/${context.projectName || context.name || "my-project"}/.devcontainer/serve-docs.cjs\n    else\n        echo "WARNING: serve-docs.cjs not found, skipping startup."\n    fi\nfi\n`
           : "",
@@ -1341,18 +1441,14 @@ fi
           agySetup: context.capabilities.includes("coding-agents")
             ? AGY_SETUP_SCRIPT
             : "",
-          // goose setup (recipes + project-selected MCP extensions) runs for
-          // coding-agents AND for any capability that registers a goose
-          // extension (circleci, sonarcloud, xcode-development, sveltekit) —
-          // otherwise a project selecting e.g. circleci would get no circleci
-          // extension.
-          gooseSetup:
-            context.capabilities.includes("coding-agents") ||
-            ["circleci", "sonarcloud", "xcode-development", "sveltekit"].some(
-              (c) => context.capabilities.includes(c),
-            )
-              ? generateGooseSetupScript(context)
-              : "",
+          // goose setup (recipes + project-selected MCP extensions) is written
+          // iff goose exists at all: an extensions-only config for a binary
+          // that is not installed (or cannot resolve a provider) is inert, and
+          // sonarcloud/sveltekit/circleci contribute their MCP extension only
+          // when the repo they land in actually has goose — see hasGoose.
+          gooseSetup: hasGoose(context.capabilities)
+            ? generateGooseSetupScript(context)
+            : "",
           playwrightSetup: context.capabilities.includes("playwright")
             ? PLAYWRIGHT_SETUP_SCRIPT
             : "",

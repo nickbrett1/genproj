@@ -37,6 +37,9 @@ vi.mock("../../src/generator/file-generator.js", async (importOriginal) => {
         if (templateId === "devcontainer-zshrc-full") {
           return (data.agyDevAlias || "").replace("{{projectName}}", data.name);
         }
+        if (templateId === "devcontainer-zshrc-goose-wt") {
+          return "goose-worktree-mock";
+        }
         return `content for ${templateId}`;
       });
     }
@@ -316,7 +319,10 @@ describe("generatePreview", () => {
     );
     const zshrc = devcontainerFolder.children.find((f) => f.name === ".zshrc");
     expect(zshrc).toBeDefined();
-    expect(zshrc.content).toBe("agy-dev-CustomProject-mock");
+    // The preview .zshrc is the alias plus the goose worktree block, which the
+    // preview appends exactly as the generator does (spec 012).
+    expect(zshrc.content).toContain("agy-dev-CustomProject-mock");
+    expect(zshrc.content).toContain("goose-worktree-mock");
   });
 
   it("generates correct gitignore for python", async () => {

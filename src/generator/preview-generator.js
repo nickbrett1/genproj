@@ -22,6 +22,10 @@ import {
   GIT_GITHUB_AUTH_SETUP_SCRIPT,
   AGY_SETUP_SCRIPT,
   generateGooseSetupScript,
+  GOOSE_UPDATE_SCRIPT,
+  gooseInstallFragment,
+  gooseWorktreeZshrc,
+  hasGoose,
   PLAYWRIGHT_SETUP_SCRIPT,
   PYTHON_SETUP_SCRIPT,
   NODE_SETUP_SCRIPT,
@@ -293,6 +297,8 @@ function createDevelopmentContainerDockerfile(
       docsifyInstallation: allCapabilities.includes("docsify")
         ? " \\\n    && npm install -g docsify-cli"
         : "",
+      // goose is installed only where it can run (spec 012) — see hasGoose.
+      gooseInstall: gooseInstallFragment(allCapabilities),
     },
   );
   return {
@@ -316,16 +322,17 @@ function createDevelopmentContainerShellFiles(
   projectConfig,
   allCapabilities,
 ) {
-  const zshrcContent = templateEngine.generateFile("devcontainer-zshrc-full", {
-    ...projectConfig,
-    agyDevAlias: allCapabilities.includes("doppler")
-      ? AGY_DEV_ALIAS.replaceAll(
-          "{{dopplerProject}}",
-          () => resolveDopplerTarget(projectConfig).project,
-        )
-      : "",
-    gooseAlias: allCapabilities.includes("doppler") ? GOOSE_ALIAS : "",
-  });
+  const zshrcContent =
+    templateEngine.generateFile("devcontainer-zshrc-full", {
+      ...projectConfig,
+      agyDevAlias: allCapabilities.includes("doppler")
+        ? AGY_DEV_ALIAS.replaceAll(
+            "{{dopplerProject}}",
+            () => resolveDopplerTarget(projectConfig).project,
+          )
+        : "",
+      gooseAlias: hasGoose(allCapabilities) ? GOOSE_ALIAS : "",
+    }) + gooseWorktreeZshrc(templateEngine, allCapabilities);
 
   const p10kContent = templateEngine.generateFile(
     "devcontainer-p10k-zsh-full",
@@ -385,8 +392,8 @@ function createDevelopmentContainerShellFiles(
       agySetup: allCapabilities.includes("coding-agents")
         ? AGY_SETUP_SCRIPT
         : "",
-      gooseSetup: allCapabilities.includes("coding-agents")
-        ? generateGooseSetupScript()
+      gooseSetup: hasGoose(allCapabilities)
+        ? generateGooseSetupScript({ capabilities: allCapabilities })
         : "",
       playwrightSetup: allCapabilities.includes("playwright")
         ? PLAYWRIGHT_SETUP_SCRIPT
@@ -430,6 +437,7 @@ fi
         : "",
       // The docs server is only wired up when docsify is selected; the
       // template's {{docsifyService}} must always resolve.
+      gooseUpdate: hasGoose(allCapabilities) ? GOOSE_UPDATE_SCRIPT : "",
       docsifyService: allCapabilities.includes("docsify")
         ? `\n# Start documentation server\n# Ensure symlink for specs exists in docs folder for the documentation server\nif [ ! -L /workspaces/${projectConfig.projectName || projectConfig.name || "my-project"}/docs/specs ] && [ ! -e /workspaces/${projectConfig.projectName || projectConfig.name || "my-project"}/docs/specs ]; then\n    echo "INFO: Creating specs symlink in docs folder..."\n    ln -s ../specs /workspaces/${projectConfig.projectName || projectConfig.name || "my-project"}/docs/specs\nfi\n\necho "INFO: Checking documentation server status..."\nif ! pgrep -f 'serve-docs.cjs' >/dev/null; then\n    echo "INFO: Documentation server not running. Starting custom Node server..."\n    if [ -f "/workspaces/${projectConfig.projectName || projectConfig.name || "my-project"}/.devcontainer/serve-docs.cjs" ]; then\n        sudo start-stop-daemon --start --background --oknodo --pidfile /var/run/serve-docs.pid --make-pidfile --chuid $(id -un):$(id -gn) --exec "/usr/local/bin/node" -- /workspaces/${projectConfig.projectName || projectConfig.name || "my-project"}/.devcontainer/serve-docs.cjs\n    else\n        echo "WARNING: serve-docs.cjs not found, skipping startup."\n    fi\nfi\n`
         : "",
