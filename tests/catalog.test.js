@@ -87,12 +87,7 @@ describe("catalog metadata", () => {
     const defaults = capabilities
       .filter((capability) => capability.selectedByDefault)
       .map((capability) => capability.id);
-    expect(defaults).toEqual([
-      "coding-agents",
-      "container-agent",
-      "editor-tools",
-      "shell-tools",
-    ]);
+    expect(defaults).toEqual(["editor-tools", "shell-tools"]);
 
     for (const capability of capabilities) {
       expect(capability.selectedByDefault).toBe(capability.category === "core");
@@ -166,15 +161,40 @@ describe("catalog metadata", () => {
   });
 });
 
-describe("container-agent capability", () => {
-  it("is locked so a client cannot offer to deselect it", () => {
-    const containerAgent = getCapabilityById("container-agent");
-    expect(containerAgent).toBeDefined();
-    expect(containerAgent.locked).toBe(true);
-    expect(containerAgent.selectedByDefault).toBe(true);
+describe("the agent capabilities", () => {
+  it("live in their own `agents` category, distinct from core", () => {
+    expect(getCapabilityById("coding-agents").category).toBe("agents");
+    expect(getCapabilityById("container-agent").category).toBe("agents");
   });
 
-  it("is required by every devcontainer-* capability", () => {
+  it("are optional — not pre-selected and not locked", () => {
+    for (const id of ["coding-agents", "container-agent"]) {
+      const capability = getCapabilityById(id);
+      expect(capability.selectedByDefault).toBe(false);
+      expect(capability.locked).not.toBe(true);
+    }
+  });
+
+  it("both require doppler, which is where their provider and secrets come from", () => {
+    expect(getCapabilityById("coding-agents").dependencies).toContain(
+      "doppler",
+    );
+    expect(getCapabilityById("container-agent").dependencies).toContain(
+      "doppler",
+    );
+  });
+
+  it("resolves container-agent → coding-agents → doppler transitively", () => {
+    const result = resolveDependencies(["container-agent"]);
+    expect(result.resolvedCapabilities).toEqual(
+      expect.arrayContaining(["container-agent", "coding-agents", "doppler"]),
+    );
+    expect(result.addedDependencies).toEqual(
+      expect.arrayContaining(["coding-agents", "doppler"]),
+    );
+  });
+
+  it("is not pulled in by a devcontainer (a choice, not a default)", () => {
     const devcontainers = capabilities.filter((capability) =>
       capability.id.startsWith("devcontainer-"),
     );
@@ -185,18 +205,11 @@ describe("container-agent capability", () => {
       "devcontainer-rust",
     ]);
     for (const devcontainer of devcontainers) {
-      expect(devcontainer.dependencies).toContain("container-agent");
+      expect(devcontainer.dependencies).not.toContain("container-agent");
+      expect(devcontainer.dependencies).not.toContain("coding-agents");
     }
-  });
-
-  it("resolves devcontainer-* → container-agent → coding-agents transitively", () => {
     const result = resolveDependencies(["devcontainer-rust"]);
-    expect(result.resolvedCapabilities).toEqual(
-      expect.arrayContaining(["container-agent", "coding-agents", "docker"]),
-    );
-    expect(result.addedDependencies).toEqual(
-      expect.arrayContaining(["container-agent", "coding-agents"]),
-    );
+    expect(result.resolvedCapabilities).not.toContain("container-agent");
   });
 
   it("does not duplicate container-agent when it is also selected", () => {
@@ -225,12 +238,10 @@ describe("catalog lookups", () => {
   it("filters by category", () => {
     expect(
       getCapabilitiesByCategory("core").map((capability) => capability.id),
-    ).toEqual([
-      "coding-agents",
-      "container-agent",
-      "editor-tools",
-      "shell-tools",
-    ]);
+    ).toEqual(["editor-tools", "shell-tools"]);
+    expect(
+      getCapabilitiesByCategory("agents").map((capability) => capability.id),
+    ).toEqual(["coding-agents", "container-agent"]);
     expect(getCapabilitiesByCategory("nope")).toEqual([]);
   });
 });
@@ -261,6 +272,7 @@ describe("validateCapabilityDependencies", () => {
         "devcontainer-node",
         "container-agent",
         "coding-agents",
+        "doppler",
       ]),
     ).toEqual({
       valid: true,

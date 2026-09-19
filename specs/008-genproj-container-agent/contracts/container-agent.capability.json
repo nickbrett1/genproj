@@ -2,10 +2,9 @@
   "id": "container-agent",
   "name": "Container Agent",
   "description": "Every generated devcontainer brings up and registers its own a2a-goose agent (`<repo>-dev`), reached over the tailnet by the LiteLLM proxy; reuses the a2a-goose GitHub release channel, so the container has the same self-update path as a host.",
-  "category": "core",
-  "locked": true,
-  "selectedByDefault": true,
-  "dependencies": ["coding-agents"],
+  "category": "agents",
+  "selectedByDefault": false,
+  "dependencies": ["doppler", "coding-agents"],
   "conflicts": [],
   "requiresAuth": [],
   "authServices": [],
@@ -40,7 +39,7 @@
       "purpose": "Names the agent and documents start/stop/status."
     }
   ],
-  "lockReason": "A container without its own agent is a container nothing can talk to. The dependency is expressed server-side (every devcontainer-* depends on container-agent) so API and MCP callers get it too, not only the UI; `locked: true` is what tells the UI not to offer a deselect.",
+  "optionalReason": "The agent is a choice, not a default: it lives in its own `agents` category alongside coding-agents and is not pre-selected or locked, and no `devcontainer-*` depends on it. It depends on `doppler` because both the provider settings and the registration secrets (bearer token, LiteLLM master key/base URL, goose server secret) are read from Doppler at start time; without that capability the CLI is not installed, no context is pinned, and the agent cannot register. Selecting container-agent therefore resolves coding-agents and doppler too.",
   "notInV1": [
     "A separate `container-tailnet` capability: the tailnet wiring is unconditional in the devcontainer generator (state volume, runArgs sysctls, post-create install, post-start tailscaled), so it already is the provider and container-agent depends only on coding-agents.",
     "Per-container agent isolation beyond one name per repo: the registry is keyed by name, and one agent per repo is the contract",

@@ -52,29 +52,25 @@ describe("capability resolver", () => {
     });
 
     it("resolves dependencies transitively across multiple levels", () => {
-      const result = resolveDependencies(["devcontainer-rust"]);
+      // container-agent → coding-agents → doppler is a two-level chain.
+      const result = resolveDependencies(["container-agent"]);
       expect(result.resolvedCapabilities).toEqual(
-        expect.arrayContaining([
-          "devcontainer-rust",
-          "container-agent",
-          "coding-agents",
-          "docker",
-        ]),
+        expect.arrayContaining(["container-agent", "coding-agents", "doppler"]),
       );
       expect(result.addedDependencies).toEqual(
-        expect.arrayContaining(["container-agent", "coding-agents", "docker"]),
+        expect.arrayContaining(["coding-agents", "doppler"]),
       );
       expect(result.isValid).toBe(true);
     });
 
-    it("resolves the devcontainer → container-agent → coding-agents chain", () => {
-      const result = resolveDependencies(["devcontainer-python"]);
-      const resolved = result.resolvedCapabilities;
-      expect(resolved).toContain("container-agent");
-      expect(resolved).toContain("coding-agents");
-      // The dependency of a dependency must land in the closure, not just the
-      // first level (devcontainer-python → container-agent).
-      expect(result.addedDependencies).toContain("coding-agents");
+    it("keeps the agent capabilities optional for a devcontainer", () => {
+      // The agents are opt-in: selecting a devcontainer must not pull them in.
+      const result = resolveDependencies(["devcontainer-rust"]);
+      expect(result.resolvedCapabilities).toEqual(
+        expect.arrayContaining(["devcontainer-rust", "docker"]),
+      );
+      expect(result.resolvedCapabilities).not.toContain("container-agent");
+      expect(result.resolvedCapabilities).not.toContain("coding-agents");
     });
 
     it("does not duplicate an explicitly selected dependency", () => {

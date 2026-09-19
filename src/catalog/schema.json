@@ -56,6 +56,7 @@
           "type": "string",
           "enum": [
             "core",
+            "agents",
             "internal",
             "devcontainer",
             "frameworks",
