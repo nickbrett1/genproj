@@ -163,6 +163,13 @@ config). Result at commit `c58eb7a`:
 
 ## Regeneration caveat — the deployed Worker is not this working tree
 
+> **Resolved (verified 2026-09-19).** The Worker has since been deployed from
+> `main`, and the live catalog serves the fixed text — `list_genproj_capabilities`
+> returns the reworded `code-quality-python` description ("…and in CI when a CI
+> capability is also selected"). The catalog and the generator code ship in the
+> same Worker build, so the layout/target fixes are live too. The section below
+> records the pre-deploy hazard as it was found, and is kept for the reasoning.
+
 The MCP `genproj` tools are served by the **deployed** Worker
 (`https://genproj.nick-brett1.workers.dev`, see `src/mcp/handler.js`), not by
 this checkout. Immediately after the fix, `list_genproj_capabilities` still
@@ -180,10 +187,11 @@ deploy** (`README.md` §Deployment) before the MCP tool serves the fix.
 
 ## Follow-ups
 
-- **Deploy required for the live tool.** Push this commit to `genproj` `main`;
-  Buildkite deploys on `main`. Until then the MCP `generate_project` tool still
-  emits the old output. (Deployment is deliberately not performed here — see
-  `.agents/.rules/git_guidelines.md`: no deployment commands.)
+- ~~**Deploy required for the live tool.**~~ **Done.** The fixes are on
+  `genproj` `main` and Buildkite has deployed them; the MCP `genproj` server now
+  serves the fixed catalog and generator (see the caveat above). No deploy was
+  run from this checkout — deployment is CI's job on `main`, not a local command
+  (`.agents/.rules/git_guidelines.md`: no deployment commands).
 - `github-release` + `micropython` is still untested: the Buildkite python
   commands drop `python -m build` for firmware, but the release step's
   `dist/**` artifact glob would then match nothing. Not exercised by
