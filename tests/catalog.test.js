@@ -5,9 +5,12 @@ import { describe, expect, it } from "vitest";
 import {
   buildCatalog,
   capabilities,
+  categories,
   getCapabilitiesByCategory,
   getCapabilityById,
+  getCategoryById,
   getRequiredAuthServices,
+  getVisibleCategories,
   validateCapabilityDependencies,
 } from "../src/catalog/index.js";
 import { resolveDependencies } from "../src/generator/capability-resolver.js";
@@ -243,6 +246,75 @@ describe("catalog lookups", () => {
       getCapabilitiesByCategory("agents").map((capability) => capability.id),
     ).toEqual(["coding-agents", "container-agent"]);
     expect(getCapabilitiesByCategory("nope")).toEqual([]);
+  });
+});
+
+// The category list is what the UI renders its sections from. Before it lived
+// here, the client kept its own order and headings, so a new category stayed
+// invisible until the client was redeployed.
+describe("category metadata", () => {
+  it("declares the sections the UI renders, in order", () => {
+    expect(getVisibleCategories().map((category) => category.id)).toEqual([
+      "core",
+      "agents",
+      "frameworks",
+      "devcontainer",
+      "embedded",
+      "apple-development",
+      "ci-cd",
+      "code-quality",
+      "secrets",
+      "deployment",
+      "monitoring",
+      "project-structure",
+    ]);
+  });
+
+  it("gives the agents category its own heading", () => {
+    expect(getCategoryById("agents")?.label).toBe("Agents");
+  });
+
+  it("keeps the dependency-only category out of the rendered sections", () => {
+    // docker is pulled in as a dependency; it is not a user choice and has no
+    // section of its own.
+    expect(getCategoryById("internal")?.visible).toBe(false);
+    expect(
+      getCapabilitiesByCategory("internal").map((capability) => capability.id),
+    ).toEqual(["docker"]);
+  });
+
+  it("declares a category for every capability", () => {
+    const declared = new Set(categories.map((category) => category.id));
+    for (const capability of capabilities) {
+      expect(declared.has(capability.category)).toBe(true);
+    }
+  });
+
+  it("orders the sections uniquely", () => {
+    const orders = categories.map((category) => category.order);
+    expect(new Set(orders).size).toBe(orders.length);
+  });
+
+  it("does not reorder the catalog it was loaded from", () => {
+    expect(categories.map((category) => category.id)).toEqual([
+      "core",
+      "agents",
+      "frameworks",
+      "devcontainer",
+      "embedded",
+      "apple-development",
+      "ci-cd",
+      "code-quality",
+      "secrets",
+      "deployment",
+      "monitoring",
+      "project-structure",
+      "internal",
+    ]);
+  });
+
+  it("travels with the catalog over HTTP", () => {
+    expect(buildCatalog().categories).toEqual(categories);
   });
 });
 

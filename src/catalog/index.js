@@ -14,17 +14,45 @@
  *   - `authServices`      — previously a bespoke auth-service lookup map.
  *   - `provides`          — previously a hardcoded devcontainer→SonarCloud
  *                           language mapping (`getSonarCloudLanguageForDevcontainer`).
+ *
+ * The top-level `categories` array is the fourth: it replaces the UI's
+ * hardcoded section order and headings (`categoryOrder` / `categoryNames`), so
+ * adding a category is a catalog change alone.
  */
 
 import catalog from "./catalog.json" with { type: "json" };
 
 /** @typedef {typeof catalog.capabilities[number]} Capability */
+/** @typedef {typeof catalog.categories[number]} Category */
 
 export const capabilities = catalog.capabilities;
+
+/** The UI sections capabilities are grouped into, in render order. */
+export const categories = catalog.categories;
 
 /** The catalog as served over HTTP. */
 export function buildCatalog() {
   return { ...catalog, count: capabilities.length };
+}
+
+/**
+ * Gets a category by its ID.
+ * @param {string} id The category ID.
+ * @returns {Category | undefined} The category, or undefined if unknown.
+ */
+export function getCategoryById(id) {
+  return categories.find((category) => category.id === id);
+}
+
+/**
+ * The categories a client should render as sections — the declared ones, in
+ * `order`, minus the dependency-only ones (`visible: false`).
+ * @returns {Category[]} The visible categories, ordered.
+ */
+export function getVisibleCategories() {
+  return categories
+    .filter((category) => category.visible !== false)
+    .sort((a, b) => a.order - b.order);
 }
 
 /**

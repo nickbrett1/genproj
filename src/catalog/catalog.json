@@ -10,6 +10,29 @@
       }
     }
   },
+  "categories": [
+    {
+      "id": "core",
+      "label": "Core Capabilities (Always Included)",
+      "order": 10
+    },
+    { "id": "agents", "label": "Agents", "order": 20 },
+    { "id": "frameworks", "label": "Frameworks", "order": 30 },
+    { "id": "devcontainer", "label": "Development Containers", "order": 40 },
+    { "id": "embedded", "label": "Embedded / Microcontrollers", "order": 50 },
+    { "id": "apple-development", "label": "Apple Development", "order": 60 },
+    { "id": "ci-cd", "label": "CI/CD", "order": 70 },
+    { "id": "code-quality", "label": "Code Quality", "order": 80 },
+    { "id": "secrets", "label": "Secrets Management", "order": 90 },
+    { "id": "deployment", "label": "Deployment", "order": 100 },
+    { "id": "monitoring", "label": "Monitoring & Testing", "order": 110 },
+    {
+      "id": "project-structure",
+      "label": "Dependency Management",
+      "order": 120
+    },
+    { "id": "internal", "label": "Internal", "order": 130, "visible": false }
+  ],
   "capabilities": [
     {
       "id": "coding-agents",

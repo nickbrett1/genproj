@@ -4,7 +4,7 @@
   "title": "genproj capability catalog",
   "description": "The capability catalog served at GET /v1/catalog. Describes every capability the generator can apply to a project. Metadata only: the templates and files a capability emits are internal to the generator.",
   "type": "object",
-  "required": ["capabilities"],
+  "required": ["capabilities", "categories"],
   "additionalProperties": false,
   "properties": {
     "$schema": {
@@ -23,9 +23,38 @@
     "capabilities": {
       "type": "array",
       "items": { "$ref": "#/$defs/capability" }
+    },
+    "categories": {
+      "type": "array",
+      "description": "The sections the UI groups capabilities into, in the order the UI renders them. A client renders exactly these sections and takes their headings from here, so a new category needs no client change. Every `capability.category` must appear as a category `id`.",
+      "items": { "$ref": "#/$defs/category" }
     }
   },
   "$defs": {
+    "category": {
+      "type": "object",
+      "required": ["id", "label", "order"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+          "description": "Matches the `category` value on a capability."
+        },
+        "label": {
+          "type": "string",
+          "description": "The heading the client renders for this section. The client does not invent headings."
+        },
+        "order": {
+          "type": "integer",
+          "description": "Section order, ascending. Ordered here rather than in the client so the catalog owns presentation as well as data."
+        },
+        "visible": {
+          "type": "boolean",
+          "description": "Whether the client renders this as a section of its own. Defaults to true. Set false for a dependency-only category such as `internal`: its capabilities still travel in the payload and are still applied, they just have no section of their own."
+        }
+      }
+    },
     "capability": {
       "type": "object",
       "required": [

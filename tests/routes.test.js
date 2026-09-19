@@ -62,6 +62,25 @@ describe("GET /v1/catalog", () => {
     );
   });
 
+  it("serves the category sections the UI renders from", async () => {
+    const body = await (await get("/v1/catalog")).json();
+    expect(body.categories.map((category) => category.id)).toEqual([
+      "core",
+      "agents",
+      "frameworks",
+      "devcontainer",
+      "embedded",
+      "apple-development",
+      "ci-cd",
+      "code-quality",
+      "secrets",
+      "deployment",
+      "monitoring",
+      "project-structure",
+      "internal",
+    ]);
+  });
+
   it("needs no authentication", async () => {
     expect(get("/v1/catalog").status).toBe(200);
   });
@@ -74,6 +93,8 @@ describe("GET /v1/catalog", () => {
     const schema = await response.json();
     expect(schema.title).toBe("genproj capability catalog");
     expect(schema.$defs.capability.required).toContain("authServices");
+    expect(schema.required).toContain("categories");
+    expect(schema.$defs.category.required).toEqual(["id", "label", "order"]);
   });
 });
 
