@@ -185,21 +185,40 @@ to do with categories:
 ```
 
 The sync pushes the **whole** shared `common/prd` bus merged with webapp's own
-config — 61 secrets, plus 7 text variables already on the Worker, is 68. Most of
-that bus is read by other things: the container agents (repo-root
-`scripts/agent-dev.sh`, `.agents/`), and CI. So the fix is to stop shipping it
-into this Worker: `webapp/scripts/worker-secret-exclusions.txt` names the keys
-this Worker does not read (23 of them — 61 → 38, against a budget of 57), and the
-sync script drops them and then checks its own count, failing with a readable
-message instead of the API's `10055` four retries deep.
+config — 61 secrets — into the Worker, and the limit counts every variable on it
+(secrets and text). That alone does not explain 68, and the reason matters:
 
-The guard that keeps that list honest is the point: every excluded key must be
+```console
+$ npx wrangler versions secret list --env production | sed -n 's/^Secret Name: //p' | wc -l
+68
+$ doppler secrets --json -p common -c prd | jq length      # + webapp/prd, merged
+61
+```
+
+`wrangler versions secret bulk` only ever **adds or updates**. A key synced once
+stays on the Worker until it is deleted explicitly, so the Worker had
+accumulated beyond the bus — 7 of the 68 were not on the bus at all any more.
+Filtering the outgoing set would not have brought the count down on its own.
+
+So the fix is reconciliation, not just a filter:
+
+- `webapp/scripts/worker-secret-exclusions.txt` names the 23 keys this Worker
+  does not read;
+- the sync drops them, then compares what is **deployed** against what should be
+  and deletes the difference — 30 removals the first time (23 excluded + 7
+  stale), leaving 38 against a budget of 64;
+- it then checks its own count before uploading, so the next overflow is a
+  readable message rather than the API's `10055` four retries deep.
+
+The guard that keeps the list honest is the point: every excluded key must be
 absent from everything the Worker is built from and runs
 (`webapp/src`, `webapp/worker`, `webapp/scripts`, `.buildkite`, `.github`,
 `wrangler.template.jsonc`), and `tests/sync-doppler-secrets.test.js` asserts it —
-executing the real script against a stubbed `doppler`/`npx` rather than
-pattern-matching its source. A key that later becomes used fails the test
-instead of failing in production.
+executing the real script against a stubbed `doppler`/`npx` and reading the
+batches and deletions it would have issued, rather than pattern-matching its
+source. A key that later becomes used fails the test instead of failing in
+production. Removals are best-effort housekeeping: an unreadable list warns and
+the upload still goes ahead.
 
 This is a fix to the deploy path, not the category work: had the ftn deploy been
 healthy, this spec would have needed one ftn deploy and would have needed no
