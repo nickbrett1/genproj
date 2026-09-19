@@ -92,6 +92,7 @@ import {
   assertNoGooseEnvVarReferences,
   isMicropython,
   ruffCheckCommand,
+  resolveMicropythonChip,
 } from "./capability-template-utils.js";
 import {
   validateFetchLaunch,
@@ -1773,6 +1774,7 @@ export function generateMicropythonFirmwareFiles(context) {
     context.description || `A ${projectName} project generated with genproj`
   ).replace(/"/g, '\\"');
   const board = context.configuration?.micropython?.board || "other";
+  const chip = resolveMicropythonChip(context);
 
   const pyproject = `[project]
 name = "${distName}"
@@ -1837,6 +1839,13 @@ Keep tunables here rather than hard-coding them across modules.
 
 # Board this firmware targets (see the README for how it is driven).
 BOARD = "${board}"
+
+# RP2 silicon variant this build is for (rp2040 | rp2350 | unknown). Selected
+# with the BOARD but on a separate axis: the MicroPython .uf2 is chosen by
+# chip, and one product can ship with more than one variant (a Galactic
+# Unicorn has been sold as both an RP2040 and a Pico 2 W / RP2350 carrier).
+# Confirm it from the board's own banner, never from the USB PID.
+CHIP = "${chip}"
 `;
 
   const libExample = `"""Example firmware module.
@@ -1872,6 +1881,12 @@ export function generateReadmeFile(context) {
     context.description || `A ${projectName} project generated with genproj`;
   const hasDocker = context.capabilities.includes("docker-container");
   const language = resolveProjectLanguage(context);
+  // D3: Ruff runs in CI only when a CI capability was actually selected. The
+  // rendered capability copy says so only then, so the README never promises a
+  // pipeline the repo does not have.
+  const hasCiCapability = context.capabilities.some((id) =>
+    ["circleci", "buildkite"].includes(id),
+  );
 
   const capabilitiesSection =
     context.capabilities && context.capabilities.length > 0
@@ -1882,7 +1897,12 @@ This project includes the following capabilities:
 ${context.capabilities
   .map((id) => {
     const cap = capabilities.find((c) => c.id === id);
-    return cap ? `- **${cap.name}**: ${cap.description}` : `- ${id}`;
+    if (!cap) return `- ${id}`;
+    const ciNote =
+      id === "code-quality-python" && hasCiCapability
+        ? " The generated CI pipeline also runs `ruff check`."
+        : "";
+    return `- **${cap.name}**: ${cap.description}${ciNote}`;
   })
   .join("\n")}
 `
@@ -2087,19 +2107,48 @@ Doppler into \`~/.config/a2a-goose/env\` (mode 0600) and never into the image or
     ? (() => {
         const micropythonConfig = context.configuration?.micropython || {};
         const board = micropythonConfig.board || "other";
+        const chip = resolveMicropythonChip(context);
+        // Product and chip are separate axes: the product names the hardware,
+        // the chip selects the .uf2, and one product can ship with more than
+        // one RP2 variant. The board line is therefore a name with no chip
+        // baked in, and the chip line is derived from the `chip` axis (or the
+        // Pico products' definitional chip), never from the product label.
         const boardNotes = {
-          "pico-w":
-            "This repo targets the **Raspberry Pi Pico W** (RP2040). Install the **Pico W** MicroPython build (`RPI_PICO_W`); the Pico 2 W build will not run on it.",
-          "pico-2-w":
-            "This repo targets the **Raspberry Pi Pico 2 W** (RP2350). Install the **Pico 2 W** MicroPython build; the Pico W (RP2040) build will not run on it.",
+          "pico-w": "This repo targets the **Raspberry Pi Pico W**.",
+          "pico-2-w": "This repo targets the **Raspberry Pi Pico 2 W**.",
           "galactic-unicorn":
-            "This repo targets the **Pimoroni Galactic Unicorn** (RP2040). Its firmware lives at https://github.com/pimoroni/unicorn.",
-          other:
-            "Check that the board's MicroPython build matches its chip before flashing — flashing the wrong build (e.g. Pico W vs Pico 2 W) is the classic first-day mistake.",
+            "This repo targets the **Pimoroni Galactic Unicorn**. Its firmware lives at https://github.com/pimoroni/unicorn. The Galactic Unicorn has shipped with both RP2040 and RP2350 silicon, so this product name does **not** decide the chip - that is recorded separately below.",
+          other: "This repo targets a MicroPython board.",
+        };
+        const chipNotes = {
+          rp2040:
+            "**Chip / build:** **RP2040** - install the **Pico W / RP2040** MicroPython build (`RPI_PICO_W`). A Pico 2 W (RP2350) build will not run on it.",
+          rp2350:
+            "**Chip / build:** **RP2350** - install the **Pico 2 W / RP2350** MicroPython build. A Pico W (RP2040) build will not run on it.",
+          unknown:
+            "**Chip / build:** not recorded for this repo - read it from the board before choosing a `.uf2` (below). The RP2040 and RP2350 builds are **not interchangeable**.",
         };
         return `## MicroPython board
 
 ${boardNotes[board] || boardNotes.other}
+
+${chipNotes[chip] || chipNotes.unknown}
+
+### Read the chip from the board, not the cable
+
+The RP2 variant is the one thing here that must not be guessed. It is **not**
+in the product name, it is **not** implied by the USB PID - \`2e8a:0005\`
+identifies the MicroPython CDC firmware class and says nothing about whether
+the silicon is RP2040 or RP2350. Ask the board:
+
+\`\`\`bash
+mpremote connect "$(scripts/find-board.sh)" exec 'import os; print(os.uname().machine)'
+# e.g. "Raspberry Pi Pico W with RP2040"
+\`\`\`
+
+If that line and the \`chip\` in this repo's generator configuration disagree,
+believe the board. Choosing the wrong \`.uf2\` fails at flash time with no
+warning that the product name was ever the cause.
 
 The toolchain lives **inside the devcontainer** — there is no host-side install
 to keep in sync. OrbStack forwards the board's CDC-ACM REPL into the Linux VM

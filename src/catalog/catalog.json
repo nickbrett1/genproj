@@ -824,7 +824,7 @@
     {
       "id": "code-quality-python",
       "name": "Ruff (Python code quality)",
-      "description": "Adds fast, zero-configuration Python linting with Ruff (rules live in pyproject.toml [tool.ruff]). Lint locally with `ruff check` — and in CI when a CI capability is also selected. Requires a Python devcontainer.",
+      "description": "Adds fast, zero-configuration Python linting with Ruff (rules live in pyproject.toml [tool.ruff]). Lint locally with `ruff check`. Requires a Python devcontainer.",
       "category": "code-quality",
       "icon": "python",
       "iconColor": "yellow",
@@ -1212,8 +1212,8 @@
     },
     {
       "id": "micropython",
-      "name": "MicroPython / RP2040",
-      "description": "Adds the MicroPython board toolchain (mpremote) plus the USB passthrough plumbing needed to drive an RP2040 from inside the devcontainer. OrbStack forwards the board's CDC-ACM REPL into the Linux VM automatically, but a container only sees it when the device is granted explicitly - this capability emits that grant and a port auto-detect helper. The container keeps the macOS node name (/dev/tty.usbmodem<serial>), which changes with the USB port, so the port is discovered at runtime. Note the grant is deliberately broad: OrbStack assigns the node a dynamic character major, and the device-cgroup-rule grammar accepts only a single major or '*', so scoping the grant to USB serial is not expressible - the container can open any host character device. Access is exclusive: while the container holds the port, host tools such as Thonny cannot open it.",
+      "name": "MicroPython board",
+      "description": "Adds the MicroPython board toolchain (mpremote) plus the USB passthrough plumbing needed to drive an RP2-series board (RP2040 or RP2350) from inside the devcontainer. OrbStack forwards the board's CDC-ACM REPL into the Linux VM automatically, but a container only sees it when the device is granted explicitly - this capability emits that grant and a port auto-detect helper. The container keeps the macOS node name (/dev/tty.usbmodem<serial>), which changes with the USB port, so the port is discovered at runtime. Note the grant is deliberately broad: OrbStack assigns the node a dynamic character major, and the device-cgroup-rule grammar accepts only a single major or '*', so scoping the grant to USB serial is not expressible - the container can open any host character device. Access is exclusive: while the container holds the port, host tools such as Thonny cannot open it.",
       "category": "embedded",
       "icon": "code",
       "iconColor": "green",
@@ -1246,13 +1246,24 @@
             "type": "string",
             "enum": ["pico-w", "pico-2-w", "galactic-unicorn", "other"],
             "enumLabels": {
-              "pico-w": "Raspberry Pi Pico W (RP2040)",
-              "pico-2-w": "Raspberry Pi Pico 2 W (RP2350)",
-              "galactic-unicorn": "Pimoroni Galactic Unicorn (RP2040)",
+              "pico-w": "Raspberry Pi Pico W",
+              "pico-2-w": "Raspberry Pi Pico 2 W",
+              "galactic-unicorn": "Pimoroni Galactic Unicorn",
               "other": "Other / not sure"
             },
             "default": "other",
-            "description": "Board this repo targets. Drives the README's firmware pointer and, where known, the firmware repo. The Pico W and Pico 2 W MicroPython builds are not interchangeable, and flashing the wrong one is the classic first-day mistake, so the generated README states the check rather than assuming it."
+            "description": "The board/product this repo targets - a NAME, not a chip. Drives the README's product line and firmware-repo pointer. Product and chip are selected on separate axes on purpose: a product can ship with more than one RP2 variant (the Pimoroni Galactic Unicorn has been sold as both an RP2040 and a Pico 2 W / RP2350 carrier), so asserting a chip inside a product label is how the wrong .uf2 gets chosen with no warning. Set `chip` to say which silicon this repo targets."
+          },
+          "chip": {
+            "type": "string",
+            "enum": ["rp2040", "rp2350", "unknown"],
+            "enumLabels": {
+              "rp2040": "RP2040 (e.g. Pico W)",
+              "rp2350": "RP2350 (e.g. Pico 2 W)",
+              "unknown": "Unknown - read the board's runtime banner"
+            },
+            "default": "unknown",
+            "description": "The RP2 silicon variant this firmware targets, chosen independently of `board`. The MicroPython .uf2 is selected by CHIP, and the RP2040 and RP2350 builds are not interchangeable, so this is the axis a wrong-flash hangs on. Do not guess it from a product name, the purchase date, or the USB PID: `2e8a:0005` identifies the MicroPython CDC firmware class and says nothing about the variant. The one reliable source is the board's runtime banner - `mpremote connect \"$(scripts/find-board.sh)\" exec 'import os; print(os.uname().machine)'` - and `unknown` makes the generated README say exactly that instead of asserting a chip it cannot know."
           },
           "packages": {
             "type": "array",

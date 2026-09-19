@@ -13,6 +13,7 @@ import {
 } from "../../src/generator/file-generator.js";
 import {
   isMicropython,
+  resolveMicropythonChip,
   resolveProjectLanguage,
   ruffCheckCommand,
 } from "../../src/generator/capability-template-utils.js";
@@ -313,6 +314,23 @@ describe("micropython firmware scaffold (layout + lint target)", () => {
     expect(readme.content).not.toContain("ruff check src tests");
     // Defect 3: no CI capability selected, so no CI job may be claimed.
     expect(readme.content).not.toMatch(/CI test job/i);
+    expect(readme.content).not.toMatch(/\bin CI\b/i);
+  });
+
+  it("mentions ruff in CI only when a CI capability is also selected", () => {
+    const withoutCi = generateReadmeFile(firmwareContext());
+    expect(withoutCi.content).not.toMatch(/\bin CI\b/i);
+
+    const withCi = generateReadmeFile({
+      ...firmwareContext(),
+      capabilities: [
+        "devcontainer-python",
+        "micropython",
+        "code-quality-python",
+        "circleci",
+      ],
+    });
+    expect(withCi.content).toMatch(/CI pipeline also runs `ruff check`/);
   });
 
   it("does not run a host pytest step in CircleCI for firmware", async () => {
@@ -349,5 +367,96 @@ describe("micropython firmware scaffold (layout + lint target)", () => {
     expect(pyproject).toContain('src = ["src", "tests"]');
     expect(host.map((f) => f.filePath)).toContain("src/plain/__init__.py");
     expect(host.map((f) => f.filePath)).toContain("tests/test_smoke.py");
+  });
+});
+
+describe("micropython board/chip decoupling (D4)", () => {
+  const mpContext = (config = {}) => ({
+    projectName: "unicorn",
+    description: "Unicorn firmware",
+    capabilities: ["devcontainer-python", "micropython", "code-quality-python"],
+    configuration: { micropython: config },
+  });
+
+  it("does not assert a chip inside a product label", () => {
+    const board =
+      getCapabilityById("micropython").configurationSchema.properties.board;
+    // The Galactic Unicorn is a product name, not a chip: it must not carry a
+    // silent RP2040 assertion. Boards sold today are Pico 2 W / RP2350.
+    expect(board.enumLabels["galactic-unicorn"]).toBe(
+      "Pimoroni Galactic Unicorn",
+    );
+    expect(board.enumLabels["galactic-unicorn"]).not.toMatch(/RP\d/);
+    expect(board.enumLabels["pico-w"]).not.toMatch(/RP\d/);
+    expect(board.enumLabels["pico-2-w"]).not.toMatch(/RP\d/);
+  });
+
+  it("exposes chip as an axis separate from board", () => {
+    const chip =
+      getCapabilityById("micropython").configurationSchema.properties.chip;
+    expect(chip).toBeDefined();
+    expect(chip.enum).toEqual(["rp2040", "rp2350", "unknown"]);
+    expect(chip.default).toBe("unknown");
+    expect(chip.description).toContain("os.uname().machine");
+    expect(chip.description).toContain("2e8a:0005");
+  });
+
+  it("resolves chip explicitly, definitionally, or not at all", () => {
+    // Explicit chip always wins, even over a product name.
+    expect(
+      resolveMicropythonChip(
+        mpContext({ board: "galactic-unicorn", chip: "rp2040" }),
+      ),
+    ).toBe("rp2040");
+    expect(
+      resolveMicropythonChip(
+        mpContext({ board: "galactic-unicorn", chip: "rp2350" }),
+      ),
+    ).toBe("rp2350");
+    // Pico W / Pico 2 W are definitional single-chip products.
+    expect(resolveMicropythonChip(mpContext({ board: "pico-w" }))).toBe(
+      "rp2040",
+    );
+    expect(resolveMicropythonChip(mpContext({ board: "pico-2-w" }))).toBe(
+      "rp2350",
+    );
+    // A multi-chip product with no chip chosen must not be guessed.
+    expect(
+      resolveMicropythonChip(mpContext({ board: "galactic-unicorn" })),
+    ).toBe("unknown");
+    expect(resolveMicropythonChip(mpContext({}))).toBe("unknown");
+  });
+
+  it("states the chosen chip and the firmware repo for a known product", () => {
+    const readme = generateReadmeFile(
+      mpContext({ board: "galactic-unicorn", chip: "rp2040" }),
+    );
+    expect(readme.content).toContain("Pimoroni Galactic Unicorn");
+    expect(readme.content).toContain("https://github.com/pimoroni/unicorn");
+    expect(readme.content).toContain("RP2040");
+    expect(readme.content).toContain("RPI_PICO_W");
+  });
+
+  it("refuses to assert a chip it cannot know, and teaches the banner", () => {
+    const readme = generateReadmeFile(mpContext({ board: "galactic-unicorn" }));
+    expect(readme.content).toContain("not recorded for this repo");
+    // The decisive lesson: read the runtime banner, never the USB PID.
+    expect(readme.content).toContain("os.uname().machine");
+    expect(readme.content).toContain("2e8a:0005");
+    expect(readme.content).toMatch(/USB PID/i);
+    expect(readme.content).toContain("says nothing about");
+    // It must not silently assert the product's historical chip.
+    expect(readme.content).not.toContain(
+      "**Pimoroni Galactic Unicorn** (RP2040)",
+    );
+  });
+
+  it("records the chip next to the board in config.py", () => {
+    const files = generatePyProjectToml(
+      mpContext({ board: "galactic-unicorn", chip: "rp2350" }),
+    );
+    const config = files.find((f) => f.filePath === "config.py").content;
+    expect(config).toContain('BOARD = "galactic-unicorn"');
+    expect(config).toContain('CHIP = "rp2350"');
   });
 });

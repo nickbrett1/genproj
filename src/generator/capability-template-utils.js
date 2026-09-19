@@ -716,6 +716,34 @@ export function ruffCheckCommand(context) {
 }
 
 /**
+ * The RP2 silicon variant a MicroPython project targets, resolved independently
+ * of the board/product name.
+ *
+ * Product and chip are separate axes because a product can ship with more than
+ * one RP2 variant: a Pimoroni Galactic Unicorn has been sold as both an RP2040
+ * and a Pico 2 W / RP2350 carrier. The MicroPython `.uf2` is selected by chip,
+ * so a chip silently asserted inside a product label is exactly how the wrong
+ * firmware gets chosen with no warning. An explicit `micropython.chip` always
+ * wins; otherwise the two Pico products resolve to their definitional chips
+ * (Pico W is RP2040, Pico 2 W is RP2350); anything else is `unknown` rather
+ * than guessed, which makes the README tell the reader to read the board's
+ * runtime banner (`os.uname().machine`) instead of asserting a chip it cannot
+ * know. The USB PID (`2e8a:0005`) is never consulted: it identifies the
+ * MicroPython CDC firmware class, not the variant.
+ *
+ * @param {Object} context - Generation context
+ * @returns {"rp2040"|"rp2350"|"unknown"} The resolved chip variant
+ */
+export function resolveMicropythonChip(context) {
+  const configured = context?.configuration?.micropython?.chip;
+  if (configured === "rp2040" || configured === "rp2350") return configured;
+  const board = context?.configuration?.micropython?.board;
+  if (board === "pico-w") return "rp2040";
+  if (board === "pico-2-w") return "rp2350";
+  return "unknown";
+}
+
+/**
  * The cargo package/binary name for a project name.
  *
  * A project name is a GitHub repository name, whose alphabet (letters, digits,
