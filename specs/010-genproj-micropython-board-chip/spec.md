@@ -107,17 +107,59 @@ src = [".", "lib"]`; `target-version = "py37"`; no `requires-python`.
    `scripts/find-board.sh` still **enumerates and probes** every candidate;
    the README still points at `github.com/pimoroni/unicorn`.
 
-### Regeneration note (not performed here)
+### Regeneration (performed 2026-09-19)
 
-The existing `nickbrett1/galactic-unicorn` repo was generated **before** this
-change, so its `micropython` config has no `chip`. A future regeneration should
-pass `"chip": "rp2040"` explicitly (the board's banner says RP2040) to keep the
-README's chip/build line; without it the README correctly declines to assert a
-chip and points at the banner instead. The public repo was deliberately **not**
-regenerated or pushed by this change — the fix is in the generator.
+The deployed Worker already served the fixed catalog and generator when this was
+run (checked live: `/v1/catalog` carries the `chip` axis, the `board` labels
+carry no chip, the capability is named `MicroPython board`, and the Ruff copy no
+longer mentions CI), so no deploy was needed from this checkout.
+
+`nickbrett1/galactic-unicorn` was regenerated through the live MCP
+`generate_project` tool, so its output is now known-working rather than merely
+plausible:
+
+```json
+{
+  "name": "galactic-unicorn",
+  "selectedCapabilities": ["micropython", "code-quality-python"],
+  "repositoryUrl": "https://github.com/nickbrett1/galactic-unicorn",
+  "overwrite": true,
+  "resolutions": { "config.py": "overwrite" },
+  "configuration": {
+    "micropython": {
+      "board": "galactic-unicorn",
+      "chip": "rp2040",
+      "deviceAccess": "cgroup-rule",
+      "deviceGlob": "/dev/tty.usbmodem*",
+      "packages": ["mpremote"]
+    }
+  }
+}
+```
+
+`config.py` needed an explicit `overwrite` resolution: it is app-owned, and the
+repo's copy had diverged (it predated the `CHIP` line), so the idempotent
+regeneration policy would otherwise have preserved it. Commit
+`2f2cf5e9d2e021e03110a76682855143c7f2df9a` on `main` (was `c58eb7ae`).
+
+Verified in the regenerated repo:
+
+- `config.py` records `CHIP = "rp2040"` beside `BOARD`.
+- The README capability bullet is **`MicroPython board`** (no RP2040 assertion);
+  its MicroPython section carries the product line (no chip), a **Chip / build**
+  line naming the Pico W / RP2040 `RPI_PICO_W` build, and the _read the runtime
+  banner, never the PID_ lesson with the `2e8a:0005` example spelled out.
+- The Ruff bullet is CI-neutral (`Lint locally with \`ruff check\`.`), with no CI
+  claim in a repo that has none.
+- **No regressions:** `runArgs` still carry `--device-cgroup-rule=c *:* rmw`
+  **and** `--volume=/dev:/dev` with no pinned `--device`; the Dockerfile still
+  runs `groupadd -f dialout && usermod -aG dialout vscode`; `scripts/find-board.sh`
+  still enumerates and probes; the layout is root + `lib/` with no `src/`; the
+  pre-existing `LICENSE` was left untouched.
 
 ## Follow-ups
 
-- Deploy is required for the MCP `generate_project` tool to serve the new
-  catalog (it is bundled into the Worker). Not done here — no deployments.
+- ~~Deploy required for the MCP `generate_project` tool to serve the new
+  catalog.~~ **Done** — the live catalog already served the fix (verified
+  2026-09-19); no deploy was run from this checkout.
 - `github-release` + `micropython` remains untested (noted in 009).
