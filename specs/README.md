@@ -2,13 +2,14 @@
 
 Design documents for this service, in the order they were written:
 
-| Spec                                                                   | What it covers                                                                                |
-| ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| [`001-genproj`](001-genproj/spec.md)                                   | The service itself: catalog, generation, conflicts, the API contract (`contracts/api.yaml`).  |
-| [`003-genproj-docker-container`](003-genproj-docker-container/spec.md) | The `docker-container` capability and its contract.                                           |
-| [`006-genproj-buildkite`](006-genproj-buildkite/spec.md)               | The `buildkite` capability and its contract.                                                  |
-| [`007-genproj-github-release`](007-genproj-github-release/spec.md)     | The `github-release` capability and its contract.                                             |
-| [`008-genproj-container-agent`](008-genproj-container-agent/spec.md)   | The `container-agent` capability and its contract: every devcontainer's own registered agent. |
+| Spec                                                                   | What it covers                                                                                                  |
+| ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| [`001-genproj`](001-genproj/spec.md)                                   | The service itself: catalog, generation, conflicts, the API contract (`contracts/api.yaml`).                    |
+| [`003-genproj-docker-container`](003-genproj-docker-container/spec.md) | The `docker-container` capability and its contract.                                                             |
+| [`006-genproj-buildkite`](006-genproj-buildkite/spec.md)               | The `buildkite` capability and its contract.                                                                    |
+| [`007-genproj-github-release`](007-genproj-github-release/spec.md)     | The `github-release` capability and its contract.                                                               |
+| [`008-genproj-container-agent`](008-genproj-container-agent/spec.md)   | The `container-agent` capability and its contract: every devcontainer's own registered agent.                   |
+| [`009-genproj-micropython-lint`](009-genproj-micropython-lint/spec.md) | Defect record: `micropython` + `code-quality-python` firmware layout, the ruff target, and the README CI claim. |
 
 They were written while the generator lived inside the front-end repository and
 moved here with the code. Read them as the reasoning behind the current shape,
