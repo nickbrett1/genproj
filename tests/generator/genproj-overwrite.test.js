@@ -33,6 +33,14 @@ describe("isAppOwnedPath", () => {
     expect(isAppOwnedPath("scripts/backup.py")).toBe(true);
   });
 
+  it("classifies MicroPython firmware (root entry points and lib/) as app-owned", () => {
+    // The micropython layout is root + lib/, not src/. Firmware the owner
+    // edits must survive a regeneration, or the scaffold would clobber it.
+    expect(isAppOwnedPath("main.py")).toBe(true);
+    expect(isAppOwnedPath("config.py")).toBe(true);
+    expect(isAppOwnedPath("lib/example.py")).toBe(true);
+  });
+
   it("classifies genproj-generated helper scripts as infra, not app-owned", () => {
     // Round-6: these are template-owned and MUST be updated on regen —
     // a stale cloud_login.sh (pre-doppler) breaks the cloud login flow.

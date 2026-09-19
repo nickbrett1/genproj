@@ -579,7 +579,8 @@ function _applyCloudflareConfig(
 
 /**
  * Language-aware lint step for CircleCI.
- * - Python: `ruff check src tests` (ruff ships in the `[dev]` extra).
+ * - Python: `ruff check .` for MicroPython firmware (root + `lib/`), otherwise
+ *   `ruff check src tests`; ruff ships in the `[dev]` extra.
  * - Node: ESLint + SonarJS via `npm run lint` (existing behavior).
  */
 function _applyCodeQualityConfig(data, context) {
@@ -591,7 +592,7 @@ function _applyCodeQualityConfig(data, context) {
     ) {
       data.testSteps += `      - run:
           name: Lint (Ruff)
-          command: ruff check src tests\n`;
+          command: ${ruffCheckCommand(context)}\n`;
     }
   } else if (
     context.capabilities.includes("code-quality") ||
@@ -682,6 +683,37 @@ export function resolveProjectLanguage(context) {
  * @returns {'python'|'node'|'java'|'rust'}
  */
 export const resolveLanguage = resolveProjectLanguage;
+
+/**
+ * Whether the project targets a MicroPython board.
+ *
+ * The `micropython` capability tells the generator that the deliverable is
+ * firmware that runs on a board, not a host Python package. That changes where
+ * the Python source lives (firmware resolves modules from the filesystem root
+ * and `lib/`, never from `src/`) and which language the linter should target,
+ * so lint tooling asks this rather than assuming a host package layout.
+ *
+ * @param {Object} context - Generation context (capabilities)
+ * @returns {boolean} True when `micropython` is selected
+ */
+export function isMicropython(context) {
+  return (context?.capabilities || []).includes("micropython");
+}
+
+/**
+ * The ruff invocation that covers the Python source this project actually has.
+ *
+ * A MicroPython project's firmware lives at the repository root and in `lib/`,
+ * so `ruff check src tests` lints an empty tree and reports a false green.
+ * `ruff check .` follows the firmware wherever it is (root modules and `lib/`)
+ * and, for a host package, still covers `src/` and `tests/`.
+ *
+ * @param {Object} context - Generation context
+ * @returns {string} The shell command that runs ruff
+ */
+export function ruffCheckCommand(context) {
+  return isMicropython(context) ? "ruff check ." : "ruff check src tests";
+}
 
 /**
  * The cargo package/binary name for a project name.
@@ -1333,7 +1365,14 @@ function getCircleCiTemplateData(context) {
   _applyCodeQualityConfig(data, context);
 
   if (language === "python") {
-    if (context.capabilities.some((c) => c.startsWith("devcontainer-python"))) {
+    // A MicroPython project is firmware, not a host package: there is no host
+    // test suite to collect, and `pytest -v` over an empty tree exits 5
+    // ("no tests ran"), failing a build that has nothing wrong with it. The
+    // Buildkite pipeline drops the same step for the same reason.
+    if (
+      context.capabilities.some((c) => c.startsWith("devcontainer-python")) &&
+      !isMicropython(context)
+    ) {
       data.testSteps += `      - run:
           name: Test (pytest)
           command: pytest -v\n`;
@@ -1911,16 +1950,23 @@ function getBuildkiteTemplateData(context) {
     ],
     python: [
       'python -m pip install --no-cache-dir -e ".[dev]"',
-      // The release attaches what the build produced, so the build has to
-      // produce a distribution: a `dist/` path with nothing creating `dist/`
-      // is the silent-empty-match trap - `artifact upload` does not fail on a
-      // pattern that matches nothing, so the release would silently be
-      // notes-only. `python -m build` makes the wheel + sdist the existing
-      // release-artifacts.sh already knows how to pack.
-      "python -m pip install --no-cache-dir build",
-      "python -m build",
-      "ruff check src tests",
-      "pytest -q",
+      // A MicroPython project is firmware, not an installable host package:
+      // there is no wheel to build and no host test suite to run, so those
+      // steps are omitted rather than run against an empty tree.
+      ...(isMicropython(context)
+        ? []
+        : [
+            // The release attaches what the build produced, so the build has
+            // to produce a distribution: a `dist/` path with nothing creating
+            // `dist/` is the silent-empty-match trap - `artifact upload` does
+            // not fail on a pattern that matches nothing, so the release would
+            // silently be notes-only. `python -m build` makes the wheel + sdist
+            // the existing release-artifacts.sh already knows how to pack.
+            "python -m pip install --no-cache-dir build",
+            "python -m build",
+          ]),
+      ruffCheckCommand(context),
+      ...(isMicropython(context) ? [] : ["pytest -q"]),
     ],
     rust: ["cargo build --locked", "cargo test --locked"],
     // genproj generates a Java devcontainer but no build system (no pom.xml

@@ -4,12 +4,18 @@ import { getCapabilityById } from "../../src/catalog/index.js";
 import {
   TemplateEngine,
   collectNonDevelopmentContainerFiles,
+  generateAllFiles,
   generateMergedDevelopmentContainerFiles,
+  generatePyProjectToml,
   generateReadmeFile,
   micropythonInstallationFragment,
   micropythonRunArgs,
 } from "../../src/generator/file-generator.js";
-import { resolveProjectLanguage } from "../../src/generator/capability-template-utils.js";
+import {
+  isMicropython,
+  resolveProjectLanguage,
+  ruffCheckCommand,
+} from "../../src/generator/capability-template-utils.js";
 
 async function engine() {
   const templateEngine = new TemplateEngine();
@@ -243,5 +249,105 @@ describe("micropython README section", () => {
       configuration: {},
     });
     expect(readme.content).not.toContain("MicroPython board");
+  });
+});
+
+describe("micropython firmware scaffold (layout + lint target)", () => {
+  const firmwareContext = () => ({
+    projectName: "unicorn",
+    description: "Unicorn firmware",
+    capabilities: ["devcontainer-python", "micropython", "code-quality-python"],
+    configuration: { micropython: { board: "galactic-unicorn" } },
+  });
+
+  it("is detected as MicroPython and lints the repository root", () => {
+    expect(isMicropython(firmwareContext())).toBe(true);
+    expect(isMicropython({ capabilities: ["devcontainer-python"] })).toBe(
+      false,
+    );
+    expect(ruffCheckCommand(firmwareContext())).toBe("ruff check .");
+    expect(ruffCheckCommand({ capabilities: ["devcontainer-python"] })).toBe(
+      "ruff check src tests",
+    );
+  });
+
+  it("emits the root + lib/ firmware layout, not a src-layout package", () => {
+    const files = generatePyProjectToml(firmwareContext());
+    const paths = files.map((f) => f.filePath).sort();
+    expect(paths).toEqual([
+      "config.py",
+      "lib/example.py",
+      "main.py",
+      "pyproject.toml",
+    ]);
+    // None of the host-package scaffold leaks into a firmware repo.
+    expect(paths.some((p) => p.startsWith("src/"))).toBe(false);
+    expect(paths).not.toContain("tests/test_smoke.py");
+  });
+
+  it("points ruff at the firmware and drops the host requires-python claim", () => {
+    const pyproject = generatePyProjectToml(firmwareContext()).find(
+      (f) => f.filePath === "pyproject.toml",
+    ).content;
+    // Defect 1: ruff must cover root + lib/, not just src/tests.
+    expect(pyproject).toContain("[tool.ruff]");
+    expect(pyproject).toContain('src = [".", "lib"]');
+    expect(pyproject).not.toContain('src = ["src", "tests"]');
+    // Defect 2: the lint target is decoupled from the container interpreter.
+    expect(pyproject).not.toContain('requires-python = ">=3.11"');
+    expect(pyproject).toContain('target-version = "py37"');
+    // The firmware is not installable, but pip install -e ".[dev]" must still
+    // work so the devcontainer gets ruff.
+    expect(pyproject).toContain("packages = []");
+    expect(pyproject).toContain('"ruff>=0.4"');
+  });
+
+  it("documents the residual lint gap and never promises a CI job", () => {
+    const readme = generateReadmeFile(firmwareContext());
+    expect(readme.content).toContain("Linting firmware");
+    expect(readme.content).toContain("MicroPython 1.19.1");
+    expect(readme.content).toContain("py37");
+    expect(readme.content).toContain("floor, not a guarantee");
+    // The quickstart lints the firmware, not the empty src/tests tree.
+    expect(readme.content).toContain("ruff check .");
+    expect(readme.content).not.toContain("ruff check src tests");
+    // Defect 3: no CI capability selected, so no CI job may be claimed.
+    expect(readme.content).not.toMatch(/CI test job/i);
+  });
+
+  it("does not run a host pytest step in CircleCI for firmware", async () => {
+    const context = {
+      projectName: "unicorn",
+      description: "Unicorn firmware",
+      capabilities: [
+        "devcontainer-python",
+        "micropython",
+        "code-quality-python",
+        "circleci",
+      ],
+      configuration: { micropython: { board: "galactic-unicorn" } },
+    };
+    const files = await generateAllFiles(context);
+    const ci = files.find((f) => f.filePath === ".circleci/config.yml");
+    expect(ci).toBeDefined();
+    // The firmware lint command covers root + lib/.
+    expect(ci.content).toContain("ruff check .");
+    expect(ci.content).not.toContain("ruff check src tests");
+    // `pytest -v` over an empty tree exits 5, so it must not be emitted.
+    expect(ci.content).not.toContain("Test (pytest)");
+    expect(ci.content).not.toContain("pytest -v");
+  });
+
+  it("leaves a host Python project on the src layout unchanged", () => {
+    const host = generatePyProjectToml({
+      projectName: "plain",
+      capabilities: ["devcontainer-python", "code-quality-python"],
+      configuration: {},
+    });
+    const pyproject = host.find((f) => f.filePath === "pyproject.toml").content;
+    expect(pyproject).toContain('requires-python = ">=3.11"');
+    expect(pyproject).toContain('src = ["src", "tests"]');
+    expect(host.map((f) => f.filePath)).toContain("src/plain/__init__.py");
+    expect(host.map((f) => f.filePath)).toContain("tests/test_smoke.py");
   });
 });

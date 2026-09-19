@@ -824,7 +824,7 @@
     {
       "id": "code-quality-python",
       "name": "Ruff (Python code quality)",
-      "description": "Adds fast, zero-configuration Python linting with Ruff (rules live in pyproject.toml [tool.ruff] and the CI test job runs `ruff check src tests`). Requires a Python devcontainer.",
+      "description": "Adds fast, zero-configuration Python linting with Ruff (rules live in pyproject.toml [tool.ruff]). Lint locally with `ruff check` — and in CI when a CI capability is also selected. Requires a Python devcontainer.",
       "category": "code-quality",
       "icon": "python",
       "iconColor": "yellow",
@@ -841,7 +841,7 @@
       },
       "vscodeExtensions": ["charliermarsh.ruff"],
       "benefits": [
-        "Catches bugs, code smells, and security issues in CI in milliseconds",
+        "Catches bugs, code smells, and security issues in milliseconds",
         "No external service or API token required",
         "Ruff ships as a dev dependency in the generated pyproject.toml",
         "Works offline and in any CI environment"

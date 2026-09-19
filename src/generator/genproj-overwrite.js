@@ -26,7 +26,18 @@ const APP_OWNED_PATH_PREFIXES = [
   "scripts/",
   "worker/",
   "app/",
+  // MicroPython firmware resolves modules from the filesystem root and lib/,
+  // not from src/. lib/ is where the on-device importer looks, so it is the
+  // firmware analogue of src/ and must never be clobbered by a scaffold.
+  "lib/",
 ];
+
+// Root-level firmware entry points emitted by the micropython scaffold. They
+// are app code, not genproj infra: once the owner edits main.py/config.py, a
+// regeneration must not replace them with the placeholder. (A host Python
+// project emits these under src/<pkg>/, which the prefixes above already
+// protect.)
+const APP_OWNED_ROOT_FILES = new Set(["main.py", "config.py"]);
 
 // Genproj-generated helper scripts that live under the app-owned `scripts/`
 // prefix but are INFRA (template-owned), not user code: cloud_login.sh and the
@@ -55,6 +66,7 @@ const GENPROJ_OWNED_SCRIPTS = new Set([
  */
 export function isAppOwnedPath(filePath) {
   if (GENPROJ_OWNED_SCRIPTS.has(filePath)) return false;
+  if (APP_OWNED_ROOT_FILES.has(filePath)) return true;
   return APP_OWNED_PATH_PREFIXES.some((prefix) => filePath.startsWith(prefix));
 }
 
