@@ -1235,7 +1235,7 @@
     {
       "id": "micropython",
       "name": "MicroPython board",
-      "description": "Adds the mpremote toolchain and USB passthrough for driving an RP2-series board (RP2040/RP2350) from the devcontainer. OrbStack forwards the board's CDC-ACM REPL into the VM automatically, but a container sees it only with an explicit device grant - emitted here, plus a port auto-detect helper. The node keeps its macOS name (/dev/tty.usbmodem<serial>) and changes with the USB port, so the port is detected at runtime. The grant is deliberately broad (any host character device): OrbStack assigns a dynamic major and device-cgroup-rule accepts only one major or '*', so scoping it to USB serial isn't expressible. Access is exclusive - while the container holds the port, host tools like Thonny cannot open it.",
+      "description": "Adds the MicroPython toolchain (mpremote) and USB passthrough for driving an RP2-series board (RP2040 or RP2350) from the devcontainer.",
       "category": "embedded",
       "icon": "code",
       "iconColor": "green",
