@@ -32,6 +32,16 @@ const releaseSection = (yaml) => {
   return yaml.slice(start);
 };
 
+// A step is everything from its key up to the next step's label. The smoke gate
+// sits between the build and the release, so stopping at the release label
+// would swallow it.
+const stepByKey = (yaml, key) => {
+  const start = yaml.indexOf(`key: ${key}`);
+  expect(start).toBeGreaterThan(-1);
+  const next = yaml.indexOf("\n  - label:", start);
+  return yaml.slice(start, next === -1 ? undefined : next);
+};
+
 describe("GitHub release file generation", () => {
   it("emits the notes config, the README and the artifact hook", async () => {
     const files = await generate(["github-release", "devcontainer-node"], {});
@@ -689,15 +699,6 @@ describe("a single platform-specific artifact", () => {
     ).rejects.toThrow(/not\s+a release label/);
   });
 
-  // The build step is everything from its key up to the next step's label. The
-  // smoke gate now sits between the build and the release, so stopping at the
-  // release label would have swallowed it.
-  const stepByKey = (yaml, key) => {
-    const start = yaml.indexOf(`key: ${key}`);
-    expect(start).toBeGreaterThan(-1);
-    const next = yaml.indexOf("\n  - label:", start);
-    return yaml.slice(start, next === -1 ? undefined : next);
-  };
   const buildStep = (yaml) => stepByKey(yaml, "build");
 
   it("containerises the build of a singular darwin artifact", async () => {
@@ -794,7 +795,13 @@ describe("a single platform-specific artifact", () => {
     expect(smoke).toContain("queue: mac-studio-linux");
     expect(smoke).toContain("depends_on:\n      - build");
     expect(smoke).toContain(`RELEASE_TARGET: ${DARWIN}`);
-    expect(smoke).toContain('bash scripts/smoke-launch.sh "dist"');
+    // The build output is a wheel, not a payload root: the gate assembles one
+    // through the one app-owned script — the same call the release step makes —
+    // and then runs the assembled tree, not `dist/`.
+    expect(smoke).toContain(
+      'bash scripts/build-payload.sh "$${SMOKE_VERSION:-0.0.0-smoke}" payload dist',
+    );
+    expect(smoke).toContain('bash scripts/smoke-launch.sh "payload"');
     // The release waits for the gate, so a payload that does not run blocks it.
     const release = releaseSection(yaml);
     expect(release).toContain("      - build");
@@ -847,5 +854,86 @@ describe("a single platform-specific artifact", () => {
 
     expect(yaml).not.toContain("Smoke-test");
     expect(releaseSection(yaml)).not.toContain("smoke_");
+  });
+});
+
+describe("payload assembly hook", () => {
+  const DARWIN = "aarch64-apple-darwin";
+
+  it("seeds the assembler for a singular (non-rust) unit only", async () => {
+    const python = await generate(
+      ["buildkite", "github-release", "devcontainer-python"],
+      { language: "python", "github-release": { target: DARWIN } },
+    );
+    expect(byPath(python, "scripts/build-payload.sh")).toBeDefined();
+
+    const rust = await generate(
+      ["buildkite", "github-release", "devcontainer-rust"],
+      { language: "rust", "github-release": { targets: [DARWIN] } },
+    );
+    // A rust build links its payload into build/<target>/, which IS the root:
+    // there is nothing to assemble, so the hook is not seeded and no step calls
+    // it. A hook here would be noise.
+    expect(byPath(rust, "scripts/build-payload.sh")).toBeUndefined();
+  });
+
+  it("calls the one assembler from both the smoke gate and the release step", async () => {
+    const files = await generate(
+      ["buildkite", "github-release", "devcontainer-python"],
+      { language: "python", "github-release": { target: DARWIN } },
+    );
+    const yaml = pipeline(files);
+
+    const smoke = stepByKey(yaml, "smoke_aarch64_apple_darwin");
+    expect(smoke).toContain(
+      'bash scripts/build-payload.sh "$${SMOKE_VERSION:-0.0.0-smoke}" payload dist',
+    );
+    expect(smoke).toContain('bash scripts/smoke-launch.sh "payload"');
+
+    // Same script, same output root; the version differs because each caller
+    // owns one (the tag vs the smoke label) - which is why it is positional.
+    const release = releaseSection(yaml);
+    expect(release).toContain(
+      'bash scripts/build-payload.sh "$$VERSION" payload dist',
+    );
+    expect(release).toContain("bash scripts/release-artifacts.sh");
+  });
+
+  it("does not assemble anything for a rust matrix", async () => {
+    const yaml = pipeline(
+      await generate(["buildkite", "github-release", "devcontainer-rust"], {
+        language: "rust",
+        "github-release": { targets: [DARWIN, "x86_64-unknown-linux-musl"] },
+      }),
+    );
+
+    expect(yaml).not.toContain("build-payload.sh");
+    expect(yaml).toContain(
+      'bash scripts/smoke-launch.sh "build/aarch64-apple-darwin"',
+    );
+  });
+
+  it("the seeded default copies the build output into the payload root", async () => {
+    const files = await generate(
+      ["buildkite", "github-release", "devcontainer-python"],
+      { language: "python", "github-release": { target: DARWIN } },
+    );
+    const script = byPath(files, "scripts/build-payload.sh").content;
+
+    const dir = mkdtempSync(join(tmpdir(), "build-payload-"));
+    mkdirSync(join(dir, "scripts"), { recursive: true });
+    writeFileSync(join(dir, "scripts", "build-payload.sh"), script);
+    mkdirSync(join(dir, "dist"), { recursive: true });
+    writeFileSync(join(dir, "dist", "thing.whl"), "wheel\n");
+
+    const result = spawnSync(
+      "bash",
+      ["scripts/build-payload.sh", "1.2.3", "payload", "dist"],
+      { cwd: dir, encoding: "utf8" },
+    );
+    expect(result.status).toBe(0);
+    expect(readFileSync(join(dir, "payload", "thing.whl"), "utf8")).toBe(
+      "wheel\n",
+    );
   });
 });

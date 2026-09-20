@@ -37,6 +37,8 @@ const githubReleaseArtifacts =
   templateFiles["github-release-artifacts.template"];
 const githubReleaseSmokeLaunch =
   templateFiles["github-release-smoke-launch.template"];
+const githubReleaseBuildPayload =
+  templateFiles["scripts-build-payload.sh.template"];
 const dockerfileTemplate = templateFiles["dockerfile.template"];
 const dockerignoreTemplate = templateFiles["dockerignore.template"];
 const dockerComposeTemplate = templateFiles["docker-compose.template"];
@@ -899,6 +901,7 @@ const templateImports = {
   "github-release-readme": githubReleaseReadme,
   "github-release-artifacts": githubReleaseArtifacts,
   "github-release-smoke-launch": githubReleaseSmokeLaunch,
+  "github-release-build-payload": githubReleaseBuildPayload,
   dockerfile: dockerfileTemplate,
   dockerignore: dockerignoreTemplate,
   "docker-compose": dockerComposeTemplate,
@@ -1031,6 +1034,12 @@ function collectSingleTemplateFile(
   capability,
   template,
 ) {
+  // A template may opt out of a project entirely (e.g. the payload assembler is
+  // seeded only where there is something to assemble). `when` is opt-in: a
+  // descriptor without it is emitted exactly as before.
+  if (typeof template.when === "function" && !template.when(context)) {
+    return;
+  }
   try {
     const extraData = getCapabilityTemplateData(capabilityId, {
       capabilities: context.capabilities,
