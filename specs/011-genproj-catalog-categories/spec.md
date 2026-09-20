@@ -230,6 +230,8 @@ further ones.
   `src/lib/config/capabilities.js` is stale (it predates `container-agent`
   entirely) and is not the live source — the selector is fed from `/v1/catalog`.
   Left untouched; worth deleting rather than syncing.
-- `list_genproj_capabilities` still returns the capability array without the
-  sections. An agent consuming capability IDs does not render headings, so this
-  is deliberate, not an oversight.
+- `list_genproj_capabilities` used to return the capability array without the
+  sections, deliberately (an agent consuming capability IDs does not render
+  headings). The MCP/HTTP catalog parity fix removed that divergence: the tool
+  now returns the whole catalog document via `buildCatalog()`, the same shape as
+  `GET /v1/catalog`.

@@ -21,7 +21,7 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { capabilities } from "../catalog/index.js";
+import { buildCatalog } from "../catalog/index.js";
 import { generateProjectResult } from "../handlers/generate.js";
 
 /**
@@ -35,7 +35,7 @@ export function toolDefinitions() {
     {
       name: "list_genproj_capabilities",
       description:
-        "Returns the list of supported capabilities that can be injected into a generated project.",
+        "Returns the genproj capability catalog, the same document served by GET /v1/catalog: the injectable capabilities, the UI sections they are grouped into (`categories`), and the project-level `configurationSchema` (notably `language`, which becomes required when two or more devcontainer-* capabilities are selected).",
       inputSchema: { type: "object", properties: {} },
     },
     {
@@ -78,11 +78,14 @@ export function toolDefinitions() {
 
 /**
  * Runs `list_genproj_capabilities`.
+ *
+ * Returns the whole catalog through {@link buildCatalog}, the single assembler
+ * of the served shape, so the MCP plane and `GET /v1/catalog` cannot drift.
  * @returns {{ content: Array<{ type: string, text: string }> }} MCP tool result.
  */
 export function listCapabilitiesResult() {
   return {
-    content: [{ type: "text", text: JSON.stringify(capabilities) }],
+    content: [{ type: "text", text: JSON.stringify(buildCatalog()) }],
   };
 }
 

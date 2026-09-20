@@ -6,7 +6,7 @@ vi.mock("../../src/handlers/generate.js", () => ({
   generateProjectResult: vi.fn(),
 }));
 
-import { capabilities } from "../../src/catalog/index.js";
+import { buildCatalog } from "../../src/catalog/index.js";
 import { generateProjectResult } from "../../src/handlers/generate.js";
 import {
   generateProjectToolResult,
@@ -43,13 +43,31 @@ describe("MCP tool definitions", () => {
 });
 
 describe("list_genproj_capabilities", () => {
-  it("returns the catalog capability list as JSON", () => {
+  it("returns the whole catalog as an object, like GET /v1/catalog", () => {
+    const result = listCapabilitiesResult();
+    const parsed = JSON.parse(result.content[0].text);
+    const catalog = buildCatalog();
+
+    // Parity with the HTTP plane: an object envelope, not a bare array.
+    expect(Array.isArray(parsed)).toBe(false);
+    expect(parsed.count).toBe(catalog.count);
+    expect(parsed.capabilities.map((capability) => capability.id)).toEqual(
+      catalog.capabilities.map((capability) => capability.id),
+    );
+    expect(parsed.categories).toEqual(catalog.categories);
+  });
+
+  it("carries the project-level configurationSchema the MCP plane used to drop", () => {
     const result = listCapabilitiesResult();
     const parsed = JSON.parse(result.content[0].text);
 
-    expect(parsed.map((capability) => capability.id)).toEqual(
-      capabilities.map((capability) => capability.id),
-    );
+    expect(parsed.configurationSchema).toBeTruthy();
+    expect(parsed.configurationSchema.properties.language.enum).toEqual([
+      "python",
+      "node",
+      "java",
+      "rust",
+    ]);
   });
 });
 
