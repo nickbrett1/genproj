@@ -941,17 +941,46 @@ export class ProjectGeneratorService {
   }
 
   async #configureDependabot(context, owner, repo, results) {
-    // Dependabot is fully configured by the generated files:
+    // Dependabot is configured by the generated files:
     // - .github/dependabot.yml (update schedule)
     // - .github/workflows/dependabot-auto-merge.yml (auto-merge via the
     //   default GITHUB_TOKEN with write permissions — no PAT secret needed)
-    if (context.capabilities.includes("dependabot")) {
-      console.log("🔄 Configuring Dependabot...");
-      results.dependabot = {
-        success: true,
-      };
-      console.log("✅ Dependabot configured successfully");
+    if (!context.capabilities.includes("dependabot")) {
+      return;
     }
+
+    console.log("🔄 Configuring Dependabot...");
+    results.dependabot = {
+      success: true,
+    };
+
+    // The auto-merge workflow runs `gh pr merge --auto`, which needs the
+    // repository setting `allow_auto_merge`. That is a repo property and
+    // cannot be expressed as a generated file, so it must be PATCHed here or
+    // every generated workflow fails with "Auto merge is not allowed for this
+    // repository (enablePullRequestAutoMerge)". Best-effort: a missing GitHub
+    // service or a failed call must not fail generation.
+    if (this.services.github?.enableAutoMerge) {
+      try {
+        const { allowAutoMerge } = await this.services.github.enableAutoMerge(
+          owner,
+          repo,
+        );
+        results.dependabot.autoMerge = allowAutoMerge;
+        if (!allowAutoMerge) {
+          results.dependabot.warnings = [
+            "Auto-merge could not be enabled on the repository; the generated dependabot auto-merge workflow will fail until it is turned on in repository settings.",
+          ];
+        }
+      } catch (error) {
+        const warning = `Could not enable auto-merge on ${owner}/${repo}: ${error.message}`;
+        console.warn(`⚠️ ${warning}`);
+        results.dependabot.autoMerge = false;
+        results.dependabot.warnings = [warning];
+      }
+    }
+
+    console.log("✅ Dependabot configured successfully");
   }
 
   async #configureSonarCloud(context, owner, repo, results) {
