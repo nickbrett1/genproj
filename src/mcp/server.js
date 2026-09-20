@@ -67,7 +67,7 @@ export function toolDefinitions() {
           configuration: {
             type: "object",
             description:
-              'Capability-specific configuration, e.g. { "docker-container": { "publishPort": "127.0.0.1:3000:3000", "dataMounts": [{ "hostPath": "/volume1/data", "containerPath": "/data", "readOnly": true }], "hostname": "nas.local", "aptPackages": ["iproute2", "curl"], "envVars": ["MCP_PORT=3001"], "command": ["/usr/local/bin/entrypoint.sh"], "healthcheck": "http:/healthz" }, "language": "python" } — language is normally derived from the devcontainer-* capability (optional)',
+              'Capability-specific configuration, e.g. { "docker-container": { "publishPort": "127.0.0.1:3000:3000", "dataMounts": [{ "hostPath": "/volume1/data", "containerPath": "/data", "readOnly": true }], "hostname": "nas.local", "aptPackages": ["iproute2", "curl"], "envVars": ["MCP_PORT=3001"], "command": ["/usr/local/bin/entrypoint.sh"], "healthcheck": "http:/healthz" }, "language": "python" } — language is normally derived from the devcontainer-* capability (optional). `language` is project-level, not capability-specific: it is optional when 0 or 1 devcontainer-* capability is selected and required when 2 or more are selected, where selection order would otherwise decide.',
           },
         },
         required: ["name", "selectedCapabilities"],
