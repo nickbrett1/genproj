@@ -20,21 +20,30 @@ OUT_DIR="${OUT_DIR:-release}"
 rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR"
 
-# --- the universal payload ---------------------------------------------------
-# `dist/` is the language's conventional output directory and it is architecture
-# independent (a JS bundle, a wheel, a .pyz), so it is published under the
-# universal key rather than under a triple. The release step downloads what the
-# build step uploaded before calling this, so `dist/` here is the exact
-# directory the tests ran against. Asset names are a contract with whoever
-# consumes them: something fetching releases/latest/download/<name> depends on
-# the exact string, so treat a name as frozen once anything relies on it.
+# --- the single payload ------------------------------------------------------
+# `dist/` is the language's conventional output directory. It is packed under
+# exactly one key - `{{githubReleaseDistTarget}}` for this project - and that key is
+# what the release manifest and a launcher resolve by:
+#
+#   * `{{githubReleaseUniversalTarget}}` says the payload is architecture independent (a JS bundle, a
+#     pure-python .pyz), so any host may run it.
+#   * A Rust triple says the payload *is* platform specific (one that bundles
+#     its own interpreter, a vendored Node or JRE). It is what keeps a launcher
+#     from handing an arm64 macOS binary to an x86-64 host: the host resolves
+#     nothing and fails open rather than installing something it cannot exec.
+#
+# The release step downloads what the build step uploaded before calling this,
+# so `dist/` here is the exact directory the tests ran against. Asset names are
+# a contract with whoever consumes them: something fetching
+# releases/latest/download/<name> depends on the exact string, so treat a name
+# as frozen once anything relies on it.
 #
 # `-C dist .` puts the CONTENTS of dist/ at the root of the tarball, so dist/ is
 # the payload root: a launcher that execs `bin/<name>` needs `dist/bin/<name>` to
 # exist before this line runs. Nothing downstream checks it - see LAUNCHING.md.
 if [ -d dist ]; then
-  tar -czf "$OUT_DIR/{{projectName}}-{{githubReleaseUniversalTarget}}.tar.gz" -C dist .
-  echo "packaged dist/ as {{projectName}}-{{githubReleaseUniversalTarget}}.tar.gz"
+  tar -czf "$OUT_DIR/{{projectName}}-{{githubReleaseDistTarget}}.tar.gz" -C dist .
+  echo "packaged dist/ as {{projectName}}-{{githubReleaseDistTarget}}.tar.gz"
 fi
 
 # --- one artifact per declared release target --------------------------------
@@ -108,7 +117,8 @@ fi
 # knowing the version reads. It is written last, after every asset exists, so
 # a manifest never advertises a file that is not there. The key per asset is
 # the target: a Rust triple (aarch64-apple-darwin, x86_64-unknown-linux-musl,
-# ...) or {{githubReleaseUniversalTarget}} for an architecture-independent payload (a JS
+# ...) - whether from the build matrix here or a single declared artifact - or
+# {{githubReleaseUniversalTarget}} for an architecture-independent payload (a JS
 # bundle, a pure-python .pyz). A launcher intersects its own uname-derived
 # candidate list with these keys and never constructs one from uname, so a
 # label change on one side cannot silently 404 the other.

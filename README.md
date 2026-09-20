@@ -62,6 +62,18 @@ Three fields exist so that clients do not have to hardcode behaviour:
 - `authServices` — which external services a capability needs credentials for.
 - `provides` — what a capability implies downstream, such as a language runtime.
 
+The per-capability configuration form is rendered straight from each
+`configurationSchema`, with two conventions on top of JSON Schema. `enumLabels`
+maps an `enum` value to the human name a form prints beside it (the value stays
+the identifier submitted). `visibleWhen`, on a property, says which value(s) of
+another configuration key the property applies to, so a form shows only the
+controls that are relevant — the split lives in the catalog rather than in the
+client. Its keys are resolved against the effective configuration: a declared
+value, or the value implied by the selection (the Primary Language comes from a
+single `devcontainer-*` capability's `language` provide, else `node`).
+`visibleWhen` is a presentation hint only — the generator accepts a value whether
+or not the form would have shown it, and rejects it on its own terms.
+
 ## The generator
 
 `src/generator/` holds the generator core:

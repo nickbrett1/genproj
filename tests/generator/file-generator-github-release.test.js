@@ -518,7 +518,18 @@ describe("per-target release builds", () => {
         language: "node",
         "github-release": { targets: [DARWIN] },
       }),
-    ).rejects.toThrow(/native build triples/);
+    ).rejects.toThrow(/native build matrix/);
+  });
+
+  it("refuses a singular target on rust, where a single target is a matrix", async () => {
+    // A rust release compiles per target; one target is `targets: [x]`, not a
+    // single-artifact label. Pointing at the right field is the whole message.
+    await expect(
+      generate(["buildkite", "github-release", "devcontainer-rust"], {
+        language: "rust",
+        "github-release": { target: DARWIN },
+      }),
+    ).rejects.toThrow(/one-entry\s+matrix/);
   });
 
   it("packs one asset per target, read from build/<target>/", async () => {
@@ -589,5 +600,92 @@ describe("per-target release builds", () => {
     expect(yaml).toContain('- "target/release/**"');
     expect(yaml).not.toContain('"build/');
     expect(yaml).not.toContain("RELEASE_TARGET");
+  });
+});
+
+describe("a single platform-specific artifact", () => {
+  const DARWIN = "aarch64-apple-darwin";
+
+  it("packs dist/ under the declared label instead of the universal key", async () => {
+    // The whole point of the field: a payload that bundles its own interpreter
+    // is architecture-specific, and `any` would assert the opposite.
+    const files = await generate(
+      ["buildkite", "github-release", "devcontainer-python"],
+      {
+        language: "python",
+        "github-release": { target: DARWIN },
+      },
+    );
+    const script = byPath(files, "scripts/release-artifacts.sh").content;
+
+    expect(script).toContain(`test-project-${DARWIN}.tar.gz`);
+    expect(script).not.toContain("test-project-any.tar.gz");
+  });
+
+  it("still keys dist/ as any when no target is declared", async () => {
+    // Backward compatible: the field is additive, and an unset target means an
+    // architecture-independent payload - exactly what any always meant.
+    const files = await generate(
+      ["buildkite", "github-release", "devcontainer-python"],
+      { language: "python", "github-release": {} },
+    );
+    const script = byPath(files, "scripts/release-artifacts.sh").content;
+
+    expect(script).toContain("test-project-any.tar.gz");
+  });
+
+  it("keys the manifest by the declared label in a real run", async () => {
+    const script = byPath(
+      await generate(["buildkite", "github-release", "devcontainer-python"], {
+        language: "python",
+        "github-release": { target: DARWIN },
+      }),
+      "scripts/release-artifacts.sh",
+    ).content;
+
+    const dir = mkdtempSync(join(tmpdir(), "release-artifacts-single-"));
+    mkdirSync(join(dir, "scripts"), { recursive: true });
+    mkdirSync(join(dir, "dist", "bin"), { recursive: true });
+    writeFileSync(join(dir, "dist", "bin", "test-project"), "#!/bin/sh\n");
+    writeFileSync(join(dir, "scripts", "release-artifacts.sh"), script);
+
+    const result = spawnSync(
+      "bash",
+      ["scripts/release-artifacts.sh", "1.2.3"],
+      {
+        cwd: dir,
+        encoding: "utf8",
+      },
+    );
+    if (result.status !== 0 && /sha256sum/.test(result.stderr)) {
+      return;
+    }
+    expect(result.status).toBe(0);
+
+    const manifest = JSON.parse(
+      readFileSync(join(dir, "release", "manifest.json"), "utf8"),
+    );
+    expect(Object.keys(manifest.assets)).toEqual([DARWIN]);
+    expect(manifest.assets[DARWIN].file).toBe(`test-project-${DARWIN}.tar.gz`);
+  });
+
+  it("refuses both a matrix and a single label at once", async () => {
+    // They are two different projects; guessing which one was meant is how a
+    // payload ships under a label that does not describe it.
+    await expect(
+      generate(["buildkite", "github-release", "devcontainer-python"], {
+        language: "python",
+        "github-release": { targets: [DARWIN], target: DARWIN },
+      }),
+    ).rejects.toThrow(/both github-release.targets/);
+  });
+
+  it("refuses a label outside the release vocabulary", async () => {
+    await expect(
+      generate(["buildkite", "github-release", "devcontainer-python"], {
+        language: "python",
+        "github-release": { target: "x86_64-apple-darwin" },
+      }),
+    ).rejects.toThrow(/not\s+a release label/);
   });
 });

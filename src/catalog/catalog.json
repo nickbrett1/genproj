@@ -286,6 +286,10 @@
       "selectedByDefault": false,
       "provides": [
         {
+          "type": "language",
+          "value": "node"
+        },
+        {
           "type": "sonarcloud.language",
           "value": "javascript"
         }
@@ -380,6 +384,10 @@
       "selectedByDefault": false,
       "provides": [
         {
+          "type": "language",
+          "value": "python"
+        },
+        {
           "type": "sonarcloud.language",
           "value": "python"
         }
@@ -411,6 +419,10 @@
       "iconColor": "red",
       "selectedByDefault": false,
       "provides": [
+        {
+          "type": "language",
+          "value": "java"
+        },
         {
           "type": "sonarcloud.language",
           "value": "java"
@@ -446,7 +458,12 @@
       "icon": "rust",
       "iconColor": "orange",
       "selectedByDefault": false,
-      "provides": [],
+      "provides": [
+        {
+          "type": "language",
+          "value": "rust"
+        }
+      ],
       "dependencies": ["docker"],
       "conflicts": [],
       "requiresAuth": [],
@@ -627,7 +644,27 @@
               }
             },
             "default": [],
-            "description": "Per-target release artifacts, one build per Rust-triple label. Empty means a single artifact for the default target (notes-only when the language has no artifact paths). Labels are the release vocabulary the launcher resolves against, so the pipeline's matrix and the launcher's lookup consume the same table."
+            "visibleWhen": {
+              "language": ["rust"]
+            },
+            "description": "Rust only. Per-target release artifacts: one build step per Rust-triple label, each publishing its own asset. Labels are the release vocabulary a launcher resolves against, so the pipeline's matrix and the launcher's lookup consume the same table. A language that is not rust compiles nothing per target, so it declares its one artifact's label as Target instead."
+          },
+          "target": {
+            "type": "string",
+            "enum": [
+              "aarch64-apple-darwin",
+              "x86_64-unknown-linux-musl",
+              "aarch64-unknown-linux-musl"
+            ],
+            "enumLabels": {
+              "aarch64-apple-darwin": "macOS (Apple silicon)",
+              "x86_64-unknown-linux-musl": "Linux x86-64 (musl)",
+              "aarch64-unknown-linux-musl": "Linux arm64 (musl)"
+            },
+            "visibleWhen": {
+              "language": { "not": ["rust"] }
+            },
+            "description": "The release label of a single artifact that is genuinely platform-specific - for example a Python app that bundles its own interpreter, or a vendored Node or JRE. Leave unset to publish under the universal key `any`, which asserts the payload runs on any host. Set it when what executes the payload cannot: the launcher then resolves this label only on a matching host, and a host that cannot run it fails open rather than installing a binary it cannot exec. Rust declares its per-target builds as Targets instead."
           }
         }
       },

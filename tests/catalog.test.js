@@ -113,6 +113,11 @@ describe("catalog metadata", () => {
     expect(githubRelease.configurationSchema.properties).toHaveProperty(
       "targets",
     );
+    // A single platform-specific artifact is a distinct fact from a build
+    // matrix, so it has its own knob rather than overloading `targets`.
+    expect(githubRelease.configurationSchema.properties).toHaveProperty(
+      "target",
+    );
     expect(githubRelease.configurationSchema.properties).not.toHaveProperty(
       "tagPrefix",
     );
@@ -140,10 +145,38 @@ describe("catalog metadata", () => {
     );
     expect(provided).toEqual({
       "devcontainer-node": [
+        { type: "language", value: "node" },
         { type: "sonarcloud.language", value: "javascript" },
       ],
-      "devcontainer-python": [{ type: "sonarcloud.language", value: "python" }],
-      "devcontainer-java": [{ type: "sonarcloud.language", value: "java" }],
+      "devcontainer-python": [
+        { type: "language", value: "python" },
+        { type: "sonarcloud.language", value: "python" },
+      ],
+      "devcontainer-java": [
+        { type: "language", value: "java" },
+        { type: "sonarcloud.language", value: "java" },
+      ],
+      "devcontainer-rust": [{ type: "language", value: "rust" }],
+    });
+  });
+
+  it("provides the effective Primary Language for every devcontainer", () => {
+    // A client resolves the language implied by a selection from these, so a
+    // `visibleWhen` condition on `language` is evaluable without re-implementing
+    // resolveProjectLanguage. Each value must be one the generator accepts.
+    const languages = capabilities
+      .filter((capability) => capability.id.startsWith("devcontainer-"))
+      .map((capability) => {
+        const provide = capability.provides.find(
+          (entry) => entry.type === "language",
+        );
+        return [capability.id, provide?.value];
+      });
+    expect(Object.fromEntries(languages)).toEqual({
+      "devcontainer-node": "node",
+      "devcontainer-python": "python",
+      "devcontainer-java": "java",
+      "devcontainer-rust": "rust",
     });
   });
 

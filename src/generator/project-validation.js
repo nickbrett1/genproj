@@ -11,6 +11,7 @@
 
 import { ValidationError } from "./genproj-errors.js";
 import { resolveProjectLanguage } from "./capability-template-utils.js";
+import { TARGET_LABELS } from "./target-labels.js";
 
 /**
  * The primary language can be *derived* when there is at most one
@@ -53,37 +54,79 @@ export function validatePrimaryLanguage(context) {
 }
 
 /**
- * Per-target release builds are a *native* compile: one build step per target,
- * each producing an architecture-specific binary. Only a project whose primary
- * language is rust has a target to build, so `github-release.targets` on any
- * other language would emit N identical build steps that all produce the same
- * architecture-independent output, and N release assets keyed by a triple none
- * of them honours - a matrix that looks like it does something and does not.
+ * A release label says which host may run an artifact, and there are two ways
+ * to come by one - a *matrix* and a *single* artifact:
  *
- * The guard is the honest version of that: say the vocabulary belongs to a
- * native build rather than emit steps that pretend.
+ * 1. `github-release.targets` (plural) is a **native build matrix**: one build
+ *    step per triple, each producing an architecture-specific binary. Only a
+ *    rust project compiles per target, so `targets` on any other language would
+ *    emit N identical steps that all produce the same architecture-independent
+ *    output, keyed by triples none of them honours - a matrix that looks like it
+ *    does something and does not.
+ * 2. `github-release.target` (singular) is **one artifact that is genuinely
+ *    platform-specific**: a Python app that bundles its own interpreter, a
+ *    vendored Node or JRE. There is no matrix (one build), but the label is not
+ *    `any` either, because the payload cannot run everywhere. Rust does not need
+ *    it - a single rust target is a one-entry matrix and belongs in `targets`.
+ *
+ * Declaring both is ambiguous (is the one artifact also the Nth build?), so it
+ * is refused rather than guessed at. The keys are the same `TARGET_LABELS` the
+ * catalog publishes and a launcher resolves against - one vocabulary.
  *
  * @param {Object} context - Generation context (capabilities, configuration)
- * @throws {ValidationError} When targets are declared for a non-native language
+ * @throws {ValidationError} When a declared label cannot mean what it says
  */
 export function validateReleaseTargets(context) {
-  const targets = context?.configuration?.["github-release"]?.targets;
-  if (!Array.isArray(targets) || targets.length === 0) return;
+  const config = context?.configuration?.["github-release"] || {};
+  const targets = Array.isArray(config.targets) ? config.targets : [];
+  const target = typeof config.target === "string" ? config.target.trim() : "";
+
+  if (targets.length > 0 && target !== "") {
+    throw new ValidationError(
+      `This project declares both github-release.targets ` +
+        `(${targets.join(", ")}) and a singular github-release.target ` +
+        `("${target}"). Targets is a build matrix - one build step per label - ` +
+        `and Target is one artifact with one label; they are two different ` +
+        `projects and cannot both be true. Keep targets for a per-platform ` +
+        `build, or target for a single platform-specific artifact.`,
+      "target",
+    );
+  }
+
+  if (target !== "" && !TARGET_LABELS.includes(target)) {
+    throw new ValidationError(
+      `This project declares github-release.target "${target}", which is not ` +
+        `a release label. Use one of ${TARGET_LABELS.join(", ")}.`,
+      "target",
+    );
+  }
 
   const language = resolveProjectLanguage(context);
-  if (language === "rust") return;
 
-  throw new ValidationError(
-    `This project declares ${targets.length} release ` +
-      `target${targets.length === 1 ? "" : "s"} (${targets.join(", ")}) but its ` +
-      `primary language is "${language}". Targets are native build triples: ` +
-      `they select one build step per platform and are the keys a launcher ` +
-      `resolves the release manifest by. A "${language}" project's output is ` +
-      `architecture independent, so it ships as one asset under the universal ` +
-      `key instead. Declare "language": "rust", or clear ` +
-      `github-release.targets.`,
-    "targets",
-  );
+  if (targets.length > 0 && language !== "rust") {
+    throw new ValidationError(
+      `This project declares ${targets.length} release ` +
+        `target${targets.length === 1 ? "" : "s"} (${targets.join(", ")}) but its ` +
+        `primary language is "${language}". Targets are a native build matrix: ` +
+        `one build step per platform, each producing an architecture-specific ` +
+        `binary, and only rust compiles per target. A "${language}" project ` +
+        `publishes one artifact, so declare its single label as ` +
+        `github-release.target instead (or clear it - one that runs anywhere ` +
+        `ships under the universal key). Declare "language": "rust" to build a ` +
+        `matrix.`,
+      "targets",
+    );
+  }
+
+  if (target !== "" && language === "rust") {
+    throw new ValidationError(
+      `This project declares a singular github-release.target ("${target}") ` +
+        `but its primary language is rust. A rust release compiles per target ` +
+        `and publishes one asset per label, so a single target is a one-entry ` +
+        `matrix: declare github-release.targets ["${target}"] instead.`,
+      "target",
+    );
+  }
 }
 
 /**
@@ -101,11 +144,14 @@ export function validateReleaseTargets(context) {
  *    no label, forever - the worst outcome, because it looks installed and
  *    healthy.
  *
- * A node or python project is allowed: its release publishes one
- * architecture-independent asset under the universal key, which the launcher's
- * candidate list already falls back to. Whether that asset is a *runnable
- * payload* is the project's business - see LAUNCHING.md - but the launcher can
- * at least find and install it.
+ * A node or python project is allowed: its release publishes one asset, and
+ * the launcher's candidate list always ends in the universal key, so it can
+ * resolve it. Such a project is *permitted* to be architecture-independent, not
+ * guaranteed to be: one that bundles its own interpreter is platform-specific
+ * and should declare github-release.target so the label tells the truth (see
+ * validateReleaseTargets). Whether the asset is a *runnable payload* is the
+ * project's business - see LAUNCHING.md - but the launcher can at least find
+ * and install it.
  *
  * @param {Object} context - Generation context (capabilities, configuration)
  * @throws {ValidationError} When the launcher could never resolve a payload

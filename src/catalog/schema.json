@@ -147,7 +147,7 @@
         },
         "provides": {
           "type": "array",
-          "description": "Machine-readable values other capabilities or the UI can consume. Replaces UI-side hardcoded mappings.",
+          "description": "Machine-readable values other capabilities or the UI can consume. Replaces UI-side hardcoded mappings. A `devcontainer-*` capability provides `language` (one of python | node | java | rust), which is how a client resolves the effective Primary Language when none is declared - the same implied value a `visibleWhen` condition is evaluated against.",
           "items": {
             "type": "object",
             "required": ["type", "value"],
@@ -155,7 +155,7 @@
             "properties": {
               "type": {
                 "type": "string",
-                "examples": ["sonarcloud.language"]
+                "examples": ["sonarcloud.language", "language"]
               },
               "value": { "type": "string" }
             }
@@ -211,7 +211,7 @@
         },
         "configurationSchema": {
           "type": "object",
-          "description": "JSON Schema for the per-capability configuration form. One convention sits on top of the standard keywords: `enumLabels` maps each `enum` value to a human name for display (the value stays the identifier a client submits)."
+          "description": "JSON Schema for the per-capability configuration form. Two conventions sit on top of the standard keywords. `enumLabels` maps each `enum` value to a human name for display (the value stays the identifier a client submits). `visibleWhen`, on a property, is a presentation hint: an object mapping a configuration key to the value(s) for which the property applies, so a client renders only the properties that are relevant rather than every one a capability declares. A condition is either an array of values (visible when the key's effective value is one of them) or `{ \"not\": [...] }`. A key with no value, or one matching none of the listed values, hides the property. Keys are resolved against the effective configuration: project-level keys (such as `language`, the Primary Language) take their declared value, or the value implied by the selection when undeclared - a single `devcontainer-*` capability's `language` provide, else `node`. `visibleWhen` is a hint for the form only, never a validity rule: a generator accepts a value whether or not the form would have shown it, and rejects it only on its own terms."
         },
         "vscodeExtensions": {
           "type": "array",

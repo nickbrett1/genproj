@@ -46,6 +46,17 @@ describe("target label vocabulary", () => {
     });
     expect(data.githubReleaseUniversalTarget).toBe(UNIVERSAL_TARGET);
     expect(UNIVERSAL_TARGET).toBe("any");
+    // With no declared label the single payload is packed under the universal
+    // key, so the default is unchanged from before the field existed.
+    expect(data.githubReleaseDistTarget).toBe(UNIVERSAL_TARGET);
+  });
+
+  it("packs the single payload under the declared label when there is one", () => {
+    const data = getCapabilityTemplateData("github-release", {
+      capabilities: [],
+      configuration: { "github-release": { target: "aarch64-apple-darwin" } },
+    });
+    expect(data.githubReleaseDistTarget).toBe("aarch64-apple-darwin");
   });
 
   it("is the same table the catalog publishes (one source, two consumers)", () => {
@@ -53,9 +64,25 @@ describe("target label vocabulary", () => {
     // label set. A literal copy that drifts is a silent 404; this asserts the
     // catalog's enum and the module's constant cannot diverge.
     const githubRelease = getCapabilityById("github-release");
-    expect(
-      githubRelease.configurationSchema.properties.targets.items.enum,
-    ).toEqual([...TARGET_LABELS]);
+    const properties = githubRelease.configurationSchema.properties;
+    expect(properties.targets.items.enum).toEqual([...TARGET_LABELS]);
+    // The singular label offers the same vocabulary, and must not invent one.
+    expect(properties.target.enum).toEqual([...TARGET_LABELS]);
+  });
+
+  it("shows exactly one label control, chosen by the primary language", () => {
+    // The form is schema-driven and has no conditional vocabulary of its own, so
+    // the split lives here: a rust project declares a matrix (Targets), every
+    // other language declares one artifact's label (Target). A rust user never
+    // sees a singular control to ignore, and vice versa.
+    const properties =
+      getCapabilityById("github-release").configurationSchema.properties;
+    expect(properties.targets.visibleWhen).toEqual({ language: ["rust"] });
+    // `not` rather than an enumeration, so a language added later gets the
+    // singular control instead of silently losing both.
+    expect(properties.target.visibleWhen).toEqual({
+      language: { not: ["rust"] },
+    });
   });
 
   it("publishes a human name for every label, for the form that offers them", () => {

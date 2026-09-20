@@ -2402,13 +2402,23 @@ ${releaseArtifacts}      - |
 function getGithubReleaseTemplateData(context) {
   const config = context.configuration?.["github-release"] || {};
   const targets = Array.isArray(config.targets) ? config.targets : [];
+  // A single, genuinely platform-specific artifact: `dist/` is packed under this
+  // label rather than under the universal key. Empty means the payload is not
+  // architecture-specific and `any` is the honest label. See
+  // validateReleaseTargets for why this and `targets` are mutually exclusive.
+  const singleTarget =
+    typeof config.target === "string" ? config.target.trim() : "";
   return {
     githubReleaseTargets: targets,
     // The per-target loop in release-artifacts.sh iterates this list, so it is
     // rendered as a shell word list (empty when no targets are declared).
     githubReleaseTargetsJoined: targets.join(" "),
-    // The universal key (see target-labels.js UNIVERSAL_TARGET): the asset name
-    // and manifest key for a payload that is not architecture-specific.
+    // The key `dist/` is packed under: the declared single-artifact label when
+    // there is one, otherwise the universal key (see target-labels.js
+    // UNIVERSAL_TARGET) for a payload that is not architecture-specific.
+    githubReleaseDistTarget: singleTarget || UNIVERSAL_TARGET,
+    // The universal key, kept for the readme and any template that has to name
+    // the fallback itself rather than the label in force.
     githubReleaseUniversalTarget: UNIVERSAL_TARGET,
     // Notes are always generated from the release's merged pull requests and
     // classified by .github/release.yml; that is not configurable.
