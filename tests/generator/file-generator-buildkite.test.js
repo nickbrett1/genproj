@@ -90,6 +90,46 @@ describe("Buildkite file generation", () => {
     );
   });
 
+  it("installs rustfmt and clippy before running the lint", async () => {
+    // Regression: the build runs in `rust:1-slim`, an official rust image built
+    // with the rustup *minimal* profile - rustc and cargo only, no rustfmt and
+    // no clippy. The lint gate was internally self-consistent (it named exactly
+    // the commands the capability advertises) but guaranteed a red build on a
+    // clean project: `cargo fmt` died with "'cargo-fmt' is not installed for
+    // the toolchain" before clippy or even `cargo build` ran. So this test does
+    // not settle for the lint commands existing - it pins that the component
+    // install is emitted, that it is in the same step as the lints, and that it
+    // comes first. A template edit that drops the install, or moves it after the
+    // lints, fails here.
+    const files = await generate([
+      "buildkite",
+      "devcontainer-rust",
+      "code-quality-rust",
+    ]);
+    const build = parse(pipelineFrom(files).content).steps.find(
+      (step) => step.key === "build",
+    );
+    const commands = build.commands.map((command) => String(command));
+    const indexOf = (needle) => commands.findIndex((c) => c.includes(needle));
+
+    const install = indexOf("rustup component add rustfmt clippy");
+    const fmt = indexOf("cargo fmt --check");
+    const clippy = indexOf("cargo clippy --all-targets -- -D warnings");
+
+    expect(install).toBeGreaterThanOrEqual(0);
+    expect(fmt).toBeGreaterThanOrEqual(0);
+    expect(clippy).toBeGreaterThanOrEqual(0);
+    expect(install).toBeLessThan(fmt);
+    expect(install).toBeLessThan(clippy);
+    // And before the build/test the lint gate exists to gate.
+    expect(install).toBeLessThan(indexOf("cargo build --locked"));
+  });
+
+  it("does not install rust components when code-quality-rust is absent", async () => {
+    const files = await generate(["buildkite", "devcontainer-rust"]);
+    expect(pipelineFrom(files).content).not.toContain("rustup component add");
+  });
+
   it("builds the Svelte frontend in its own step for a rust primary", async () => {
     // The rust image has no node, so the frontend cannot be built in the rust
     // step; it gets a node-image step the build waits for.

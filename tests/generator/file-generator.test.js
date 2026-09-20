@@ -502,6 +502,28 @@ describe("TemplateEngine", () => {
     expect(content).not.toContain("command: npx wrangler deploy");
   });
 
+  it("installs rustfmt and clippy before the CircleCI rust lint", async () => {
+    // The same gap as Buildkite: a rust lint step that never installs the
+    // components fails on every clean project. Both providers emit the lint
+    // through one shared command list, so pin the emitted circle config too.
+    const files = await generateAllFiles({
+      name: "test-project",
+      capabilities: ["circleci", "devcontainer-rust", "code-quality-rust"],
+      configuration: {},
+    });
+    const content = files.find(
+      (f) => f.filePath === ".circleci/config.yml",
+    ).content;
+
+    expect(content).toContain("rustup component add rustfmt clippy");
+    expect(content.indexOf("rustup component add rustfmt clippy")).toBeLessThan(
+      content.indexOf("cargo fmt --check"),
+    );
+    expect(content.indexOf("rustup component add rustfmt clippy")).toBeLessThan(
+      content.indexOf("cargo clippy --all-targets -- -D warnings"),
+    );
+  });
+
   it("should include agy-dev alias in .zshrc when Doppler capability is present in generateAllFiles", async () => {
     const context = {
       name: "test-project",

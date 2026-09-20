@@ -581,10 +581,11 @@ function _applyCloudflareConfig(
  * Language-aware lint step for CircleCI.
  * - Python: `ruff check .` for MicroPython firmware (root + `lib/`), otherwise
  *   `ruff check src tests`; ruff ships in the `[dev]` extra.
- * - Rust: `cargo fmt --check` + `cargo clippy --all-targets -- -D warnings`,
- *   contributed by `code-quality-rust` (clippy/fmt ship with the toolchain, so
- *   there is no dependency to install; without the capability the project has
- *   no lint gate at all).
+ * - Rust: `rustup component add rustfmt clippy`, then `cargo fmt --check` +
+ *   `cargo clippy --all-targets -- -D warnings`, contributed by
+ *   `code-quality-rust`. rustfmt and clippy are *components*, not part of the
+ *   toolchain the official images ship (see {@link RUST_LINT_SETUP_COMMAND});
+ *   without the capability the project has no lint gate at all.
  * - Node: ESLint + SonarJS via `npm run lint` (existing behavior).
  */
 function _applyCodeQualityConfig(data, context) {
@@ -599,11 +600,13 @@ function _applyCodeQualityConfig(data, context) {
           command: ${ruffCheckCommand(context)}\n`;
     }
   } else if (language === "rust") {
-    // Gated on the capability, not the devcontainer: clippy and fmt come with
-    // the rust toolchain, but an ungated `-D warnings` would fail builds on
-    // code the project never opted into gating.
+    // Gated on the capability, not the devcontainer: rustfmt and clippy must be
+    // added to the toolchain first, but an ungated `-D warnings` would fail
+    // builds on code the project never opted into gating.
     if (context.capabilities.includes("code-quality-rust")) {
-      const lintCommands = RUST_LINT_COMMANDS.map(
+      // The setup command runs first: the image is rust's minimal profile, so
+      // `cargo fmt`/`cargo clippy` are absent until the components are added.
+      const lintCommands = RUST_LINT_STEP_COMMANDS.map(
         (command) => `            ${command}`,
       ).join("\n");
       data.testSteps += `      - run:
@@ -780,6 +783,24 @@ export function ruffCheckCommand(context) {
 }
 
 /**
+ * The toolchain setup `code-quality-rust` needs before it can lint.
+ *
+ * `rustfmt` and `clippy` are rustup **components**, and the official `rust`
+ * images are built with the rustup **minimal** profile — rustc and cargo only.
+ * That is true both of the CI image (`rust:1-slim`, see the buildkite image
+ * table) and of the devcontainer base image
+ * (`mcr.microsoft.com/devcontainers/rust:1-bookworm`, which is itself
+ * `FROM rust:1-bookworm`). So `cargo fmt` dies with
+ * `'cargo-fmt' is not installed for the toolchain '<version>'` and clippy is
+ * missing for the same reason — a clean generated project goes red on its first
+ * build. A component add is idempotent, so it costs nothing when a host image
+ * already carries them.
+ *
+ * @type {string}
+ */
+export const RUST_LINT_SETUP_COMMAND = "rustup component add rustfmt clippy";
+
+/**
  * The lint commands `code-quality-rust` contributes to CI.
  *
  * `--all-targets` so tests and benches are linted too (a surprising amount of
@@ -793,6 +814,21 @@ export function ruffCheckCommand(context) {
 export const RUST_LINT_COMMANDS = [
   "cargo fmt --check",
   "cargo clippy --all-targets -- -D warnings",
+];
+
+/**
+ * The full lint step: install the components, then run the lints, in that
+ * order. Every emitter of a rust lint step uses this — never
+ * {@link RUST_LINT_COMMANDS} alone — so no call site (Buildkite, CircleCI, a
+ * future provider) can be self-consistent yet broken against a real image by
+ * forgetting the install. The regression test pins the emitted order, not the
+ * constant, so a template edit that drops the setup fails.
+ *
+ * @type {string[]}
+ */
+export const RUST_LINT_STEP_COMMANDS = [
+  RUST_LINT_SETUP_COMMAND,
+  ...RUST_LINT_COMMANDS,
 ];
 
 /**
@@ -2323,13 +2359,19 @@ ${_bkDockerPlugin(
     ? (singleArtifactPaths[0] || "").replace(/\/\*\*$/, "")
     : "";
 
-  // `code-quality-rust` contributes commands, not a step: clippy and fmt run
-  // inside the build, exactly as the CircleCI language-aware lint does. The
-  // commands are prepended to the FIRST build unit - in a release matrix the
-  // first unit is the one that runs tests against the host toolchain, and
-  // linting is a whole-crate check that does not need repeating per target.
+  // `code-quality-rust` contributes commands, not a step: the component
+  // install and the lints run inside the build, exactly as the CircleCI
+  // language-aware lint does. The commands are prepended to the FIRST build
+  // unit - in a release matrix the first unit is the one that runs tests
+  // against the host toolchain, and linting is a whole-crate check that does
+  // not need repeating per target. RUST_LINT_STEP_COMMANDS (not
+  // RUST_LINT_COMMANDS) is what carries the `rustup component add`: rust:1-slim
+  // is the minimal profile, with neither rustfmt nor clippy.
   if (language === "rust" && caps.includes("code-quality-rust")) {
-    buildUnits[0].commands = [...RUST_LINT_COMMANDS, ...buildUnits[0].commands];
+    buildUnits[0].commands = [
+      ...RUST_LINT_STEP_COMMANDS,
+      ...buildUnits[0].commands,
+    ];
   }
 
   // --- frontend build (sveltekit in a non-node project) --------------------
