@@ -326,7 +326,19 @@ fi
  * runtime (GOOSE_ALIAS runs goose under `doppler run`). Recipes are still
  * bootstrapped (recipes/ dir is additive).
  *
- * An existing config.yaml is preserved untouched (never clobbered).
+ * An existing config.yaml is MERGED into, never replaced: each managed
+ * extension that is missing is inserted under the existing top-level
+ * `extensions:` key, and the user's own entries and top-level settings are
+ * left byte-for-byte alone. A config that exists *without* an `extensions:`
+ * section — exactly what goose writes for itself
+ * (`GOOSE_TELEMETRY_ENABLED: true`) the first time it runs — gets the managed
+ * section added, so the project's extensions are installed even when goose
+ * beat this script to the file. The only case genproj refuses to touch is an
+ * `extensions:` section laid out with an indent other than 2 spaces (or an
+ * inline `extensions: {...}`), where inserting a 2-space block would produce
+ * invalid YAML: there it prints the block for the user to merge by hand.
+ * See the comment on the write for why the merge (rather than write-if-absent)
+ * is not hypothetical.
  *
  * @returns {string} The setup script content
  */
@@ -360,20 +372,117 @@ export function generateGooseSetupScript(context = {}) {
   const configYaml = `extensions:
 ${extensionBody}\n`;
 
-  // Write-if-absent. The heredoc is quoted (`'GOOSECFGEOF'`) so nothing is
-  // shell-expanded; the whole config is produced here in JS so the YAML is
-  // flush-left and byte-exact. Provider intentionally omitted (Doppler env).
+  // The heredocs are quoted (`'GOOSECFGEOF'`) so nothing is shell-expanded; the
+  // whole config is produced here in JS so the YAML is flush-left and byte-exact.
+  // Provider intentionally omitted (Doppler env).
+  //
+  // This is NOT "write-if-absent" any more. goose creates a default
+  // `~/.config/goose/config.yaml` (telemetry only) the first time it runs, and
+  // in a generated container that can happen before this script reaches here:
+  // post-create is long, the container is usable the moment it is up, and a
+  // person running `goose` in a terminal while it finishes wins the race. The
+  // old `if [ -f "$CONFIG" ]; then keep` then skipped the project config
+  // forever — measured on a2a-goose, 2026-09-20: `goose` ran at 02:08:07, the
+  // 30-byte telemetry config was born at 02:08:16, this block ran after the
+  // git-auth step (~02:08:30) and found it, so the container had no
+  // `mcphub-dev` and no way to get one. So, in order:
+  //   - absent                         -> write the whole extensions-only config;
+  //   - exists, every managed key there-> already ours, leave it (idempotent);
+  //   - exists, no `extensions:`       -> goose's own default; append the section;
+  //   - exists with `extensions:`      -> MERGE: insert only the missing keys
+  //                                       directly under it, byte-for-byte
+  //                                       preserving the user's own entries;
+  //   - `extensions:` odd (inline, or an indent other than 2 spaces) -> print
+  //                                       the block; do not risk invalid YAML.
+  // Inserting into a section is safe because every managed fragment is a
+  // self-contained `  <key>:\n    ...` chunk with no keys in common with a
+  // normal config; nothing existing is ever rewritten or removed.
+  const managedKeys = fragments.map((f) => f.key).join(" ");
   const gooseConfigWrite = `
 CONFIG="$HOME/.config/goose/config.yaml"
-if [ -f "$CONFIG" ]; then
-    echo "INFO: Keeping existing $CONFIG (provider + extensions preserved)."
-else
+mkdir -p "$HOME/.config/goose"
+
+# The managed fragments, written once into a scratch file. The merge below
+# picks the subset the config is missing. A fragment starts at '  <key>:' —
+# exactly two spaces, the child indent under a top-level \`extensions:\`.
+MANAGED_BODY="$(mktemp)"
+cat > "$MANAGED_BODY" <<'GOOSECFGBODYEOF'
+${extensionBody}
+GOOSECFGBODYEOF
+
+if [ ! -f "$CONFIG" ]; then
     echo "INFO: No goose config found - writing project goose config (extensions only; provider resolves from Doppler env at runtime)."
-    mkdir -p "$HOME/.config/goose"
     cat > "$CONFIG" <<'GOOSECFGEOF'
 ${configYaml}GOOSECFGEOF
     echo "INFO: Wrote project goose config (MCPHub dev group + local/remote exceptions)."
+else
+    MISSING=""
+    for KEY in ${managedKeys}; do
+        grep -q "^[[:space:]]*$KEY:" "$CONFIG" || MISSING="$MISSING $KEY"
+    done
+
+    MISSING_BODY="$(mktemp)"
+    awk -v missing=" $MISSING " '
+        /^  [A-Za-z0-9_-]+:[[:space:]]*$/ {
+            k = $0
+            sub(/^ +/, "", k)
+            sub(/:.*/, "", k)
+            keep = (index(missing, " " k " ") > 0)
+        }
+        keep { print }
+    ' "$MANAGED_BODY" > "$MISSING_BODY"
+
+    if [ -z "$MISSING" ] || [ ! -s "$MISSING_BODY" ]; then
+        echo "INFO: Project goose extensions already present in $CONFIG - leaving it untouched."
+    elif grep -q '^extensions:' "$CONFIG" && ! grep -q '^extensions:[[:space:]]*$' "$CONFIG"; then
+        echo "WARN: $CONFIG declares 'extensions:' inline; genproj will not merge into that form."
+        echo "WARN: add the entry below by hand:"
+        sed 's/^/WARN:   /' "$MISSING_BODY"
+    elif ! grep -q '^extensions:[[:space:]]*$' "$CONFIG"; then
+        echo "INFO: $CONFIG exists without an extensions section (goose's own default) - adding the project extensions."
+        # Nothing to merge with, so a fresh section is safe and idempotent:
+        # the next run finds every managed key already present and stops here.
+        printf '\\n' >> "$CONFIG"
+        {
+            printf 'extensions:\\n'
+            cat "$MISSING_BODY"
+        } >> "$CONFIG"
+        echo "INFO: Added project goose extensions to $CONFIG."
+    else
+        # Merge under the existing top-level extensions: key. The indentation
+        # of its first child tells us whether a 2-space block can be spliced in.
+        # No child (empty/EOF) or 0 spaces (null section) are fine — our block
+        # becomes the section's content; 4+ spaces would need re-indenting, so
+        # that (and only that) is left to the user.
+        CHILD_INDENT="$(awk '
+            /^extensions:[[:space:]]*$/ { found = 1; next }
+            found && (/^[[:space:]]*$/ || /^[[:space:]]*#/) { next }
+            found { match($0, /^ */); print RLENGTH; exit }
+        ' "$CONFIG")"
+        if [ -n "$CHILD_INDENT" ] && [ "$CHILD_INDENT" != "2" ]; then
+            echo "WARN: $CONFIG has an extensions: section indented by $CHILD_INDENT spaces (not 2)."
+            echo "WARN: add the entry below by hand so the YAML stays valid:"
+            sed 's/^/WARN:   /' "$MISSING_BODY"
+        else
+            MERGED="$(mktemp)"
+            awk -v body="$MISSING_BODY" '
+                /^extensions:[[:space:]]*$/ && !done {
+                    print
+                    while ((getline line < body) > 0) print line
+                    close(body)
+                    done = 1
+                    next
+                }
+                { print }
+            ' "$CONFIG" > "$MERGED"
+            cat "$MERGED" > "$CONFIG"
+            rm -f "$MERGED"
+            echo "INFO: Merged project goose extensions into the existing extensions: section of $CONFIG (added:$MISSING)."
+        fi
+    fi
+    rm -f "$MISSING_BODY"
 fi
+rm -f "$MANAGED_BODY"
 `;
 
   return `
