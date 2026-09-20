@@ -941,7 +941,7 @@
       "benefits": [
         "Catches bugs, code smells and unidiomatic code before merge",
         "No external service or API token required",
-        "Clippy ships with the Rust toolchain - nothing to install",
+        "Adds rustfmt and clippy as rustup components - they are not in the stock minimal-profile Rust images",
         "Works offline and in any CI environment"
       ],
       "links": [],

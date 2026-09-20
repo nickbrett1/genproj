@@ -656,6 +656,30 @@ describe("DevContainer Generation Tests", () => {
     expect(zshrc).toContain('tmux has-session -t "$candidate" 2>/dev/null');
     expect(zshrc).toContain("start the named session");
   });
+
+  it("installs rustfmt and clippy in the rust devcontainer image", async () => {
+    // Same gap as the CI image, on the devcontainer side: devcontainers/rust is
+    // `FROM rust:1-<variant>`, and the official rust images carry the rustup
+    // *minimal* profile, so rustfmt and clippy are absent. Without this the
+    // local lint gate and any hand-run `cargo fmt`/`cargo clippy` fail with
+    // "'cargo-fmt' is not installed for the toolchain".
+    const engine = new TemplateEngine();
+    await engine.initialize();
+
+    const files = generateMergedDevelopmentContainerFiles(
+      engine,
+      { capabilities: ["devcontainer-rust"], configuration: {} },
+      ["devcontainer-rust"],
+    );
+    const dockerfile = files.find(
+      (f) => f.filePath === ".devcontainer/Dockerfile",
+    );
+
+    expect(dockerfile).toBeDefined();
+    expect(dockerfile.content).toContain(
+      "RUN rustup component add rustfmt clippy",
+    );
+  });
 });
 
 describe("DevContainer kitchen-sink gating (memo §2.9 / audit §4.5)", () => {
