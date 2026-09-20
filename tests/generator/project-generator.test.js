@@ -644,11 +644,60 @@ describe("ProjectGeneratorService", () => {
       expect(results.doppler.strategy).toBe("common");
       expect(results.doppler.project.slug).toBe("common");
       expect(service.services.sonarcloud.createProject).toHaveBeenCalled();
-      // Dependabot is configured purely by generated files; it must not
-      // create a PAT secret (the workflow uses the default GITHUB_TOKEN).
+      // Dependabot does not need a PAT secret (the workflow uses the default
+      // GITHUB_TOKEN)...
       expect(
         service.services.github.createRepositorySecret,
       ).not.toHaveBeenCalled();
+      // ...but the generated `gh pr merge --auto` needs the repository
+      // setting allow_auto_merge, which cannot be expressed as a file.
+      expect(service.services.github.enableAutoMerge).toHaveBeenCalledWith(
+        "owner",
+        "repo",
+      );
+    });
+
+    it("should not touch auto-merge when dependabot is not selected", async () => {
+      const contextWithoutDependabot = {
+        ...context,
+        capabilities: ["circleci"],
+      };
+      service.services.circleci.followProject.mockResolvedValue({
+        success: true,
+      });
+      service.services.circleci.updateProjectSettings.mockResolvedValue({
+        vcs: { default_branch: "main" },
+      });
+      service.services.circleci.triggerPipeline.mockResolvedValue({
+        id: "pipeline-1",
+        number: 1,
+      });
+
+      await service.configureExternalServices(
+        contextWithoutDependabot,
+        repository,
+      );
+
+      expect(service.services.github.enableAutoMerge).not.toHaveBeenCalled();
+    });
+
+    it("should survive auto-merge being rejected by GitHub", async () => {
+      const contextWithDependabot = {
+        ...context,
+        capabilities: ["dependabot"],
+      };
+      service.services.github.enableAutoMerge.mockRejectedValueOnce(
+        new Error("GitHub API error: 403 Forbidden"),
+      );
+
+      const results = await service.configureExternalServices(
+        contextWithDependabot,
+        repository,
+      );
+
+      expect(results.dependabot.success).toBe(true);
+      expect(results.dependabot.autoMerge).toBe(false);
+      expect(results.dependabot.warnings[0]).toContain("403");
     });
 
     it("should create a dedicated Doppler project when projectStrategy=new", async () => {

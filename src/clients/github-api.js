@@ -477,6 +477,44 @@ export class GitHubAPIService extends BaseAPIService {
   }
 
   /**
+   * Enables auto-merge on a repository.
+   *
+   * The generated `.github/workflows/dependabot-auto-merge.yml` runs
+   * `gh pr merge --auto --merge`, which fails with
+   * `GraphQL: Auto merge is not allowed for this repository
+   * (enablePullRequestAutoMerge)` unless the repository setting
+   * `allow_auto_merge` is true. That setting is a repository property, not a
+   * file, so emitting the workflow alone cannot provision what it assumes —
+   * genproj has to PATCH it, the same way `createWebhook` provisions the
+   * webhook the CircleCI/Buildkite integration assumes exists.
+   *
+   * Best-effort and idempotent: GitHub accepts a PATCH that repeats the
+   * current value.
+   * @param {string} owner - Repository owner
+   * @param {string} repo - Repository name
+   * @returns {Promise<{allowAutoMerge: boolean}>} Updated auto-merge setting
+   */
+  async enableAutoMerge(owner, repo) {
+    console.log(`🔄 Enabling auto-merge for ${owner}/${repo}`);
+
+    const response = await this.makeRequest(`/repos/${owner}/${repo}`, {
+      method: "PATCH",
+      body: JSON.stringify({ allow_auto_merge: true }),
+    });
+
+    const repository = await response.json();
+    const allowAutoMerge = repository.allow_auto_merge === true;
+
+    console.log(
+      allowAutoMerge
+        ? `✅ Auto-merge enabled for ${owner}/${repo}`
+        : `⚠️ Auto-merge still disabled for ${owner}/${repo}`,
+    );
+
+    return { allowAutoMerge };
+  }
+
+  /**
    * Gets repository information
    * @param {string} owner - Repository owner
    * @param {string} repo - Repository name

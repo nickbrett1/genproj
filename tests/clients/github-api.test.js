@@ -359,6 +359,30 @@ describe("GitHubAPIService", () => {
     ]);
   });
 
+  it("enables auto-merge by PATCHing allow_auto_merge", async () => {
+    const repoJson = vi.fn().mockResolvedValue({ allow_auto_merge: true });
+    const makeRequest = vi
+      .spyOn(service, "makeRequest")
+      .mockResolvedValue({ json: repoJson });
+
+    const result = await service.enableAutoMerge("user", "repo");
+
+    expect(makeRequest).toHaveBeenCalledWith("/repos/user/repo", {
+      method: "PATCH",
+      body: JSON.stringify({ allow_auto_merge: true }),
+    });
+    expect(result).toEqual({ allowAutoMerge: true });
+  });
+
+  it("reports when auto-merge is still disabled", async () => {
+    const repoJson = vi.fn().mockResolvedValue({ allow_auto_merge: false });
+    vi.spyOn(service, "makeRequest").mockResolvedValue({ json: repoJson });
+
+    expect(await service.enableAutoMerge("user", "repo")).toEqual({
+      allowAutoMerge: false,
+    });
+  });
+
   it("retrieves repositories and validates token", async () => {
     const repoPayload = {
       name: "repo",
