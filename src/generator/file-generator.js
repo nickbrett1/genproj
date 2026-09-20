@@ -35,6 +35,8 @@ const githubReleaseNotes = templateFiles["github-release-notes.template"];
 const githubReleaseReadme = templateFiles["github-release-readme.template"];
 const githubReleaseArtifacts =
   templateFiles["github-release-artifacts.template"];
+const githubReleaseSmokeLaunch =
+  templateFiles["github-release-smoke-launch.template"];
 const dockerfileTemplate = templateFiles["dockerfile.template"];
 const dockerignoreTemplate = templateFiles["dockerignore.template"];
 const dockerComposeTemplate = templateFiles["docker-compose.template"];
@@ -896,6 +898,7 @@ const templateImports = {
   "github-release-notes": githubReleaseNotes,
   "github-release-readme": githubReleaseReadme,
   "github-release-artifacts": githubReleaseArtifacts,
+  "github-release-smoke-launch": githubReleaseSmokeLaunch,
   dockerfile: dockerfileTemplate,
   dockerignore: dockerignoreTemplate,
   "docker-compose": dockerComposeTemplate,

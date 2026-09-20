@@ -263,6 +263,12 @@ export const capabilityTemplates = {
       filePath: "scripts/release-artifacts.sh",
       templateId: "github-release-artifacts",
     },
+    {
+      id: "github-release-smoke-launch",
+      filePath: "scripts/smoke-launch.sh",
+      templateId: "github-release-smoke-launch",
+      isExecutable: true,
+    },
   ],
   "fetch-launch": [
     {

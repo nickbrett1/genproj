@@ -98,3 +98,71 @@ project-specific, so it is a follow-on change rather than part of this fix.
 - Rust matrix path untouched; `github-release.targets` still refuses non-rust;
   singular `github-release.target` still refuses rust (see
   `validateReleaseTargets` — unchanged).
+
+## Follow-up (same branch): the release step, merge, and the smoke gate
+
+### 1. The release step is NOT de-dockerised — it is still a container step
+
+The fix changed the **build** step only. The release step is rendered
+separately and unconditionally uses the project's queue and the docker plugin:
+
+```js
+${_bkAgents(queue)}    plugins:
+${_bkDockerPlugin(image, releaseEnv)}    commands:
+```
+
+So for `github-release.target: aarch64-apple-darwin` (python) the generated
+release step keeps `docker#v5.13.0` / `python:3.13-slim` / `platform:
+linux/arm64` and runs **in a Linux container on the `mac-studio-linux` queue**
+(whose hosts are Macs running Docker). Its `apt-get` bootstrap is therefore
+valid — `gh` and `doppler` are installed into the container as before, and
+`gh`/`doppler` do **not** need to be provided on the macOS host. Only the build
+step (and the new smoke gate) are native. Nothing here is "open": the release
+step is containerised by design, because it does not need to run the payload —
+it downloads the build's artifacts and calls `gh`.
+
+The native steps are identified in the generated YAML by the absent `plugins:`
+block and `queue: mac-studio-linux`. Exact generated step keys: build `build`,
+smoke `smoke_aarch64_apple_darwin`, release `release`.
+
+### 2. Merge / deploy
+
+As of `17b18a5` the fix was committed on `fix/genproj-singular-target-native-build`
+and **not** merged to `main`. genproj is a Cloudflare Worker; `/mcp` (the
+`generate_project` tool) is served by the **deployed** Worker, and the repo's own
+Buildkite pipeline deploys on push to `main` (`npx --yes wrangler deploy`). So a
+regeneration picks up the native step only after the branch is **merged to
+`main` and the deploy has run**. Merging alone is not enough; the Worker must be
+redeployed.
+
+### 3. Smoke gate — landed in this change
+
+Implemented as recommended, with one important correction to the premise:
+
+- `scripts/smoke-launch.sh` is seeded once and is **app-owned** (under
+  `scripts/`, not in `GENPROJ_OWNED_SCRIPTS`), so regeneration creates it but
+  never overwrites it — the same rule as `release-artifacts.sh`.
+- A native `smoke_<target>` step is emitted for every **darwin** build unit
+  (singular or matrix), on `MACOS_QUEUE`, no docker plugin, `depends_on` the
+  darwin build step, main-only, with `env: RELEASE_TARGET: <target>`. It fetches
+  the build's artifacts with `buildkite-agent artifact download` (a native step
+  can use the agent binary directly; the release step's Linux container cannot,
+  which is why _that_ step uses the agent API).
+- The **release** step's `depends_on` gains the smoke key(s); all other consumers
+  (deploy, lighthouse, docker publish) keep depending on the build only.
+- The default script is fail-closed: entry point `bin/<project name>` exists and
+  is executable, is arm64 when it is a Mach-O (a wrapper script is checked by
+  running it), and answers to `--version`/`--help` under a portable timeout
+  (coreutils `timeout` is not on macOS), else the release is blocked.
+
+**Correction — "the built tarball" does not exist yet at smoke time.** In the
+current architecture the tarball is packed by `scripts/release-artifacts.sh`
+_inside the release step_, so no pre-release step can smoke-test a tarball. The
+smoke step therefore runs the **payload root the build step produced and
+uploaded** (`dist/` for the singular artifact, `build/<target>/` for a matrix);
+the tarball is packed from that same root (`tar -C <root> .`), so this checks the
+tarball's contents. A project that assembles its payload inside
+`release-artifacts.sh` (as netwatch-dash does: python-build-standalone + wheel +
+producers) must move that assembly so it has happened **before** the smoke step —
+into the build step or into `scripts/smoke-launch.sh`, which is the natural
+place, since the script is app-owned and runs on the Mac host.

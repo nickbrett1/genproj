@@ -689,12 +689,16 @@ describe("a single platform-specific artifact", () => {
     ).rejects.toThrow(/not\s+a release label/);
   });
 
-  // The build step is everything from its key up to the release step.
-  const buildStep = (yaml) =>
-    yaml.slice(
-      yaml.indexOf("key: build"),
-      yaml.indexOf('  - label: ":bookmark: Release"'),
-    );
+  // The build step is everything from its key up to the next step's label. The
+  // smoke gate now sits between the build and the release, so stopping at the
+  // release label would have swallowed it.
+  const stepByKey = (yaml, key) => {
+    const start = yaml.indexOf(`key: ${key}`);
+    expect(start).toBeGreaterThan(-1);
+    const next = yaml.indexOf("\n  - label:", start);
+    return yaml.slice(start, next === -1 ? undefined : next);
+  };
+  const buildStep = (yaml) => stepByKey(yaml, "build");
 
   it("builds a singular darwin artifact on the macOS host, not in a container", async () => {
     // A macOS payload cannot be assembled inside a Linux container - a bundled
@@ -765,5 +769,77 @@ describe("a single platform-specific artifact", () => {
       expect(buildStep(yaml)).not.toContain("docker#v5.13.0");
       expect(buildStep(yaml)).toContain("queue: mac-studio-linux");
     }
+  });
+
+  it("runs a singular darwin payload on the macOS host and gates the release on it", async () => {
+    // The build step proves the payload linked, not that it starts. A smoke
+    // step on the one host that can execute it, with the release depending on
+    // that step, is what stops a payload that cannot start from shipping.
+    const yaml = pipeline(
+      await generate(["buildkite", "github-release", "devcontainer-python"], {
+        language: "python",
+        buildkite: { queue: "linux-medium" },
+        "github-release": { target: DARWIN },
+      }),
+    );
+
+    const smoke = stepByKey(yaml, "smoke_aarch64_apple_darwin");
+    expect(smoke).not.toContain("docker#v5.13.0");
+    expect(smoke).toContain("queue: mac-studio-linux");
+    expect(smoke).toContain("depends_on:\n      - build");
+    expect(smoke).toContain(`RELEASE_TARGET: ${DARWIN}`);
+    expect(smoke).toContain('bash scripts/smoke-launch.sh "dist"');
+    // The release waits for the gate, so a payload that does not run blocks it.
+    const release = releaseSection(yaml);
+    expect(release).toContain("      - build");
+    expect(release).toContain("      - smoke_aarch64_apple_darwin");
+  });
+
+  it("seeds the app-owned smoke hook with the payload contract", async () => {
+    // Seeded once, like release-artifacts.sh: scripts/ is app-owned, so this is
+    // created on regeneration but never overwritten afterwards.
+    const files = await generate(
+      ["buildkite", "github-release", "devcontainer-python"],
+      { language: "python", "github-release": { target: DARWIN } },
+    );
+    const smoke = byPath(files, "scripts/smoke-launch.sh").content;
+
+    expect(smoke).toContain('ENTRY_NAME="test-project"');
+    expect(smoke).toContain('entry="$root/bin/$ENTRY_NAME"');
+    expect(smoke).toContain("Mach-O");
+    expect(smoke).toContain("--version");
+  });
+
+  it("gates the rust matrix on its darwin target only", async () => {
+    // No host in the fleet can execute a Linux musl artifact, so only the
+    // darwin target gets a smoke gate; the release still waits on every build.
+    const yaml = pipeline(
+      await generate(["buildkite", "github-release", "devcontainer-rust"], {
+        language: "rust",
+        "github-release": { targets: [DARWIN, "x86_64-unknown-linux-musl"] },
+      }),
+    );
+
+    expect(yaml).toContain("key: smoke_aarch64_apple_darwin");
+    expect(yaml).not.toContain("smoke_x86_64_unknown_linux_musl");
+    const smoke = stepByKey(yaml, "smoke_aarch64_apple_darwin");
+    expect(smoke).toContain(
+      'bash scripts/smoke-launch.sh "build/aarch64-apple-darwin"',
+    );
+    const release = releaseSection(yaml);
+    expect(release).toContain("      - smoke_aarch64_apple_darwin");
+    expect(release).toContain("      - build_x86_64_unknown_linux_musl");
+  });
+
+  it("adds no smoke step for a target that is not darwin", async () => {
+    const yaml = pipeline(
+      await generate(["buildkite", "github-release", "devcontainer-python"], {
+        language: "python",
+        "github-release": { target: "x86_64-unknown-linux-musl" },
+      }),
+    );
+
+    expect(yaml).not.toContain("Smoke-test");
+    expect(releaseSection(yaml)).not.toContain("smoke_");
   });
 });

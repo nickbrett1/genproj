@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+#
+# Smoke-test a built darwin payload before the release publishes it.
+#
+# genproj seeds this file once; after that it is yours. `scripts/` is app-owned,
+# so regeneration never overwrites it — unlike .buildkite/pipeline.yml, which is
+# genproj's and is rewritten on every regeneration.
+#
+# Why this exists
+# ---------------
+# A darwin target is built on a Mac host (see .buildkite/README.md): the one
+# host in the fleet that can execute a macOS payload. Building there proves the
+# payload links; it does not prove it runs. Nothing between the build step and
+# the release used to execute the artifact, so a payload that cannot start
+# shipped, and the failure surfaced only when a host installed it. The generated
+# pipeline now runs this script on the macOS host and gates the release on it.
+#
+# Contract
+# --------
+# Called with the payload root(s) the build step uploaded:
+#
+#   bash scripts/smoke-launch.sh dist
+#   bash scripts/smoke-launch.sh build/aarch64-apple-darwin
+#
+# Each root is a LAUNCHING.md payload: it must contain `bin/{{projectName}}`,
+# which starts and answers. The release tarball is packed from this same root
+# (`tar -C <root> .`), so what runs here is what the tarball contains.
+#
+# Fail-closed on purpose: a gate that can pass without running the payload is
+# decoration. If your payload needs arguments, environment or a different probe
+# (a server that has no `--version`/`--help`, say), edit this file — it is yours.
+set -euo pipefail
+
+ENTRY_NAME="{{projectName}}"
+PROBE_ARGS=(--version --help)
+TIMEOUT_SECS="${SMOKE_TIMEOUT:-20}"
+
+if [ "$#" -eq 0 ]; then
+  echo "usage: smoke-launch.sh <payload-root> [<payload-root>...]" >&2
+  exit 2
+fi
+
+# A portable `timeout`: coreutils' timeout is not on macOS by default, and this
+# runs on the Mac host. Returns the command's exit status, or the kill status
+# when the command had to be stopped.
+run_with_timeout() {
+  local secs="$1"
+  shift
+  "$@" &
+  local pid=$!
+  (
+    sleep "$secs"
+    if kill -0 "$pid" 2>/dev/null; then
+      echo "smoke-launch: payload did not answer within ${secs}s" >&2
+      kill -TERM "$pid" 2>/dev/null || true
+    fi
+  ) &
+  local watcher=$!
+  local rc=0
+  wait "$pid" || rc=$?
+  kill "$watcher" 2>/dev/null || true
+  wait "$watcher" 2>/dev/null || true
+  return "$rc"
+}
+
+failed=0
+for root in "$@"; do
+  entry="$root/bin/$ENTRY_NAME"
+  echo "smoke-launch: checking $root"
+  if [ ! -e "$entry" ]; then
+    echo "smoke-launch: no entry point at $entry — the payload root must hold bin/$ENTRY_NAME (see LAUNCHING.md)" >&2
+    failed=1
+    continue
+  fi
+  chmod +x "$entry" 2>/dev/null || true
+  if [ ! -x "$entry" ]; then
+    echo "smoke-launch: $entry is not executable" >&2
+    failed=1
+    continue
+  fi
+  # Architecture, when the entry is a Mach-O binary. A wrapper script (a python
+  # payload's bin/<name> shim) is not a Mach-O, and the run below is its real
+  # architecture check — a wrong-arch interpreter dies with "Bad CPU type".
+  if command -v file >/dev/null 2>&1; then
+    desc="$(file -b "$entry" 2>/dev/null || true)"
+    case "$desc" in
+      *Mach-O*)
+        case "$desc" in
+          *arm64* | *aarch64*) : ;;
+          *)
+            echo "smoke-launch: $entry is not an arm64 binary (file: $desc)" >&2
+            failed=1
+            continue
+            ;;
+        esac
+        ;;
+    esac
+  fi
+  # Starts and answers: try a probe flag under a timeout. A payload that exits 0
+  # for neither probe does not start the way LAUNCHING.md promises, so it fails
+  # closed rather than releasing.
+  answered=0
+  for probe in "${PROBE_ARGS[@]}"; do
+    if run_with_timeout "$TIMEOUT_SECS" "$entry" "$probe" >/dev/null 2>&1; then
+      answered=1
+      break
+    fi
+  done
+  if [ "$answered" -ne 1 ]; then
+    echo "smoke-launch: $entry did not answer to --version or --help within ${TIMEOUT_SECS}s" >&2
+    echo "smoke-launch: edit this script to run your payload's own smoke command" >&2
+    failed=1
+    continue
+  fi
+  echo "smoke-launch: $root OK"
+done
+
+if [ "$failed" -ne 0 ]; then
+  echo "smoke-launch: one or more payloads failed - not releasing" >&2
+  exit 1
+fi
+echo "smoke-launch: all payloads ran"

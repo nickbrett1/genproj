@@ -1856,6 +1856,65 @@ ${buildCommands}
 }
 
 /**
+ * The step key of the smoke gate for a target. Distinct from the build step's
+ * key so the release can depend on the gate rather than on the build.
+ *
+ * @param {string} target - A release target label
+ * @returns {string} A step key unique to that target's smoke gate
+ */
+function smokeStepKey(target) {
+  return `smoke_${target.replaceAll(/[.-]/g, "_")}`;
+}
+
+/**
+ * Renders the smoke step that RUNS a darwin target's payload before release.
+ *
+ * A darwin payload is built on a Mac host - the only host in the fleet that can
+ * execute it - but building it there proves it links, not that it runs. Nothing
+ * between the build step and the release used to execute the artifact, so a
+ * payload that could not start shipped and failed only once a host installed
+ * it. This step runs the seeded, app-owned `scripts/smoke-launch.sh` against
+ * the payload the build step uploaded, and the release depends on it.
+ *
+ * Native, exactly like the darwin build step: no docker plugin (a macOS payload
+ * cannot run in a Linux container) and the macOS queue whatever the project's
+ * queue is. Being native is also what lets it fetch artifacts with the agent
+ * binary directly - the release step cannot, because its Linux container cannot
+ * launch the macOS agent binary (which is why that step uses the agent API).
+ *
+ * @param {Object} unit - The darwin build unit this gate runs
+ * @returns {string} The step, as YAML
+ */
+function renderSmokeStep(unit) {
+  const roots = unit.artifactPaths.map((p) => p.replace(/\/\*\*$/, ""));
+  const patterns = unit.artifactPaths.map((p) => `"${p}"`).join(" ");
+  return `
+  - label: ":apple: Smoke-test (${unit.target})"
+    key: ${smokeStepKey(unit.target)}
+    depends_on:
+      - ${unit.key}
+    # Main-only, like the release it gates: a darwin payload is only published
+    # from main, and a native Mac job on every branch buys nothing the release
+    # gate does not already cover.
+    if: build.branch == "main"
+    agents:
+      queue: ${MACOS_QUEUE}
+    env:
+      RELEASE_TARGET: ${unit.target}
+    commands:
+      - |
+        # The payload this step runs is exactly what the build step uploaded. A
+        # native step can call the agent binary directly; the release step cannot
+        # (its Linux container cannot launch the macOS agent binary), which is
+        # why that step uses the agent API instead.
+        for pattern in ${patterns}; do
+          buildkite-agent artifact download "$$pattern" .
+        done
+      - bash scripts/smoke-launch.sh ${roots.map((r) => `"${r}"`).join(" ")}
+`;
+}
+
+/**
  * Builds the generated project's `.buildkite/pipeline.yml`.
  *
  * The step set is **capability-driven**, mirroring the CircleCI template: the
@@ -2064,12 +2123,39 @@ ${_bkDockerPlugin(
     );
   }
 
+  // --- darwin smoke gate (github-release) ----------------------------------
+  // Every darwin build unit gets a step that RUNS the payload it produced: the
+  // darwin host is the one host in the fleet that can execute a macOS artifact,
+  // and building it there is not the same as it starting. The release depends on
+  // these (see releaseDependencies), so a payload that cannot start blocks the
+  // release instead of failing on the first host that installs it. Only a
+  // darwin unit is gated: no host in this fleet can execute the Linux targets.
+  const darwinBuildUnits = hasGithubRelease
+    ? buildUnits.filter((unit) => unit.target && isDarwinTarget(unit.target))
+    : [];
+  for (const unit of darwinBuildUnits) {
+    steps.push(renderSmokeStep(unit));
+  }
+
   // Every step that consumes the build's output depends on all of its steps,
   // not just one: with targets declared the build is a matrix, and a release
   // that depended on a single target's step would attach whatever that one
   // produced and call the release complete.
   const buildDependencies = `    depends_on:
 ${buildUnits.map((unit) => `      - ${unit.key}`).join("\n")}
+`;
+
+  // The release additionally depends on each darwin smoke gate, so the release
+  // is not published until the payload has been run. Only the release takes
+  // these extra edges: the deploy steps consume the build, not the release
+  // payload, and must not wait on a macOS smoke test to deploy.
+  const releaseDependencies = `    depends_on:
+${[
+  ...buildUnits.map((unit) => unit.key),
+  ...darwinBuildUnits.map((unit) => smokeStepKey(unit.target)),
+]
+  .map((key) => `      - ${key}`)
+  .join("\n")}
 `;
 
   // --- Lighthouse (lighthouse-ci) ------------------------------------------
@@ -2342,7 +2428,7 @@ ${dopplerCliInstallCommands("        ")}      - |
     steps.push(`
   - label: ":bookmark: Release"
     key: release
-${buildDependencies}    if: build.branch == "main"
+${releaseDependencies}    if: build.branch == "main"
 ${_bkAgents(queue)}    plugins:
 ${_bkDockerPlugin(image, releaseEnv)}    commands:
 ${installGh}${releaseToken}      - |
