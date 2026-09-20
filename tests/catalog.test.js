@@ -118,6 +118,20 @@ describe("catalog metadata", () => {
     );
   });
 
+  it("requires doppler, so the release token never comes from the fleet env", () => {
+    // The release step resolves GITHUB_RELEASE_TOKEN through Doppler. Without
+    // the capability it would fall back to a GH_TOKEN in the agent's
+    // environment, which puts a repository write token on every job on the
+    // fleet - so the dependency is what makes the token plumbing non-optional.
+    expect(getCapabilityById("github-release").dependencies).toEqual([
+      "buildkite",
+      "doppler",
+    ]);
+    const result = resolveDependencies(["buildkite", "github-release"]);
+    expect(result.resolvedCapabilities).toContain("doppler");
+    expect(result.addedDependencies).toContain("doppler");
+  });
+
   it("declares what the devcontainer capabilities provide", () => {
     const provided = Object.fromEntries(
       capabilities

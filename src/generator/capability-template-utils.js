@@ -2298,6 +2298,12 @@ ${dopplerCliInstallCommands("        ")}      - |
         # No doppler capability: the token has to come from the agent
         # environment, the same fleet-side contract the deploy step uses for
         # CLOUDFLARE_*. It needs Contents: read and write on this repository.
+        #
+        # github-release now declares doppler as a dependency, so a resolved
+        # selection never reaches this branch. It is kept as a defensive
+        # fallback for callers that bypass dependency resolution rather than
+        # deleted, because removing it would turn a token problem into a
+        # generation error for them.
         if [ -z "$$GH_TOKEN" ]; then
           echo "GH_TOKEN is not set on the agent - cannot create a tag or a release." >&2
           exit 1

@@ -13,6 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { generateAllFiles } from "../../src/generator/file-generator.js";
+import { resolveCapabilityDependencies } from "../../src/generator/project-context.js";
 
 const generate = (capabilities, configuration = {}) =>
   generateAllFiles({ name: "test-project", capabilities, configuration });
@@ -88,6 +89,27 @@ describe("GitHub release file generation", () => {
     expect(
       release.indexOf("-recommends curl ca-certificates gpgv"),
     ).toBeLessThan(release.indexOf("cli.doppler.com/install.sh"));
+  });
+
+  it("auto-adds doppler, so the token comes from Doppler not the agent env", async () => {
+    // Selecting github-release alone used to emit the GH_TOKEN-from-the-agent
+    // step. The catalog dependency now folds doppler into the resolved set, so
+    // the emitted step is the Doppler one and the fleet-environment fallback is
+    // unreachable for a generated project.
+    const capabilities = resolveCapabilityDependencies([
+      "buildkite",
+      "github-release",
+      "devcontainer-node",
+    ]);
+    expect(capabilities).toContain("doppler");
+
+    const files = await generate(capabilities, {});
+    const release = releaseSection(pipeline(files));
+
+    expect(release).toContain(
+      "doppler secrets get GITHUB_RELEASE_TOKEN --project common --config prd",
+    );
+    expect(release).not.toContain("GH_TOKEN is not set on the agent");
   });
 
   it("passes artifacts from the build step to the release instead of rebuilding", async () => {

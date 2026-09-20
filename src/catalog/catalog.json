@@ -603,7 +603,7 @@
       "iconColor": "gray",
       "selectedByDefault": false,
       "provides": [],
-      "dependencies": ["buildkite"],
+      "dependencies": ["buildkite", "doppler"],
       "conflicts": [],
       "requiresAuth": [],
       "authServices": [],

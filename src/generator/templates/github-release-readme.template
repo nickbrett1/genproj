@@ -111,11 +111,10 @@ what ships.
 ## Prerequisites
 
 - A release-write token, resolved at run time and never stored in the
-  repository: with the `doppler` capability selected, the release step reads
-  `GITHUB_RELEASE_TOKEN` from the `common` Doppler project (`prd` config); the
-  agent forwards only `DOPPLER_TOKEN` into the container.
-- Without `doppler`, the step expects `GH_TOKEN` in the agent's environment —
-  the same fleet-side contract the deploy step uses for `CLOUDFLARE_*`.
+  repository: the release step reads `GITHUB_RELEASE_TOKEN` from the `common`
+  Doppler project (`prd` config), and the agent forwards only `DOPPLER_TOKEN`
+  into the container. `github-release` requires the `doppler` capability, so
+  this plumbing is always present in a release project.
 
 ## What this does not do
 
