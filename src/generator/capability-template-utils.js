@@ -2548,6 +2548,38 @@ ${syncSecrets("preview")}`);
     const buildPlatforms =
       dcConfig.armBuilds === true ? "linux/amd64,linux/arm64" : "linux/amd64";
 
+    // The registry credential has one of two sources, chosen by whether the
+    // doppler capability is selected - the same gate the cloudflare-wrangler
+    // deploy step uses. `docker-container` deliberately does NOT declare
+    // doppler as a hard dependency: hasGoose is `includes("doppler")`, so that
+    // would drag goose (the binary, the wrapper, the Doppler context pin, the
+    // SSH git-auth setup, the README section) into every container project -
+    // including the ones that select no CI at all and never emit this step.
+    //   - With doppler, GHCR_UPDATE_TOKEN is resolved at run time with the
+    //     agent's DOPPLER_TOKEN - the same channel the secret scan uses. This
+    //     is preferred because a write:packages token in the agent's
+    //     environment hook would be readable by every job on the fleet.
+    //   - Without it, the credentials come from the agent environment by name,
+    //     the same GHCR_USERNAME/GHCR_TOKEN contract the CircleCI context
+    //     supplies. Both branches are real channels - unlike the release step's
+    //     GH_TOKEN branch, which its doppler dependency makes unreachable.
+    const dockerCredentialCommands = hasDoppler
+      ? `        # Resolved at run time, never stored in the repository and never in the
+        # agent's environment hook, where every job on the fleet could read it.
+        GHCR_USERNAME=${registryNamespace}
+        GHCR_TOKEN="$$(curl -fsS -H "Authorization: Bearer $$DOPPLER_TOKEN" "https://api.doppler.com/v3/configs/config/secret?project=common&config=prd&name=GHCR_UPDATE_TOKEN" | sed -n 's/.*"raw"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p')"
+        if [ -z "$$GHCR_TOKEN" ]; then
+          echo "GHCR_UPDATE_TOKEN is missing from Doppler (common/prd) - cannot publish." >&2
+          exit 1
+        fi`
+      : `        # No doppler capability: the registry credentials come from the agent
+        # environment, the same GHCR_USERNAME/GHCR_TOKEN names the CircleCI
+        # context provides.
+        if [ -z "$$GHCR_USERNAME" ] || [ -z "$$GHCR_TOKEN" ]; then
+          echo "GHCR_USERNAME/GHCR_TOKEN are not set on the agent - cannot publish." >&2
+          exit 1
+        fi`;
+
     steps.push(`
   - label: ":docker: Build and publish image (GHCR)"
     key: docker_publish
@@ -2556,18 +2588,8 @@ ${_bkAgents(queue)}    env:
       IMAGE: ${imageRef}
       CACHE_REF: ${cacheRef}
     commands:
-      # Credentials are resolved from Doppler at runtime with the agent's
-      # DOPPLER_TOKEN - the same channel ftn's secret scan uses. CircleCI supplied
-      # them through its "context: common"; Buildkite has no equivalent,
-      # and putting a registry token in the agent's environment hook would expose
-      # it to every job on the fleet. The value is only ever in the job's shell.
       - |
-        GHCR_USERNAME=${registryNamespace}
-        GHCR_TOKEN="$$(curl -fsS -H "Authorization: Bearer $$DOPPLER_TOKEN" "https://api.doppler.com/v3/configs/config/secret?project=common&config=prd&name=GHCR_UPDATE_TOKEN" | sed -n 's/.*"raw"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p')"
-        if [ -z "$$GHCR_TOKEN" ]; then
-          echo "GHCR_UPDATE_TOKEN is missing from Doppler (common/prd) - cannot publish." >&2
-          exit 1
-        fi
+${dockerCredentialCommands}
         echo "$$GHCR_TOKEN" | docker login ghcr.io -u "$$GHCR_USERNAME" --password-stdin
       - |
         BUILDX_BUILDER_NAME="bk-$$BUILDKITE_PIPELINE_SLUG-$$BUILDKITE_JOB_ID"

@@ -285,6 +285,49 @@ describe("Buildkite file generation", () => {
     expect(content).not.toMatch(/key: docker_publish[\s\S]*?docker#v5\.13\.0/);
   });
 
+  it("resolves the publish credentials from Doppler when doppler is selected", async () => {
+    // The preferred channel: the registry token stays out of the agent's
+    // environment hook, where every job on the fleet could read it. Selected by
+    // the capability, not forced by a dependency - see the fallback test below.
+    const files = await generateAllFiles({
+      name: "demo",
+      registryNamespace: "nickbrett1",
+      capabilities: [
+        "buildkite",
+        "devcontainer-node",
+        "docker-container",
+        "doppler",
+      ],
+      configuration: { buildkite: {} },
+    });
+    const content = pipelineFrom(files).content;
+
+    const step = content.slice(content.indexOf("key: docker_publish"));
+    expect(step).toContain("GHCR_UPDATE_TOKEN");
+    expect(step).toContain("api.doppler.com");
+    expect(step).toContain("Authorization: Bearer $$DOPPLER_TOKEN");
+    expect(step).not.toContain("GHCR_USERNAME/GHCR_TOKEN are not set");
+  });
+
+  it("uses agent-env credentials when doppler is absent", async () => {
+    // docker-container does not declare doppler, so a container project can
+    // reach this branch by selection alone - it is a real channel, not dead
+    // code. It uses the same GHCR_USERNAME/GHCR_TOKEN contract the CircleCI
+    // context supplies, and fails with a clear message rather than mid-push.
+    const files = await generateAllFiles({
+      name: "demo",
+      registryNamespace: "nickbrett1",
+      capabilities: ["buildkite", "devcontainer-node", "docker-container"],
+      configuration: { buildkite: {} },
+    });
+    const content = pipelineFrom(files).content;
+
+    const step = content.slice(content.indexOf("key: docker_publish"));
+    expect(step).toContain("GHCR_USERNAME/GHCR_TOKEN are not set on the agent");
+    expect(step).not.toContain("GHCR_UPDATE_TOKEN");
+    expect(step).toContain('echo "$$GHCR_TOKEN" | docker login ghcr.io');
+  });
+
   it("contributes no extra steps when no contributing capability is selected", async () => {
     const files = await generate(["buildkite", "devcontainer-node"], {
       buildkite: {},
