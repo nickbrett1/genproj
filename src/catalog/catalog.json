@@ -6,7 +6,7 @@
       "language": {
         "type": "string",
         "enum": ["python", "node", "java", "rust"],
-        "description": "Primary Language: the one the project builds, tests and releases. Declared, not inferred. Optional when 0 or 1 devcontainer-* capability is selected (it is implied); required when 2 or more are selected, where selection order would otherwise decide. Devcontainer-* capabilities remain toolboxes: non-primary container code is not built, tested or released."
+        "description": "Primary Language: the one language the project builds, tests and releases. Declared, not inferred. Optional with 0-1 devcontainer-* capabilities (implied); required with 2+, so selection order decides nothing. Devcontainer-* capabilities are toolboxes: non-primary container code is not built, tested or released."
       }
     }
   },
