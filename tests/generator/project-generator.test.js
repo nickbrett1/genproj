@@ -11,7 +11,26 @@ vi.mock("../../src/clients/buildkite-api.js");
 vi.mock("../../src/clients/doppler-api.js");
 vi.mock("../../src/clients/sonarcloud-api.js");
 import { generateAllFiles } from "../../src/generator/file-generator.js";
+import { computeGitBlobSha } from "../../src/clients/git-blob.js";
 import { mergeDevcontainerJson } from "../../src/generator/project-generator.js";
+
+/**
+ * Builds the `{ entries, truncated }` shape the service expects from
+ * `github.getTree`. `entries` maps a path to its existing content; a `null`
+ * value models an absent file. The value stored is the real git blob SHA, so
+ * the service's local-SHA comparison exercises the same code path as prod.
+ * @param {Record<string, string|null>} entries - path -> existing content
+ * @returns {Promise<{entries: Map<string, string>, truncated: boolean}>}
+ */
+async function existingTree(entries) {
+  const map = new Map();
+  for (const [path, content] of Object.entries(entries)) {
+    if (content !== null && content !== undefined) {
+      map.set(path, await computeGitBlobSha(content));
+    }
+  }
+  return { entries: map, truncated: false };
+}
 
 vi.mock("../../src/generator/file-generator.js", () => ({
   generateAllFiles: vi.fn(),
@@ -305,10 +324,9 @@ describe("ProjectGeneratorService", () => {
     it("applies fresh template content to diverged generated infra on overwrite (template wins)", async () => {
       // file1.txt is generated infra (not under src/, tests/, ...) →
       // on regen the fresh template content replaces the diverged file.
-      service.services.github.getFileContent.mockResolvedValueOnce(
-        "old-diverged-content",
+      service.services.github.getTree.mockResolvedValue(
+        await existingTree({ "file1.txt": "old-diverged-content" }),
       );
-      service.services.github.getFileContent.mockResolvedValueOnce(null); // file2 absent
 
       await service.commitFilesToRepository(repository, generatedFiles, {
         ...context,
@@ -340,9 +358,12 @@ describe("ProjectGeneratorService", () => {
         { filePath: "src/app/__main__.py", content: "app-entry" },
         { filePath: "Dockerfile", content: "new-dockerfile" },
       ];
-      service.services.github.getFileContent
-        .mockResolvedValueOnce("old-app-code") // src/app/__main__.py diverged
-        .mockResolvedValueOnce("old-dockerfile"); // Dockerfile diverged
+      service.services.github.getTree.mockResolvedValue(
+        await existingTree({
+          "src/app/__main__.py": "old-app-code", // diverged
+          Dockerfile: "old-dockerfile", // diverged
+        }),
+      );
 
       await service.commitFilesToRepository(repository, appFiles, {
         ...context,
@@ -374,9 +395,12 @@ describe("ProjectGeneratorService", () => {
         { filePath: "scripts/cloud_login.sh", content: "new-cloud-login" },
         { filePath: "scripts/entrypoint.sh", content: "new-entrypoint" },
       ];
-      service.services.github.getFileContent
-        .mockResolvedValueOnce("old-cloud-login-no-doppler") // scripts/cloud_login.sh diverged
-        .mockResolvedValueOnce("old-user-entrypoint"); // scripts/entrypoint.sh diverged
+      service.services.github.getTree.mockResolvedValue(
+        await existingTree({
+          "scripts/cloud_login.sh": "old-cloud-login-no-doppler", // diverged
+          "scripts/entrypoint.sh": "old-user-entrypoint", // diverged
+        }),
+      );
 
       await service.commitFilesToRepository(repository, scriptFiles, {
         ...context,
@@ -401,8 +425,11 @@ describe("ProjectGeneratorService", () => {
     });
 
     it("overwrites a diverged file when explicitly resolved to overwrite", async () => {
-      service.services.github.getFileContent.mockResolvedValue(
-        "old-diverged-content",
+      service.services.github.getTree.mockResolvedValue(
+        await existingTree({
+          "file1.txt": "old-diverged-content",
+          "file2.js": "old-diverged-content",
+        }),
       );
 
       await service.commitFilesToRepository(repository, generatedFiles, {
@@ -436,10 +463,9 @@ describe("ProjectGeneratorService", () => {
     });
 
     it("keeps diverged infra when explicitly resolved to keep", async () => {
-      service.services.github.getFileContent.mockResolvedValueOnce(
-        "old-diverged-content",
+      service.services.github.getTree.mockResolvedValue(
+        await existingTree({ "file1.txt": "old-diverged-content" }),
       );
-      service.services.github.getFileContent.mockResolvedValueOnce(null); // file2 absent
 
       await service.commitFilesToRepository(repository, generatedFiles, {
         ...context,
@@ -466,8 +492,9 @@ describe("ProjectGeneratorService", () => {
     });
 
     it("skips byte-identical files on overwrite (no-op regeneration)", async () => {
-      service.services.github.getFileContent.mockResolvedValueOnce("content1"); // identical
-      service.services.github.getFileContent.mockResolvedValueOnce(null); // file2 absent
+      service.services.github.getTree.mockResolvedValue(
+        await existingTree({ "file1.txt": "content1" }), // identical
+      );
 
       await service.commitFilesToRepository(repository, generatedFiles, {
         ...context,
@@ -489,8 +516,26 @@ describe("ProjectGeneratorService", () => {
       );
     });
 
+    it("writes nothing when every generated file is byte-identical (true no-op regen)", async () => {
+      service.services.github.getTree.mockResolvedValue(
+        await existingTree({
+          "file1.txt": "content1",
+          "file2.js": "content2",
+        }),
+      );
+
+      await service.commitFilesToRepository(repository, generatedFiles, {
+        ...context,
+        overwrite: true,
+      });
+
+      expect(
+        service.services.github.createMultipleFiles,
+      ).not.toHaveBeenCalled();
+    });
+
     it("creates absent files on overwrite", async () => {
-      service.services.github.getFileContent.mockResolvedValue(null);
+      service.services.github.getTree.mockResolvedValue(await existingTree({}));
 
       await service.commitFilesToRepository(repository, generatedFiles, {
         ...context,
@@ -1207,10 +1252,20 @@ describe("ProjectGeneratorService", () => {
 
       service.services.github.getUserInfo.mockResolvedValue({ login: "user" });
       service.services.github.repositoryExists.mockResolvedValue(true);
+      service.services.github.getRepository.mockResolvedValue({
+        defaultBranch: "main",
+      });
+      // Divergence is decided by the recursive tree's blob SHAs; only the
+      // genuinely diverged file's content is fetched, for the diff payload.
+      service.services.github.getTree.mockResolvedValue(
+        await existingTree({
+          "file1.txt": "old-content", // diverged
+          "file2.txt": "same-content", // identical
+        }),
+      );
       service.services.github.getFileContent = vi
         .fn()
-        .mockResolvedValueOnce("old-content") // file1.txt
-        .mockResolvedValueOnce("same-content"); // file2.txt
+        .mockResolvedValue("old-content");
 
       const conflicts = await service.checkConflicts(context);
 
@@ -1220,10 +1275,17 @@ describe("ProjectGeneratorService", () => {
         generatedContent: "new-content",
         existingContent: "old-content",
       });
+      // Exactly ONE content read — for the diverged file only.
+      expect(service.services.github.getFileContent).toHaveBeenCalledTimes(1);
       expect(service.services.github.getFileContent).toHaveBeenCalledWith(
         "user",
         "test-project",
         "file1.txt",
+      );
+      expect(service.services.github.getTree).toHaveBeenCalledWith(
+        "user",
+        "test-project",
+        "main",
       );
     });
 
@@ -1248,6 +1310,15 @@ describe("ProjectGeneratorService", () => {
 
       service.services.github.getUserInfo.mockResolvedValue({ login: "user" });
       service.services.github.repositoryExists.mockResolvedValue(true);
+      service.services.github.getRepository.mockResolvedValue({
+        defaultBranch: "main",
+      });
+      service.services.github.getTree.mockResolvedValue(
+        await existingTree({
+          ".devcontainer/devcontainer.json": "some-old-devcontainer",
+          "file1.txt": "old-content",
+        }),
+      );
       service.services.github.getFileContent = vi
         .fn()
         .mockResolvedValue("diverged-existing-content");
@@ -1320,7 +1391,12 @@ describe("ProjectGeneratorService", () => {
     ];
 
     it("merges capability contributions into a diverged devcontainer.json without clobbering manual edits", async () => {
-      service.services.github.getFileContent.mockResolvedValueOnce(
+      service.services.github.getTree.mockResolvedValue(
+        await existingTree({
+          ".devcontainer/devcontainer.json": existingDevcontainer,
+        }),
+      );
+      service.services.github.getFileContent.mockResolvedValue(
         existingDevcontainer,
       );
 
@@ -1361,8 +1437,10 @@ describe("ProjectGeneratorService", () => {
     });
 
     it("replaces devcontainer.json entirely when explicitly resolved to overwrite", async () => {
-      service.services.github.getFileContent.mockResolvedValueOnce(
-        existingDevcontainer,
+      service.services.github.getTree.mockResolvedValue(
+        await existingTree({
+          ".devcontainer/devcontainer.json": existingDevcontainer,
+        }),
       );
 
       await service.commitFilesToRepository(repository, generatedFiles, {
@@ -1383,9 +1461,12 @@ describe("ProjectGeneratorService", () => {
         existingDevcontainer,
         generatedDevcontainer,
       );
-      service.services.github.getFileContent.mockResolvedValueOnce(
-        alreadyMerged,
+      service.services.github.getTree.mockResolvedValue(
+        await existingTree({
+          ".devcontainer/devcontainer.json": alreadyMerged,
+        }),
       );
+      service.services.github.getFileContent.mockResolvedValue(alreadyMerged);
 
       await service.commitFilesToRepository(repository, generatedFiles, {
         capabilities: ["doppler"],

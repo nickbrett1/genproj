@@ -25,6 +25,7 @@
  */
 
 import { BaseAPIService } from "./base-api-service.js";
+import { computeGitBlobSha } from "./git-blob.js";
 import _sodium from "libsodium-wrappers";
 
 /**
@@ -203,12 +204,157 @@ export class GitHubAPIService extends BaseAPIService {
   }
 
   /**
-   * Creates multiple files in a single commit
+   * Resolves the SHA of a branch's head commit.
+   * @param {string} owner - Repository owner
+   * @param {string} repo - Repository name
+   * @param {string} [branch='main'] - Branch name
+   * @returns {Promise<string>} Head commit SHA
+   */
+  async getBranchHeadSha(owner, repo, branch = "main") {
+    const response = await this.makeRequest(
+      `/repos/${owner}/${repo}/git/refs/heads/${branch}`,
+    );
+    const data = await response.json();
+    const sha = data?.object?.sha;
+    if (!sha) {
+      throw new Error(
+        `Could not resolve the head of ${owner}/${repo}@${branch}`,
+      );
+    }
+    return sha;
+  }
+
+  /**
+   * Fetches a repository tree recursively in a single request.
+   *
+   * `treeish` may be a tree SHA or a ref (branch/tag) name. Each blob entry's
+   * `sha` is the git blob hash, which is what lets callers compare generated
+   * content against the repository without fetching any file content.
+   * @param {string} owner - Repository owner
+   * @param {string} repo - Repository name
+   * @param {string} treeish - Tree SHA or branch/tag name
+   * @returns {Promise<{entries: Map<string, string>, truncated: boolean}>}
+   *   Map of blob path -> blob SHA, plus whether GitHub truncated the response
+   */
+  async getTree(owner, repo, treeish) {
+    const response = await this.makeRequest(
+      `/repos/${owner}/${repo}/git/trees/${encodeURIComponent(treeish)}?recursive=1`,
+    );
+    const data = await response.json();
+    const entries = new Map();
+    for (const entry of data.tree || []) {
+      if (entry.type === "blob") {
+        entries.set(entry.path, entry.sha);
+      }
+    }
+    return { entries, truncated: Boolean(data.truncated) };
+  }
+
+  /**
+   * Issues a GitHub GraphQL v4 request and unwraps the `data` payload.
+   * @param {string} query - GraphQL document
+   * @param {Object} [variables] - GraphQL variables
+   * @returns {Promise<Object>} The response's `data`
+   */
+  async makeGraphQLRequest(query, variables = {}) {
+    const response = await this.makeRequest("/graphql", {
+      method: "POST",
+      body: JSON.stringify({ query, variables }),
+    });
+    const payload = await response.json();
+    if (Array.isArray(payload.errors) && payload.errors.length > 0) {
+      throw new Error(
+        `GitHub GraphQL error: ${payload.errors
+          .map((error) => error.message)
+          .join("; ")}`,
+      );
+    }
+    return payload.data;
+  }
+
+  /**
+   * Re-points the executable files' blobs at mode 100755.
+   *
+   * `createCommitOnBranch`'s `FileAddition` has no mode field, so every
+   * addition lands as `100644`. The content commit has already created the
+   * blobs, so this lays a single new tree on top of that commit's tree with the
+   * `.sh` entries marked executable — no content is re-uploaded. It is a
+   * second commit by construction; it only runs when a `.sh` file was written.
+   * @param {string} owner - Repository owner
+   * @param {string} repo - Repository name
+   * @param {string} branch - Branch name
+   * @param {string} parentOid - The content commit's oid (new parent)
+   * @param {string} baseTreeOid - The content commit's tree oid
+   * @param {GitHubFile[]} files - The executable files
+   * @returns {Promise<{oid: string}>} The mode-fix commit
+   */
+  async #applyExecutableModes(
+    owner,
+    repo,
+    branch,
+    parentOid,
+    baseTreeOid,
+    files,
+  ) {
+    const treeEntries = await Promise.all(
+      files.map(async (file) => ({
+        path: file.path,
+        mode: "100755",
+        type: "blob",
+        sha: await computeGitBlobSha(file.content),
+      })),
+    );
+
+    const treeResponse = await this.makeRequest(
+      `/repos/${owner}/${repo}/git/trees`,
+      {
+        method: "POST",
+        body: JSON.stringify({ base_tree: baseTreeOid, tree: treeEntries }),
+      },
+    );
+    const treeData = await treeResponse.json();
+
+    const commitResponse = await this.makeRequest(
+      `/repos/${owner}/${repo}/git/commits`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          message: "chore: mark generated scripts executable",
+          tree: treeData.sha,
+          parents: [parentOid],
+        }),
+      },
+    );
+    const commitData = await commitResponse.json();
+
+    await this.makeRequest(`/repos/${owner}/${repo}/git/refs/heads/${branch}`, {
+      method: "PATCH",
+      body: JSON.stringify({ sha: commitData.sha }),
+    });
+
+    return { oid: commitData.sha };
+  }
+
+  /**
+   * Creates multiple files in a single commit.
+   *
+   * Uses the GraphQL `createCommitOnBranch` mutation, which carries every
+   * file's content in one request — replacing the old per-file
+   * `POST /git/blobs` fan-out (N subrequests) plus the tree/commit/ref dance
+   * (N + ~5). The mutation commits all files atomically and returns the new
+   * commit oid; `fileChanges.deletions` is supported too.
+   *
+   * Because `FileAddition` cannot set a file mode, a single follow-up Git Data
+   * API commit re-points `.sh` blobs at `100755` (`#applyExecutableModes`).
+   * Blob SHAs are computed locally, so nothing is re-uploaded.
    * @param {string} owner - Repository owner
    * @param {string} repo - Repository name
    * @param {GitHubFile[]} files - Array of files to create
    * @param {string} commitMessage - Commit message
-   * @returns {Promise<Object>} Commit information
+   * @param {string} [branch='main'] - Branch name
+   * @param {Object} [options]
+   * @param {string[]} [options.deletions] - Paths to delete in the same commit
+   * @returns {Promise<Object>} Commit information (`{ sha, url }`)
    */
   async createMultipleFiles(
     owner,
@@ -216,88 +362,64 @@ export class GitHubAPIService extends BaseAPIService {
     files,
     commitMessage,
     branch = "main",
+    options = {},
   ) {
     console.log(
       `🔄 Creating ${files.length} files in ${owner}/${repo} on branch ${branch}`,
     );
 
-    // Get the latest commit SHA
-    const referenceResponse = await this.makeRequest(
-      `/repos/${owner}/${repo}/git/refs/heads/${branch}`,
-    );
-    const referenceData = await referenceResponse.json();
-    const latestCommitSha = referenceData.object.sha;
+    // createCommitOnBranch requires the branch head oid (optimistic concurrency).
+    const headOid = await this.getBranchHeadSha(owner, repo, branch);
 
-    // Get the tree SHA
-    const commitResponse = await this.makeRequest(
-      `/repos/${owner}/${repo}/git/commits/${latestCommitSha}`,
-    );
-    const commitData = await commitResponse.json();
-    const baseTreeSha = commitData.tree.sha;
+    const additions = files.map((file) => ({
+      path: file.path,
+      contents: Buffer.from(file.content).toString("base64"),
+    }));
+    const deletions = (options.deletions || []).map((path) => ({ path }));
 
-    // Create blobs for each file
-    const blobPromises = files.map(async (file) => {
-      const blobResponse = await this.makeRequest(
-        `/repos/${owner}/${repo}/git/blobs`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            content: Buffer.from(file.content).toString("base64"),
-            encoding: "base64",
-          }),
+    const data = await this.makeGraphQLRequest(
+      `mutation CreateCommitOnBranch($input: CreateCommitOnBranchInput!) {
+        createCommitOnBranch(input: $input) {
+          commit { oid url tree { oid } }
+        }
+      }`,
+      {
+        input: {
+          branch: {
+            repositoryNameWithOwner: `${owner}/${repo}`,
+            branchName: branch,
+          },
+          message: { headline: commitMessage },
+          expectedHeadOid: headOid,
+          fileChanges: { additions, deletions },
         },
+      },
+    );
+
+    const commit = data?.createCommitOnBranch?.commit;
+    if (!commit?.oid) {
+      throw new Error("GitHub GraphQL createCommitOnBranch returned no commit");
+    }
+
+    // Preserve the executable bit on shell scripts (GraphQL cannot express it).
+    const executableFiles = files.filter((file) => file.path.endsWith(".sh"));
+    let finalCommit = commit;
+    if (executableFiles.length > 0) {
+      finalCommit = await this.#applyExecutableModes(
+        owner,
+        repo,
+        branch,
+        commit.oid,
+        commit.tree?.oid,
+        executableFiles,
       );
-      const blobData = await blobResponse.json();
-      return {
-        path: file.path,
-        mode: file.path.endsWith(".sh") ? "100755" : "100644",
-        type: "blob",
-        sha: blobData.sha,
-      };
-    });
-
-    const treeEntries = await Promise.all(blobPromises);
-
-    // Create new tree
-    const treeResponse = await this.makeRequest(
-      `/repos/${owner}/${repo}/git/trees`,
-      {
-        method: "POST",
-        body: JSON.stringify({
-          base_tree: baseTreeSha,
-          tree: treeEntries,
-        }),
-      },
-    );
-    const treeData = await treeResponse.json();
-
-    // Create commit
-    const newCommitResponse = await this.makeRequest(
-      `/repos/${owner}/${repo}/git/commits`,
-      {
-        method: "POST",
-        body: JSON.stringify({
-          message: commitMessage,
-          tree: treeData.sha,
-          parents: [latestCommitSha],
-        }),
-      },
-    );
-    const newCommitData = await newCommitResponse.json();
-
-    // Update branch reference
-    await this.makeRequest(`/repos/${owner}/${repo}/git/refs/heads/${branch}`, {
-      method: "PATCH",
-      body: JSON.stringify({
-        sha: newCommitData.sha,
-      }),
-    });
+    }
 
     console.log(
-      `✅ Created ${files.length} files in commit: ${newCommitData.sha}`,
+      `✅ Created ${files.length} files in commit: ${finalCommit.oid}`,
     );
 
-    return newCommitData;
+    return { sha: finalCommit.oid, url: finalCommit.url };
   }
 
   /**
