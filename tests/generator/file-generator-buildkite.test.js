@@ -343,6 +343,14 @@ describe("Buildkite file generation", () => {
           },
         },
       ],
+      // A single platform-specific artifact on the native (no-plugin) path.
+      [
+        ["buildkite", "github-release", "devcontainer-python"],
+        {
+          language: "python",
+          "github-release": { target: "aarch64-apple-darwin" },
+        },
+      ],
     ];
 
     for (const [capabilities, configuration] of shapes) {

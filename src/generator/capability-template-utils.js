@@ -1744,6 +1744,7 @@ ${
  * @param {string} params.language - The primary language
  * @param {Object} params.commands - The language's default command set
  * @param {string[]} params.releaseTargets - Declared release targets
+ * @param {string} params.singleTarget - Declared singular release target ("" if none)
  * @param {string[]} params.singleArtifactPaths - Default artifact paths
  * @param {string} params.projectBinaryName - The cargo package/binary name
  * @returns {Object[]} One entry per build step
@@ -1752,6 +1753,7 @@ function releaseBuildUnits({
   language,
   commands,
   releaseTargets,
+  singleTarget = "",
   singleArtifactPaths,
   projectBinaryName,
 }) {
@@ -1760,7 +1762,16 @@ function releaseBuildUnits({
       {
         key: "build",
         label: `:hammer: Build and test (${language})`,
-        target: null,
+        // A singular `github-release.target` is one artifact, not a matrix, but
+        // it is still a target. Carrying it here is what subjects a single
+        // darwin artifact to the same no-container, macOS-queue decision the
+        // plural path takes: `renderBuildStep` decides darwin-ness from
+        // `unit.target`, so a singular macOS target that never reached this
+        // field was built in a Linux container - the exact path the darwin
+        // branch exists to avoid. The payload still comes from the language's
+        // own `dist/` (see singleArtifactPaths), because one artifact is packed
+        // there rather than under build/<target>/.
+        target: singleTarget || null,
         commands: commands[language],
         artifactPaths: singleArtifactPaths,
         env: {},
@@ -1909,6 +1920,12 @@ function getBuildkiteTemplateData(context) {
         (target) => typeof target === "string" && target.trim() !== "",
       )
     : [];
+  // The singular counterpart: one artifact, one label (mutually exclusive with
+  // `targets`; see validateReleaseTargets). It is not a matrix, but it *is* a
+  // target, so it is passed to releaseBuildUnits so the darwin decision is made
+  // in one place rather than once per path.
+  const singleTarget =
+    typeof grConfig.target === "string" ? grConfig.target.trim() : "";
   // The cargo binary the build step looks for under
   // `target/<triple>/release/`. It goes through the same sanitiser as the
   // generated Cargo.toml's package name, so the manifest and the step cannot
@@ -2032,6 +2049,7 @@ ${_bkDockerPlugin(
     language,
     commands,
     releaseTargets,
+    singleTarget,
     singleArtifactPaths,
     projectBinaryName,
   });

@@ -688,4 +688,82 @@ describe("a single platform-specific artifact", () => {
       }),
     ).rejects.toThrow(/not\s+a release label/);
   });
+
+  // The build step is everything from its key up to the release step.
+  const buildStep = (yaml) =>
+    yaml.slice(
+      yaml.indexOf("key: build"),
+      yaml.indexOf('  - label: ":bookmark: Release"'),
+    );
+
+  it("builds a singular darwin artifact on the macOS host, not in a container", async () => {
+    // A macOS payload cannot be assembled inside a Linux container - a bundled
+    // arm64 interpreter, like the one this label exists for, is not something a
+    // `pip install --platform macosx_11_0_arm64` can be trusted to cross-build.
+    // So the step drops the docker plugin and runs on the host.
+    const yaml = pipeline(
+      await generate(["buildkite", "github-release", "devcontainer-python"], {
+        language: "python",
+        "github-release": { target: DARWIN },
+      }),
+    );
+
+    expect(buildStep(yaml)).not.toContain("docker#v5.13.0");
+    expect(buildStep(yaml)).toContain("queue: mac-studio-linux");
+    expect(buildStep(yaml)).toContain(`RELEASE_TARGET: ${DARWIN}`);
+  });
+
+  it("keeps a singular darwin target on the macOS queue when the project moves its containers", async () => {
+    // The queue names where the *containers* run; a darwin build has none, so
+    // moving `buildkite.queue` to a Linux queue must not move it.
+    const yaml = pipeline(
+      await generate(["buildkite", "github-release", "devcontainer-python"], {
+        language: "python",
+        buildkite: { queue: "linux-medium" },
+        "github-release": { target: DARWIN },
+      }),
+    );
+
+    expect(buildStep(yaml)).toContain("queue: mac-studio-linux");
+    expect(buildStep(yaml)).not.toContain("queue: linux-medium");
+  });
+
+  it("still containerises a singular target that is not darwin", async () => {
+    // The native path is the darwin exception, not what "singular" means: a
+    // non-darwin label stays on the project's container queue.
+    const yaml = pipeline(
+      await generate(["buildkite", "github-release", "devcontainer-python"], {
+        language: "python",
+        buildkite: { queue: "linux-medium" },
+        "github-release": { target: "x86_64-unknown-linux-musl" },
+      }),
+    );
+
+    expect(buildStep(yaml)).toContain("docker#v5.13.0");
+    expect(buildStep(yaml)).toContain("queue: linux-medium");
+  });
+
+  it("decides the build host from the target, not from which knob declared it", async () => {
+    // The gap this guards: the same triple reached the build step by one of two
+    // paths - the plural matrix (rust) or the singular label (any language) -
+    // and produced two different hosts. Both must land on the macOS host, so
+    // the decision lives in one place.
+    const singular = pipeline(
+      await generate(["buildkite", "github-release", "devcontainer-python"], {
+        language: "python",
+        "github-release": { target: DARWIN },
+      }),
+    );
+    const plural = pipeline(
+      await generate(["buildkite", "github-release", "devcontainer-rust"], {
+        language: "rust",
+        "github-release": { targets: [DARWIN] },
+      }),
+    );
+
+    for (const yaml of [singular, plural]) {
+      expect(buildStep(yaml)).not.toContain("docker#v5.13.0");
+      expect(buildStep(yaml)).toContain("queue: mac-studio-linux");
+    }
+  });
 });
