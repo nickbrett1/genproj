@@ -50,6 +50,7 @@ import {
   getCapabilityTemplateData,
   applyDefaults,
   resolveDopplerTarget,
+  resolveSvelteDirectory,
 } from "./capability-template-utils.js";
 import { buildScriptsBlock, buildGitHooksBlock } from "./file-generator.js";
 
@@ -582,12 +583,25 @@ function generateSingleTemplateFile(
       adapterPackage,
       adapterComment,
     });
-    const normalizedContent = /\.ya?ml$/i.test(template.filePath)
+    // Mirror the generator's relocation of a Svelte app that does not own the
+    // repository root (see resolveSvelteDirectory): the preview must show the
+    // same paths the generated repository will have.
+    const directory =
+      capabilityId === "sveltekit"
+        ? resolveSvelteDirectory({
+            capabilities: allCapabilities,
+            configuration: projectConfig.configuration,
+          })
+        : "";
+    const filePath = directory
+      ? `${directory}/${template.filePath}`
+      : template.filePath;
+    const normalizedContent = /\.ya?ml$/i.test(filePath)
       ? normalizeYamlBlankLines(content)
       : content;
     return {
-      path: template.filePath,
-      name: template.filePath.split("/").pop(),
+      path: filePath,
+      name: filePath.split("/").pop(),
       content: normalizedContent,
       size: normalizedContent.length,
       type: "file",

@@ -6,6 +6,7 @@
 # builds the application. Stage 2 (runtime): copies only the build output /
 # virtualenv and production dependencies, keeping the final image small.
 
+{{dockerFrontendStage}}
 FROM {{dockerBaseImage}} AS build
 WORKDIR /app
 {{dockerBuildCommands}}

@@ -172,4 +172,63 @@ describe("SvelteKit File Generation", () => {
     expect(viteConfig.content).not.toContain("passWithNoTests");
     expect(viteConfig.content).toContain("thresholds");
   });
+
+  it("scaffolds a Rust-primary Svelte app into web/, not into the Rust src/", async () => {
+    const files = await generateAllFiles({
+      name: "roost",
+      capabilities: [
+        "devcontainer-rust",
+        "devcontainer-node",
+        "sveltekit",
+        "docker-container",
+      ],
+      configuration: { language: "rust" },
+      registryNamespace: "nickbrett1",
+    });
+    const paths = files.map((f) => f.filePath);
+
+    // The frontend owns web/; the Rust source tree is untouched.
+    expect(paths).toContain("web/src/app.html");
+    expect(paths).toContain("web/src/routes/+page.svelte");
+    expect(paths).toContain("web/package.json");
+    expect(paths).toContain("web/vite.config.js");
+    expect(paths).toContain("web/README.md");
+    expect(paths).toContain("src/main.rs");
+    expect(paths).not.toContain("src/app.html");
+    expect(paths).not.toContain("package.json");
+
+    // The Dockerfile builds the frontend in its own stage and copies the
+    // output into both the language build stage and the runtime image.
+    const dockerfile = files.find((f) => f.filePath === "Dockerfile").content;
+    expect(dockerfile).toContain("FROM node:22-bookworm AS frontend");
+    expect(dockerfile).toContain("COPY --from=frontend /app/build ./web/build");
+    expect(dockerfile).toContain("RUN cargo build --release");
+
+    // The README states the seam.
+    const readme = files.find((f) => f.filePath === "web/README.md").content;
+    expect(readme).toContain("web/build");
+  });
+
+  it("honours an explicit sveltekit.directory override", async () => {
+    const files = await generateAllFiles({
+      name: "custom",
+      capabilities: ["devcontainer-rust", "devcontainer-node", "sveltekit"],
+      configuration: { language: "rust", sveltekit: { directory: "frontend" } },
+    });
+    expect(files.map((f) => f.filePath)).toContain(
+      "frontend/src/routes/+page.svelte",
+    );
+  });
+
+  it("keeps a node-primary Svelte app at the repository root", async () => {
+    const files = await generateAllFiles({
+      name: "webapp",
+      capabilities: ["devcontainer-node", "sveltekit"],
+      configuration: {},
+    });
+    const paths = files.map((f) => f.filePath);
+    expect(paths).toContain("src/app.html");
+    expect(paths).toContain("package.json");
+    expect(paths).not.toContain("web/src/app.html");
+  });
 });

@@ -99,12 +99,28 @@ import {
   isMicropython,
   ruffCheckCommand,
   resolveMicropythonChip,
+  resolveSvelteDirectory,
+  resolveSvelteOutputDirectory,
 } from "./capability-template-utils.js";
 import {
   validateFetchLaunch,
   validatePrimaryLanguage,
   validateReleaseTargets,
+  validateRequiredAny,
 } from "./project-validation.js";
+
+/**
+ * The directory prefix (`web/`) that Svelte-owned files are emitted under, or
+ * `""` when the app owns the repository root (the node-primary case). Derived
+ * from {@link resolveSvelteDirectory} so the scaffold path, the Dockerfile copy
+ * and the CI build all agree on one location.
+ * @param {Object} context - Generation context
+ * @returns {string} A trailing-slash prefix, or ""
+ */
+function sveltePrefix(context) {
+  const directory = resolveSvelteDirectory(context);
+  return directory ? `${directory}/` : "";
+}
 
 // 2.2: health endpoint emitted for docker-container SvelteKit projects.
 // Returns 200 {ok:true} so the container HEALTHCHECK and Homepage widget work
@@ -1085,9 +1101,16 @@ function collectSingleTemplateFile(
       adapterPackage,
       adapterComment,
     });
+    // A Svelte app in a non-node project lives in its own directory (see
+    // resolveSvelteDirectory), so its files are emitted under that prefix
+    // rather than the repository root. A node project is unaffected ("").
+    const filePath =
+      capabilityId === "sveltekit"
+        ? `${sveltePrefix(context)}${template.filePath}`
+        : template.filePath;
     return {
-      filePath: template.filePath,
-      content: /\.ya?ml$/i.test(template.filePath)
+      filePath,
+      content: /\.ya?ml$/i.test(filePath)
         ? normalizeYamlBlankLines(content)
         : content,
     };
@@ -2940,6 +2963,7 @@ export async function generateAllFiles(context) {
   validatePrimaryLanguage(context);
   validateReleaseTargets(context);
   validateFetchLaunch(context);
+  validateRequiredAny(context);
 
   const templateEngine = new TemplateEngine();
   await templateEngine.initialize();
@@ -2984,12 +3008,33 @@ export async function generateAllFiles(context) {
     ...generateAgentRulesFiles(),
   ];
 
+  // Svelte-in-a-non-node-project relocates the whole frontend into its own
+  // directory (see sveltePrefix). Everything node/SvelteKit-owned moves with
+  // it - the manifest, .npmrc, vite config and test files - so the npm install
+  // in CI and the Docker frontend stage run from one root.
+  const svelte = sveltePrefix(context);
+  const relocate = (file) =>
+    file ? { ...file, filePath: `${svelte}${file.filePath}` } : file;
+  if (svelte) {
+    const relocateInPlace = (suffix) => {
+      allGeneratedFiles = allGeneratedFiles.map((file) =>
+        file.filePath === suffix
+          ? { ...file, filePath: `${svelte}${suffix}` }
+          : file,
+      );
+    };
+    for (const suffix of ["package.json", ".npmrc", "vite.config.js"]) {
+      relocateInPlace(suffix);
+    }
+  }
+
   if (context.capabilities.includes("devcontainer-node")) {
-    // Filter out any template-generated vite.config.js
+    // Filter out any template-generated vite.config.js (at the root, or under
+    // the Svelte directory when the frontend was relocated).
     allGeneratedFiles = allGeneratedFiles.filter(
-      (f) => f.filePath !== "vite.config.js",
+      (f) => f.filePath !== `${svelte}vite.config.js`,
     );
-    allGeneratedFiles.push(generateViteConfigFile(context));
+    allGeneratedFiles.push(relocate(generateViteConfigFile(context)));
   }
 
   // Generated SvelteKit projects ship a smoke test so the coverage gate in
@@ -3006,11 +3051,11 @@ export async function generateAllFiles(context) {
       context.capabilities.includes("docker-container") &&
       context.capabilities.includes("sveltekit");
     allGeneratedFiles.push({
-      filePath: "src/test-setup.js",
+      filePath: `${svelte}src/test-setup.js`,
       content: 'import "@testing-library/jest-dom/vitest";\n',
     });
     allGeneratedFiles.push({
-      filePath: "tests/smoke.test.js",
+      filePath: `${svelte}tests/smoke.test.js`,
       content: buildSveltekitSmokeTest(hasHealth),
     });
   }
@@ -3033,12 +3078,71 @@ export async function generateAllFiles(context) {
     context.capabilities.includes("docker-container")
   ) {
     allGeneratedFiles.push({
-      filePath: "src/routes/health/+server.js",
+      filePath: `${svelte}src/routes/health/+server.js`,
       content: HEALTH_ROUTE_SOURCE,
     });
   }
 
+  // A relocated frontend gets a README stating the contract: where the built
+  // assets land, which is what the language's Docker stage and any embed read.
+  // Without it the seam is invisible and the first person to wire up the
+  // serving path has to reverse-engineer it from the Dockerfile.
+  if (svelte) {
+    allGeneratedFiles.push({
+      filePath: `${svelte}README.md`,
+      content: buildSvelteFrontendReadme(context),
+    });
+  }
+
   return allGeneratedFiles;
+}
+
+/**
+ * Documents the frontend sub-build seam: where the Svelte build output lands
+ * and how the primary-language build consumes it. The Rust/Python/Java binary
+ * decides *how* to consume it (embed with `rust-embed` / `include_dir!`, or
+ * serve from disk) - genproj generates the build, not the embed mechanism.
+ * @param {Object} context - Generation context
+ * @returns {string} The README source
+ */
+export function buildSvelteFrontendReadme(context) {
+  const language = resolveProjectLanguage(context);
+  const directory = resolveSvelteDirectory(context);
+  const outputDirectory = resolveSvelteOutputDirectory(context);
+  return `# Frontend (SvelteKit)
+
+This directory holds the project's Svelte app. It is a **sub-build**: the
+project's primary language is \`${language}\`, and this app is built separately
+and consumed by the \`${language}\` binary.
+
+## Where the build output lands
+
+\`npm run build\` writes the static assets to \`${directory}/${outputDirectory}\`.
+
+## How it is built
+
+- **CI** builds this directory in its own \`.buildkite/pipeline.yml\` step (on a
+  Node image), before the \`${language}\` build, so a broken frontend fails CI
+  rather than being discovered at image-build time.
+- **Docker** builds it in a \`frontend\` stage in the root \`Dockerfile\` and copies
+  \`${directory}/${outputDirectory}\` into the \`${language}\` build stage and the
+  runtime image.
+
+## How the \`${language}\` binary consumes it
+
+That is your decision, and the seam is deliberate: read
+\`${directory}/${outputDirectory}\` either at **compile time** (e.g. \`rust-embed\`
+or \`include_dir!\`) or at **runtime** from disk. Both are already copied into the
+image by the Dockerfile.
+
+## Working on it locally
+
+\`\`\`sh
+cd ${directory}
+npm install
+npm run dev
+\`\`\`
+`;
 }
 
 /**

@@ -581,6 +581,10 @@ function _applyCloudflareConfig(
  * Language-aware lint step for CircleCI.
  * - Python: `ruff check .` for MicroPython firmware (root + `lib/`), otherwise
  *   `ruff check src tests`; ruff ships in the `[dev]` extra.
+ * - Rust: `cargo fmt --check` + `cargo clippy --all-targets -- -D warnings`,
+ *   contributed by `code-quality-rust` (clippy/fmt ship with the toolchain, so
+ *   there is no dependency to install; without the capability the project has
+ *   no lint gate at all).
  * - Node: ESLint + SonarJS via `npm run lint` (existing behavior).
  */
 function _applyCodeQualityConfig(data, context) {
@@ -593,6 +597,19 @@ function _applyCodeQualityConfig(data, context) {
       data.testSteps += `      - run:
           name: Lint (Ruff)
           command: ${ruffCheckCommand(context)}\n`;
+    }
+  } else if (language === "rust") {
+    // Gated on the capability, not the devcontainer: clippy and fmt come with
+    // the rust toolchain, but an ungated `-D warnings` would fail builds on
+    // code the project never opted into gating.
+    if (context.capabilities.includes("code-quality-rust")) {
+      const lintCommands = RUST_LINT_COMMANDS.map(
+        (command) => `            ${command}`,
+      ).join("\n");
+      data.testSteps += `      - run:
+          name: Lint (cargo fmt + clippy)
+          command: |
+${lintCommands}\n`;
     }
   } else if (
     context.capabilities.includes("code-quality") ||
@@ -685,6 +702,53 @@ export function resolveProjectLanguage(context) {
 export const resolveLanguage = resolveProjectLanguage;
 
 /**
+ * Resolves the directory the Svelte app is scaffolded into.
+ *
+ * The frontend does not always own the repository. When node is the primary
+ * language the Svelte app *is* the project, so it lives at the root - the
+ * behaviour before this option existed, preserved so existing projects do not
+ * move. When the primary language is anything else, the Svelte app is a
+ * sub-build of that project, and scaffolding it at the root would drop
+ * `src/app.html` and `src/routes/+page.svelte` into the language's own source
+ * tree (`src/` for Rust and Node alike) - so it gets its own directory, `web/`
+ * by default.
+ *
+ * The catalog does not set a static `default` for `directory` on purpose: a
+ * default of `web` would apply to node projects too and silently move them. The
+ * rule is derived from the primary language, and an explicit value - `.` for the
+ * root, or any name - always wins.
+ *
+ * @param {Object} context - Generation context (capabilities, configuration)
+ * @returns {string} The directory, without a trailing slash; "" for the root
+ */
+export function resolveSvelteDirectory(context) {
+  const config = context?.configuration?.sveltekit || {};
+  const declared =
+    typeof config.directory === "string" ? config.directory.trim() : "";
+  if (declared) {
+    const normalized = declared.replace(/\/+$/, "");
+    return normalized === "." || normalized === "" ? "" : normalized;
+  }
+  return resolveProjectLanguage(context) === "node" ? "" : "web";
+}
+
+/**
+ * Where the built static assets land, relative to {@link resolveSvelteDirectory}.
+ * The non-node language's Docker build copies from here, so the two must agree.
+ *
+ * @param {Object} context - Generation context (configuration)
+ * @returns {string} The output directory name, e.g. "build"
+ */
+export function resolveSvelteOutputDirectory(context) {
+  const config = context?.configuration?.sveltekit || {};
+  const declared =
+    typeof config.outputDirectory === "string"
+      ? config.outputDirectory.trim()
+      : "";
+  return declared || "build";
+}
+
+/**
  * Whether the project targets a MicroPython board.
  *
  * The `micropython` capability tells the generator that the deliverable is
@@ -714,6 +778,22 @@ export function isMicropython(context) {
 export function ruffCheckCommand(context) {
   return isMicropython(context) ? "ruff check ." : "ruff check src tests";
 }
+
+/**
+ * The lint commands `code-quality-rust` contributes to CI.
+ *
+ * `--all-targets` so tests and benches are linted too (a surprising amount of
+ * real code lives there and would otherwise go unchecked), and `-D warnings`
+ * so a warning is a failure: an unwarned clippy is a lint nobody reads. The
+ * escape hatch is a `#[allow(...)]` at the call site, which is at least visible
+ * in review.
+ *
+ * @type {string[]}
+ */
+export const RUST_LINT_COMMANDS = [
+  "cargo fmt --check",
+  "cargo clippy --all-targets -- -D warnings",
+];
 
 /**
  * The RP2 silicon variant a MicroPython project targets, resolved independently
@@ -921,6 +1001,47 @@ function getDockerContainerTemplateData(context) {
   const pkgName = toPythonPackageName(projectName);
   const rustBinName = cargoPackageName(projectName || "my-project");
 
+  // ---- Svelte frontend sub-build (sveltekit in a non-node project).
+  // When node is the primary language the Svelte app IS the build and the node
+  // branch below handles it. Otherwise the frontend is a separate build that
+  // the language's own stage (which has no node) cannot perform, so it gets a
+  // preceding node stage and the output is copied into the language stage - both
+  // so a compile-time embed (rust-embed, include_dir!) can read it and so a
+  // runtime that serves it from disk finds it. Where the output lands
+  // ({{svelteDirectory}}/{{svelteOutputDirectory}}) is the documented seam: see
+  // the generated web/README.md.
+  const hasSveltekit = (context.capabilities || []).includes("sveltekit");
+  const buildsSvelteFrontend = hasSveltekit && language !== "node";
+  const svelteDirectory = buildsSvelteFrontend
+    ? resolveSvelteDirectory(context)
+    : "";
+  const svelteOutputDirectory = resolveSvelteOutputDirectory(context);
+  const sveltePrefix = svelteDirectory ? `${svelteDirectory}/` : "";
+  const svelteFrontendCopy = buildsSvelteFrontend
+    ? `COPY --from=frontend /app/${svelteOutputDirectory} ./${sveltePrefix}${svelteOutputDirectory}`
+    : "";
+  const svelteBuildCopyLine = svelteFrontendCopy
+    ? `\n${svelteFrontendCopy}`
+    : "";
+  const dockerFrontendStage = buildsSvelteFrontend
+    ? `# Frontend stage: builds the Svelte app before the ${language} build below.
+# The ${language} image has no node, so this is a separate stage rather than a
+# step in the main one. Output lands in ${sveltePrefix}${svelteOutputDirectory}/
+# (see ${sveltePrefix}README.md).
+FROM node:22-bookworm AS frontend
+WORKDIR /app
+COPY ${sveltePrefix}package.json ${sveltePrefix}package-lock.json* ${sveltePrefix}.npmrc* ./
+RUN PINNED_NPM="$(node -p "try{require('./package.json').packageManager}catch(e){''}" 2>/dev/null || true)" \\
+    && if [ -n "$PINNED_NPM" ] && [ "$(npm --version)" != "\${PINNED_NPM#npm@}" ]; then \\
+         echo "Activating pinned \${PINNED_NPM}..."; \\
+         npm install -g "\${PINNED_NPM}" >/dev/null || true; \\
+       fi \\
+    && if [ -f package-lock.json ]; then npm ci; else npm install; fi
+COPY ${sveltePrefix}. .
+RUN npm run build
+`
+    : "";
+
   // ---- Health mechanism (config-driven; see jsdoc above).
   let healthcheckSetting =
     typeof config.healthcheck === "string" ? config.healthcheck.trim() : "";
@@ -974,7 +1095,7 @@ function getDockerContainerTemplateData(context) {
     dockerBuildCommands = `COPY README.md pyproject.toml* requirements.txt* ./
 RUN python -m venv /opt/venv \\\n    && /opt/venv/bin/pip install --upgrade pip \\\n    && mkdir -p src/${pkgName} && touch src/${pkgName}/__init__.py \\\n    && if [ -f requirements.txt ]; then \\\n         grep -vE '^\\s*(-e|--editable)\\s+\\.' requirements.txt > /tmp/reqs.txt || true; \\\n         [ -s /tmp/reqs.txt ] && /opt/venv/bin/pip install --no-cache-dir -r /tmp/reqs.txt; \\\n       fi \\\n    && if [ -f pyproject.toml ]; then \\\n         /opt/venv/bin/pip install --no-cache-dir .; \\\n       fi
 COPY . .
-RUN if [ -f requirements.txt ]; then \\\n      /opt/venv/bin/pip install --no-cache-dir -r requirements.txt; \\\n    elif [ -f pyproject.toml ]; then \\\n      /opt/venv/bin/pip install --no-cache-dir --no-deps .; \\\n    fi`;
+RUN if [ -f requirements.txt ]; then \\\n      /opt/venv/bin/pip install --no-cache-dir -r requirements.txt; \\\n    elif [ -f pyproject.toml ]; then \\\n      /opt/venv/bin/pip install --no-cache-dir --no-deps .; \\\n    fi${svelteBuildCopyLine}`;
   } else if (isNode) {
     // genproj-npm-pin: activate the npm pinned in package.json before
     // installing. npm 10 bundled with node:22 crashes fresh-installing
@@ -994,14 +1115,14 @@ RUN npm run build`;
     dockerBuildCommands = `COPY pom.xml ./
 RUN mvn -B dependency:go-offline
 COPY src ./src
-RUN mvn -B package`;
+RUN mvn -B package${svelteBuildCopyLine}`;
   } else {
     // Rust: `cargo fetch` downloads crate sources from the lockfile before
     // the source copy, so the fetch layer is cached unless Cargo.toml or
     // Cargo.lock changes.
     dockerBuildCommands = `COPY Cargo.toml Cargo.lock* ./
 RUN cargo fetch
-COPY src ./src
+COPY src ./src${svelteBuildCopyLine}
 RUN cargo build --release`;
   }
 
@@ -1030,6 +1151,12 @@ RUN cargo build --release`;
     dockerRuntimeCommands = `COPY --from=build /app/target/*.jar /app/app.jar`;
   } else {
     dockerRuntimeCommands = `COPY --from=build /app/target/release/${rustBinName} /usr/local/bin/${rustBinName}`;
+  }
+  // A bundled frontend is a runtime asset whether the binary embeds it at
+  // compile time (the build stage already has it) or serves it from disk; the
+  // copy is harmless in the former case and load-bearing in the latter.
+  if (svelteFrontendCopy) {
+    dockerRuntimeCommands += `\n${svelteFrontendCopy}`;
   }
 
   // ---- HEALTHCHECK: emitted only when a mechanism is declared (memo §2.8).
@@ -1168,6 +1295,7 @@ RUN cargo build --release`;
     circleciContext,
     dockerBaseImage,
     dockerAptInstall,
+    dockerFrontendStage,
     dockerBuildCommands,
     dockerRuntimeCommands,
     dockerHealthcheck,
@@ -1832,11 +1960,14 @@ function releaseBuildUnits({
  * @param {string} options.image - The language's toolchain image
  * @param {boolean} options.hasGitGuardian - Whether the secret scan gates this
  * @param {boolean} options.hasGithubRelease - Whether anything consumes the output
+ * @param {string[]} [options.extraDependencies] - Further step keys this step
+ *   waits for (the frontend build, when the language's own image cannot build
+ *   it).
  * @returns {string} The step, as YAML
  */
 function renderBuildStep(
   unit,
-  { queue, image, hasGitGuardian, hasGithubRelease },
+  { queue, image, hasGitGuardian, hasGithubRelease, extraDependencies = [] },
 ) {
   const buildCommands = unit.commands.map((c) => `      - ${c}`).join("\n");
   // A release is the only thing that reads this step's output, so the upload
@@ -1884,10 +2015,18 @@ ${envKeys.map((name) => `      ${name}: ${env[name]}`).join("\n")}
     ? ""
     : `    plugins:
 ${_bkDockerPlugin(image, envKeys)}`;
+  const dependencies = [
+    ...(hasGitGuardian ? ["secret_scan"] : []),
+    ...extraDependencies,
+  ];
+  const dependsOnLines = dependencies.map((key) => `      - ${key}`).join("\n");
+  const buildDependsOn = dependencies.length
+    ? `    depends_on:\n${dependsOnLines}\n`
+    : "";
   return `
   - label: "${unit.label}"
     key: ${unit.key}
-${hasGitGuardian ? "    depends_on:\n      - secret_scan\n" : ""}${_bkAgents(nativeDarwin ? MACOS_QUEUE : queue)}${buildEnv}${buildArtifacts}${buildPlugins}    commands:
+${buildDependsOn}${_bkAgents(nativeDarwin ? MACOS_QUEUE : queue)}${buildEnv}${buildArtifacts}${buildPlugins}    commands:
 ${buildCommands}
 `;
 }
@@ -2183,6 +2322,43 @@ ${_bkDockerPlugin(
   const assembledInputDir = assemblePayload
     ? (singleArtifactPaths[0] || "").replace(/\/\*\*$/, "")
     : "";
+
+  // `code-quality-rust` contributes commands, not a step: clippy and fmt run
+  // inside the build, exactly as the CircleCI language-aware lint does. The
+  // commands are prepended to the FIRST build unit - in a release matrix the
+  // first unit is the one that runs tests against the host toolchain, and
+  // linting is a whole-crate check that does not need repeating per target.
+  if (language === "rust" && caps.includes("code-quality-rust")) {
+    buildUnits[0].commands = [...RUST_LINT_COMMANDS, ...buildUnits[0].commands];
+  }
+
+  // --- frontend build (sveltekit in a non-node project) --------------------
+  // A Svelte app in a Rust/Python/Java project is a sub-build: the language's
+  // own CI image (rust:1-slim, python:3.13-slim, eclipse-temurin:21-jdk) has no
+  // node, so the frontend cannot be built inside the language's build step. It
+  // gets its own step, on a node image, and every build unit waits for it -
+  // which is what proves the UI builds in CI rather than discovering it at
+  // image-build time.
+  const svelteDirectory =
+    caps.includes("sveltekit") && language !== "node"
+      ? resolveSvelteDirectory(context)
+      : "";
+  const needsFrontendBuild = svelteDirectory !== "";
+  const frontendStepKey = "frontend_build";
+
+  if (needsFrontendBuild) {
+    steps.push(`
+  - label: ":svelte: Build frontend (${svelteDirectory})"
+    key: ${frontendStepKey}
+${hasGitGuardian ? "    depends_on:\n      - secret_scan\n" : ""}${_bkAgents(queue)}    plugins:
+${_bkDockerPlugin(images.node, [])}    commands:
+      - cd ${svelteDirectory}
+      - ${npmActivate}
+      - ${npmInstall}
+      - npm run build
+`);
+  }
+
   for (const unit of buildUnits) {
     steps.push(
       renderBuildStep(unit, {
@@ -2190,6 +2366,7 @@ ${_bkDockerPlugin(
         image,
         hasGitGuardian,
         hasGithubRelease,
+        extraDependencies: needsFrontendBuild ? [frontendStepKey] : [],
       }),
     );
   }

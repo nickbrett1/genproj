@@ -90,6 +90,35 @@ export function getRequiredAuthServices(selectedIds) {
   return [...services];
 }
 
+/**
+ * Finds capabilities whose disjunctive requirement (`requiresAny`) is not met.
+ *
+ * `dependencies` is a conjunction: every listed capability must be selected.
+ * `requiresAny` is the disjunction: at least one of the listed capabilities
+ * must be selected. It exists because some capabilities need *some* provider
+ * rather than one in particular - `gitguardian` scans on CI, and both `circleci`
+ * and `buildkite` run the scan, so a hard `dependencies: ["circleci"]` would
+ * wrongly forbid the Buildkite path that already works.
+ *
+ * @param {string[]} selectedIds An array of capability IDs.
+ * @returns {{capability: string, anyOf: string[]}[]} Unsatisfied requirements.
+ */
+export function findUnsatisfiedRequiresAny(selectedIds) {
+  const selected = new Set(selectedIds);
+  const unsatisfied = [];
+  for (const id of selectedIds) {
+    const capability = getCapabilityById(id);
+    const anyOf = capability?.requiresAny ?? [];
+    if (
+      anyOf.length > 0 &&
+      !anyOf.some((requirement) => selected.has(requirement))
+    ) {
+      unsatisfied.push({ capability: id, anyOf: [...anyOf] });
+    }
+  }
+  return unsatisfied;
+}
+
 function checkDependencies(capability, selectedSet, missing) {
   for (const depId of capability.dependencies ?? []) {
     if (!selectedSet.has(depId)) {

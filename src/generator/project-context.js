@@ -20,7 +20,10 @@
  *     JSON shape (and status codes) ftn's route returned.
  */
 
-import { getCapabilityById } from "../catalog/index.js";
+import {
+  findUnsatisfiedRequiresAny,
+  getCapabilityById,
+} from "../catalog/index.js";
 import { json } from "../http.js";
 import { resolveBuildkiteDeployment } from "./external-services.js";
 
@@ -127,12 +130,25 @@ export function buildProjectContext(payload, userId, authTokens, env = {}) {
     );
   }
 
+  // Disjunctive requirements (`requiresAny`): a capability that needs *some*
+  // provider (e.g. gitguardian needs a CI) fails here rather than generating a
+  // project whose contributed step runs nowhere. The dependency expansion below
+  // cannot cover this - it is an OR, not an AND.
+  const capabilities = resolveCapabilityDependencies(selectedCapabilities);
+  const unsatisfied = findUnsatisfiedRequiresAny(capabilities);
+  if (unsatisfied.length > 0) {
+    const { capability, anyOf } = unsatisfied[0];
+    throw new Error(
+      `${capability} requires a CI capability: select ${anyOf.join(" or ")}.`,
+    );
+  }
+
   return {
     projectName: name,
     repositoryUrl: repositoryUrl || "",
     // Expand the selection with declared dependencies (e.g. circleci
     // requires doppler so the goose CircleCI MCP extension gets its tokens).
-    capabilities: resolveCapabilityDependencies(selectedCapabilities),
+    capabilities,
     // Capability-specific configuration (e.g. docker-container publishPort,
     // dataMounts, hostname). Defaults are applied by the generators.
     configuration: configuration || {},

@@ -75,11 +75,11 @@
       "actions": [
         {
           "type": "create",
-          "description": "GHCR package is created on first push from CircleCI"
+          "description": "GHCR package is created on the first push from CI"
         },
         {
           "type": "configure",
-          "description": "Create a fine-grained PAT with Packages: read & write; add GHCR_USERNAME and GHCR_TOKEN to the CircleCI context"
+          "description": "Create a classic PAT with the write:packages scope (fine-grained PATs cannot access GHCR) and make GHCR_USERNAME and GHCR_TOKEN available to the build: in the CircleCI context, or in the Buildkite agent's environment hook"
         }
       ]
     }

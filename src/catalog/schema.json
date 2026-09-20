@@ -166,6 +166,11 @@
           "items": { "type": "string" },
           "description": "Capability IDs that must also be selected."
         },
+        "requiresAny": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Capability IDs of which at least one must also be selected. Unlike `dependencies` (a conjunction), this is the disjunctive form: a capability that needs *some* CI provider declares requiresAny: [\"circleci\", \"buildkite\"] rather than picking one. Generation fails when none of the listed capabilities is selected."
+        },
         "conflicts": {
           "type": "array",
           "items": { "type": "string" },

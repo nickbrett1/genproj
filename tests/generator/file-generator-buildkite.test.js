@@ -68,6 +68,43 @@ describe("Buildkite file generation", () => {
     expect(pipeline.content).toContain("rust:1-slim");
     expect(pipeline.content).toContain("cargo build --locked");
     expect(pipeline.content).toContain("cargo test --locked");
+    // No lint gate unless code-quality-rust is selected.
+    expect(pipeline.content).not.toContain("cargo clippy");
+  });
+
+  it("adds the clippy + fmt lint gate when code-quality-rust is selected", async () => {
+    const files = await generate([
+      "buildkite",
+      "devcontainer-rust",
+      "code-quality-rust",
+    ]);
+    const pipeline = pipelineFrom(files);
+
+    expect(pipeline.content).toContain("cargo fmt --check");
+    expect(pipeline.content).toContain(
+      "cargo clippy --all-targets -- -D warnings",
+    );
+    // The lint runs inside the build step, before the build itself.
+    expect(pipeline.content.indexOf("cargo clippy")).toBeLessThan(
+      pipeline.content.indexOf("cargo build --locked"),
+    );
+  });
+
+  it("builds the Svelte frontend in its own step for a rust primary", async () => {
+    // The rust image has no node, so the frontend cannot be built in the rust
+    // step; it gets a node-image step the build waits for.
+    const files = await generate(
+      ["buildkite", "devcontainer-rust", "devcontainer-node", "sveltekit"],
+      { language: "rust" },
+    );
+    const pipeline = pipelineFrom(files);
+
+    expect(pipeline.content).toContain("key: frontend_build");
+    expect(pipeline.content).toContain("cd web");
+    // Parses as YAML, and the rust build depends on the frontend step.
+    const parsed = parse(pipeline.content);
+    const build = parsed.steps.find((step) => step.key === "build");
+    expect(build.depends_on).toContain("frontend_build");
   });
 
   it("explains itself rather than failing for a java project", async () => {

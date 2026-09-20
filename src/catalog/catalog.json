@@ -336,7 +336,17 @@
       "externalServices": [],
       "configurationSchema": {
         "type": "object",
-        "properties": {}
+        "properties": {
+          "directory": {
+            "type": "string",
+            "description": "Directory the Svelte app is scaffolded into. Leave empty to derive it: the repository root when the primary language is node (the app owns the repo), and \"web\" for any other primary language (the frontend is a sub-build of the Rust/Python/Java project, so it must not share the language's src/ tree). Set \".\" to force the repository root, or a name such as \"web\" to force that directory."
+          },
+          "outputDirectory": {
+            "type": "string",
+            "description": "Where the built static assets land, relative to the Svelte directory. The non-node language build copies from here. Defaults to \"build\".",
+            "default": "build"
+          }
+        }
       },
       "vscodeExtensions": ["svelte.svelte-vscode"],
       "benefits": [
@@ -708,7 +718,7 @@
     {
       "id": "doppler",
       "name": "Doppler Secrets Management",
-      "description": "Integrates Doppler for secure secrets management. Enables the various MCP servers that rely on privileged tokens to access their services (e.g. CircleCI, GitHub, SonarQube).",
+      "description": "Integrates Doppler for secure secrets management. Enables the various MCP servers that rely on privileged tokens to access their services (e.g. Buildkite, CircleCI, GitHub, SonarQube).",
       "category": "secrets",
       "icon": "secret",
       "iconColor": "blue",
@@ -769,7 +779,8 @@
       "iconColor": "blue",
       "selectedByDefault": false,
       "provides": [],
-      "dependencies": ["circleci"],
+      "dependencies": [],
+      "requiresAny": ["circleci", "buildkite"],
       "conflicts": [],
       "requiresAuth": [],
       "authServices": ["gitguardian"],
@@ -784,7 +795,7 @@
             },
             {
               "type": "configure",
-              "description": "Get API Key and add to CircleCI environment variables"
+              "description": "Create an API key in GitGuardian and make it available to the CI job as GITGUARDIAN_API_KEY: in the CircleCI context, or in the Buildkite agent's environment hook"
             }
           ],
           "requiresAuth": true
@@ -909,6 +920,34 @@
       "website": "https://docs.astral.sh/ruff/"
     },
     {
+      "id": "code-quality-rust",
+      "name": "Clippy (Rust code quality)",
+      "description": "Adds fast, zero-configuration Rust linting and formatting via cargo clippy and cargo fmt. Lint locally with `cargo clippy --all-targets -- -D warnings`. Requires a Rust devcontainer.",
+      "category": "code-quality",
+      "icon": "rust",
+      "iconColor": "orange",
+      "selectedByDefault": false,
+      "provides": [],
+      "dependencies": ["devcontainer-rust"],
+      "conflicts": [],
+      "requiresAuth": [],
+      "authServices": [],
+      "externalServices": [],
+      "configurationSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "vscodeExtensions": ["rust-lang.rust-analyzer"],
+      "benefits": [
+        "Catches bugs, code smells and unidiomatic code before merge",
+        "No external service or API token required",
+        "Clippy ships with the Rust toolchain - nothing to install",
+        "Works offline and in any CI environment"
+      ],
+      "links": [],
+      "website": "https://doc.rust-lang.org/clippy/"
+    },
+    {
       "id": "sonarlint",
       "name": "SonarLint",
       "description": "Configures SonarLint for local code quality analysis.",
@@ -1015,11 +1054,11 @@
           "actions": [
             {
               "type": "create",
-              "description": "GHCR package is created on first push from CircleCI"
+              "description": "GHCR package is created on the first push from CI"
             },
             {
               "type": "configure",
-              "description": "Create a classic PAT with the write:packages scope (fine-grained PATs cannot access GHCR); add GHCR_USERNAME and GHCR_TOKEN to the CircleCI context. The generated Dockerfile labels the image with its GitHub repo so GHCR links the package to it (public repo -> public package)"
+              "description": "Create a classic PAT with the write:packages scope (fine-grained PATs cannot access GHCR) and make GHCR_USERNAME and GHCR_TOKEN available to the build: in the CircleCI context, or in the Buildkite agent's environment hook. The generated Dockerfile labels the image with its GitHub repo so GHCR links the package to it (public repo -> public package)"
             }
           ],
           "requiresAuth": true

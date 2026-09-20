@@ -6,6 +6,7 @@ import {
   buildCatalog,
   capabilities,
   categories,
+  findUnsatisfiedRequiresAny,
   getCapabilitiesByCategory,
   getCapabilityById,
   getCategoryById,
@@ -41,6 +42,7 @@ const EXPECTED_IDS = [
   "sonarcloud",
   "code-quality",
   "code-quality-python",
+  "code-quality-rust",
   "sonarlint",
   "cloudflare-wrangler",
   "google-cloud",
@@ -434,5 +436,34 @@ describe("validateCapabilityDependencies", () => {
       missing: [],
       conflicts: [],
     });
+  });
+});
+
+describe("requiresAny (disjunctive requirements)", () => {
+  it("gitguardian needs some CI, not CircleCI in particular", () => {
+    const gitguardian = getCapabilityById("gitguardian");
+    // A hard `dependencies: ["circleci"]` would forbid the Buildkite path that
+    // already works; requiresAny is the honest expression of the constraint.
+    expect(gitguardian.dependencies).toEqual([]);
+    expect(gitguardian.requiresAny).toEqual(["circleci", "buildkite"]);
+  });
+
+  it("is satisfied by any one of the listed capabilities", () => {
+    expect(findUnsatisfiedRequiresAny(["gitguardian", "buildkite"])).toEqual(
+      [],
+    );
+    expect(findUnsatisfiedRequiresAny(["gitguardian", "circleci"])).toEqual([]);
+  });
+
+  it("reports the capability when none is selected", () => {
+    expect(findUnsatisfiedRequiresAny(["gitguardian"])).toEqual([
+      { capability: "gitguardian", anyOf: ["circleci", "buildkite"] },
+    ]);
+  });
+
+  it("leaves capabilities without requiresAny alone", () => {
+    expect(
+      findUnsatisfiedRequiresAny(["devcontainer-node", "sveltekit"]),
+    ).toEqual([]);
   });
 });

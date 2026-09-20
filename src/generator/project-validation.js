@@ -9,9 +9,41 @@
  * and the preview generator) run them before emitting anything.
  */
 
+import { findUnsatisfiedRequiresAny } from "../catalog/index.js";
 import { ValidationError } from "./genproj-errors.js";
 import { resolveProjectLanguage } from "./capability-template-utils.js";
 import { TARGET_LABELS } from "./target-labels.js";
+
+/**
+ * Enforces the catalog's *disjunctive* requirements (`requiresAny`).
+ *
+ * A capability such as `gitguardian` needs *some* CI provider but not one in
+ * particular - the secret scan is contributed by whichever CI capability is
+ * selected. The catalog says so with `requiresAny: ["circleci", "buildkite"]`
+ * rather than a hard dependency, and this guard turns that back into a
+ * generation-time failure when neither is selected: without it a project would
+ * generate "successfully" with a secret-scan capability that contributes
+ * nothing and runs nowhere - the exact silent-omission the dependency model
+ * exists to prevent, just with a disjunction.
+ *
+ * @param {Object} context - Generation context (capabilities)
+ * @throws {ValidationError} When a `requiresAny` requirement is unmet
+ */
+export function validateRequiredAny(context) {
+  const capabilities = context?.capabilities || [];
+  const unsatisfied = findUnsatisfiedRequiresAny(capabilities);
+  if (unsatisfied.length === 0) return;
+
+  const { capability, anyOf } = unsatisfied[0];
+  const alternatives = anyOf.join(" or ");
+  throw new ValidationError(
+    `This project selects ${capability}, which requires a CI capability: ` +
+      `select ${alternatives}. ${capability} contributes a step to whichever ` +
+      `CI provider is selected; with none selected it would generate but run ` +
+      `nowhere.`,
+    capability,
+  );
+}
 
 /**
  * The primary language can be *derived* when there is at most one
