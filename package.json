@@ -32,17 +32,17 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@vitest/coverage-v8": "^5.0.0",
+    "@vitest/coverage-v8": "^5.0.1",
     "eslint": "^10.8.0",
     "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-security": "^4.0.1",
-    "eslint-plugin-sonarjs": "^4.2.0",
+    "eslint-plugin-sonarjs": "^4.2.1",
     "globals": "^17.0.0",
     "lint-staged": "^17.5.1",
-    "prettier": "^3.9.6",
+    "prettier": "^3.9.7",
     "simple-git-hooks": "^2.13.1",
     "vitest": "^5.0.0",
-    "wrangler": "^4.131.0",
+    "wrangler": "^4.133.0",
     "yaml": "^2.9.1"
   },
   "dependencies": {
