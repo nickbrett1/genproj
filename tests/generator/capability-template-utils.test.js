@@ -6,6 +6,7 @@ import {
   assertNoGooseEnvVarReferences,
   resolveDopplerTarget,
 } from "../../src/generator/capability-template-utils.js";
+import { getCapabilityById } from "../../src/catalog/index.js";
 
 describe("capability-template-utils", () => {
   describe("getCodingAgentsTemplateData", () => {
@@ -530,6 +531,56 @@ describe("capability-template-utils", () => {
       const capability = { configurationSchema: {} };
       const config = { a: 1 };
       expect(applyDefaults(capability, config)).toEqual(config);
+    });
+  });
+
+  describe("getDockerContainerTemplateData base image", () => {
+    // The base image is a single-valued output of the primary language, so the
+    // generator derives it (resolveProjectLanguage owns the decision) rather
+    // than the catalog hardcoding one. See `resolveSvelteDirectory` for the
+    // same rule applied to the Svelte directory.
+    const dockerData = (language, dockerConfig = {}) =>
+      getCapabilityTemplateData("docker-container", {
+        capabilities: ["docker-container", `devcontainer-${language}`],
+        projectName: "sample-app",
+        configuration: { "docker-container": dockerConfig },
+      });
+
+    it("derives the base image from the primary language", () => {
+      expect(dockerData("rust").dockerBaseImage).toBe("rust:1-slim");
+      expect(dockerData("python").dockerBaseImage).toBe("python:3.12-slim");
+      expect(dockerData("node").dockerBaseImage).toBe("node:22-slim");
+      expect(dockerData("java").dockerBaseImage).toBe(
+        "maven:3.9-eclipse-temurin-21",
+      );
+    });
+
+    it("declares no static default that could prefill over the language", () => {
+      const baseImage =
+        getCapabilityById("docker-container").configurationSchema.properties
+          .baseImage;
+      expect(baseImage).not.toHaveProperty("default");
+    });
+
+    it("lets a prefilled schema default NOT override a Rust project", () => {
+      // The webapp config form prefills every schema default. Before this fix
+      // baseImage carried a static `node:22-slim` default, so that prefill won
+      // over the language and a Rust project got a node build stage that fails
+      // on the first push. Simulate the prefill and pin the language wins.
+      const capability = getCapabilityById("docker-container");
+      const prefilled = applyDefaults(capability, {});
+      const data = getCapabilityTemplateData("docker-container", {
+        capabilities: ["docker-container", "devcontainer-rust"],
+        projectName: "sample-app",
+        configuration: { "docker-container": prefilled },
+      });
+      expect(data.dockerBaseImage).toBe("rust:1-slim");
+    });
+
+    it("still honours an explicit baseImage override", () => {
+      expect(
+        dockerData("rust", { baseImage: "rust:1-alpine" }).dockerBaseImage,
+      ).toBe("rust:1-alpine");
     });
   });
 });
