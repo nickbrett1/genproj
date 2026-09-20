@@ -226,6 +226,7 @@ This section defines required system behavior for known failure modes and edge c
 - **FR-017**: System MUST generate VS Code-specific configuration files (settings.json, extensions.json) based on selected capabilities
 - **FR-018**: System MUST create post-create-setup.sh script with git safe directory configuration
 - **FR-019**: System MUST generate dependabot.yml when dependency management is selected with ecosystems automatically determined from selected devcontainer languages
+- **FR-019a**: System MUST enable the repository `allow_auto_merge` setting when the dependabot capability is selected, because the generated auto-merge workflow merges via `gh pr merge --auto` and GitHub rejects that on repositories where the setting is off; the enablement is best-effort and must not fail generation
 - **FR-020**: System MUST create CircleCI project and configuration when CI/CD capability is selected with authentication (v1 only supports CircleCI, GitHub Actions planned for future versions)
 - **FR-020a**: CircleCI config MUST use the `build_test_deploy` workflow by default
 - **FR-020b**: CircleCI config MUST include `ggshield/scan` job with proper base_revision and revision parameters
