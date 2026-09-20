@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 import { GitHubAPIService } from "../../src/clients/github-api.js";
+import { computeGitBlobSha } from "../../src/clients/git-blob.js";
 
 describe("GitHubAPIService", () => {
   let service;
@@ -13,6 +14,55 @@ describe("GitHubAPIService", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
+
+  /**
+   * Wires `makeRequest` for a `createMultipleFiles` run: branch head, the
+   * GraphQL content commit, and (when a `.sh` is present) the mode-fix
+   * tree/commit/ref cycle.
+   * @param {Object} config
+   * @param {Object} config.commit - GraphQL `commit` payload
+   * @param {string} [config.modeCommitSha] - SHA returned by the mode-fix commit
+   * @returns {{requests: Object[]}} Recorded `{endpoint, options}` calls
+   */
+  function mockCommitEndpoints({ commit, modeCommitSha = "mode-commit" }) {
+    const requests = [];
+    vi.spyOn(service, "makeRequest").mockImplementation(
+      async (endpoint, options = {}) => {
+        requests.push({ endpoint, options });
+        if (
+          endpoint === "/repos/user/repo/git/refs/heads/main" &&
+          !options.method
+        ) {
+          return {
+            json: vi.fn().mockResolvedValue({ object: { sha: "head-sha" } }),
+          };
+        }
+        if (endpoint === "/graphql") {
+          return {
+            json: vi.fn().mockResolvedValue({
+              data: { createCommitOnBranch: { commit } },
+            }),
+          };
+        }
+        if (endpoint === "/repos/user/repo/git/trees") {
+          return { json: vi.fn().mockResolvedValue({ sha: "mode-tree" }) };
+        }
+        if (endpoint === "/repos/user/repo/git/commits") {
+          return {
+            json: vi.fn().mockResolvedValue({ sha: modeCommitSha }),
+          };
+        }
+        if (
+          endpoint === "/repos/user/repo/git/refs/heads/main" &&
+          options.method === "PATCH"
+        ) {
+          return {};
+        }
+        throw new Error(`unexpected request: ${endpoint}`);
+      },
+    );
+    return { requests };
+  }
 
   it("makes authenticated requests and handles failures", async () => {
     const response = { ok: true, status: 200, statusText: "OK" };
@@ -124,56 +174,148 @@ describe("GitHubAPIService", () => {
     expect(JSON.parse(newOptions.body)).not.toHaveProperty("sha");
   });
 
-  it("creates multiple files in a single commit", async () => {
-    const referenceJson = vi
-      .fn()
-      .mockResolvedValue({ object: { sha: "ref-sha" } });
-    const commitJson = vi.fn().mockResolvedValue({ tree: { sha: "tree-sha" } });
-    const blobJson = vi.fn().mockResolvedValue({ sha: "blob-sha" });
-    const treeJson = vi.fn().mockResolvedValue({ sha: "new-tree" });
-    const newCommitJson = vi.fn().mockResolvedValue({ sha: "commit-sha" });
+  it("creates multiple files in a single GraphQL commit (no per-file blob POSTs)", async () => {
+    const { requests } = mockCommitEndpoints({
+      commit: { oid: "commit-sha", url: "url", tree: { oid: "content-tree" } },
+    });
 
-    vi.spyOn(service, "makeRequest")
-      .mockResolvedValueOnce({ json: referenceJson })
-      .mockResolvedValueOnce({ json: commitJson })
-      .mockResolvedValueOnce({ json: blobJson }) // blob for file.txt
-      .mockResolvedValueOnce({ json: blobJson }) // blob for script.sh
-      .mockResolvedValueOnce({ json: treeJson })
-      .mockResolvedValueOnce({ json: newCommitJson })
-      .mockResolvedValueOnce({});
+    const commit = await service.createMultipleFiles(
+      "user",
+      "repo",
+      [{ path: "file.txt", content: "content" }],
+      "Initial commit",
+    );
+
+    expect(commit.sha).toBe("commit-sha");
+
+    // The whole fan-out of blob POSTs is gone: exactly one GraphQL mutation.
+    expect(requests.some((request) => request.endpoint === "/graphql")).toBe(
+      true,
+    );
+    expect(
+      requests.some((request) => request.endpoint.endsWith("/git/blobs")),
+    ).toBe(false);
+
+    const graphql = requests.find((request) => request.endpoint === "/graphql");
+    const body = JSON.parse(graphql.options.body);
+    expect(body.variables.input.expectedHeadOid).toBe("head-sha");
+    expect(body.variables.input.branch).toEqual({
+      repositoryNameWithOwner: "user/repo",
+      branchName: "main",
+    });
+    expect(body.variables.input.message).toEqual({
+      headline: "Initial commit",
+    });
+    expect(body.variables.input.fileChanges.additions).toEqual([
+      { path: "file.txt", contents: Buffer.from("content").toString("base64") },
+    ]);
+  });
+
+  it("preserves the executable bit via a single mode-fix commit for .sh files", async () => {
+    const { requests } = mockCommitEndpoints({
+      commit: {
+        oid: "content-commit",
+        url: "url",
+        tree: { oid: "content-tree" },
+      },
+      modeCommitSha: "mode-commit",
+    });
 
     const commit = await service.createMultipleFiles(
       "user",
       "repo",
       [
-        {
-          path: "file.txt",
-          content: "content",
-        },
-        {
-          path: "script.sh",
-          content: 'echo "hello"',
-        },
+        { path: "file.txt", content: "content" },
+        { path: "script.sh", content: 'echo "hello"' },
       ],
       "Initial commit",
     );
 
-    expect(commit).toEqual({ sha: "commit-sha" });
-    const patchCall = service.makeRequest.mock.calls.at(-1);
-    expect(patchCall[0]).toBe("/repos/user/repo/git/refs/heads/main");
+    // Callers receive the FINAL commit (the one with correct modes).
+    expect(commit.sha).toBe("mode-commit");
 
-    // Verify file modes
-    const treeCall = service.makeRequest.mock.calls.find(
-      (call) => call[0] === "/repos/user/repo/git/trees",
+    // GraphQL cannot express a mode, so the .sh is re-pointed at 100755 with a
+    // locally computed blob sha — no content re-upload.
+    const treeRequest = requests.find(
+      (request) => request.endpoint === "/repos/user/repo/git/trees",
     );
-    const treeBody = JSON.parse(treeCall[1].body);
-    const fileEntry = treeBody.tree.find((entry) => entry.path === "file.txt");
-    const scriptEntry = treeBody.tree.find(
-      (entry) => entry.path === "script.sh",
+    expect(treeRequest).toBeDefined();
+    const treeBody = JSON.parse(treeRequest.options.body);
+    expect(treeBody.base_tree).toBe("content-tree");
+    expect(treeBody.tree).toEqual([
+      {
+        path: "script.sh",
+        mode: "100755",
+        type: "blob",
+        sha: await computeGitBlobSha('echo "hello"'),
+      },
+    ]);
+
+    const lastCall = requests.at(-1);
+    expect(lastCall.endpoint).toBe("/repos/user/repo/git/refs/heads/main");
+    expect(lastCall.options.method).toBe("PATCH");
+  });
+
+  it("omits the mode-fix commit when no .sh files are written", async () => {
+    const { requests } = mockCommitEndpoints({
+      commit: { oid: "content-commit", url: "url", tree: { oid: "tree" } },
+    });
+
+    const commit = await service.createMultipleFiles(
+      "user",
+      "repo",
+      [{ path: "file.txt", content: "content" }],
+      "Initial commit",
     );
 
-    expect(fileEntry.mode).toBe("100644");
-    expect(scriptEntry.mode).toBe("100755");
+    expect(commit.sha).toBe("content-commit");
+    expect(
+      requests.some((request) => request.endpoint.endsWith("/git/trees")),
+    ).toBe(false);
+  });
+
+  it("surfaces GraphQL errors", async () => {
+    vi.spyOn(service, "makeRequest").mockImplementation(async (endpoint) => {
+      if (endpoint === "/repos/user/repo/git/refs/heads/main") {
+        return {
+          json: vi.fn().mockResolvedValue({ object: { sha: "head-sha" } }),
+        };
+      }
+      return {
+        json: vi.fn().mockResolvedValue({ errors: [{ message: "boom" }] }),
+      };
+    });
+
+    await expect(
+      service.createMultipleFiles(
+        "user",
+        "repo",
+        [{ path: "file.txt", content: "content" }],
+        "Initial commit",
+      ),
+    ).rejects.toThrow("GitHub GraphQL error: boom");
+  });
+
+  it("fetches a recursive tree as a path -> blob sha map", async () => {
+    const treeJson = vi.fn().mockResolvedValue({
+      truncated: false,
+      tree: [
+        { path: "a.txt", type: "blob", sha: "sha-a", mode: "100644" },
+        { path: "dir", type: "tree", sha: "tree-sha", mode: "040000" },
+        { path: "dir/b.sh", type: "blob", sha: "sha-b", mode: "100755" },
+      ],
+    });
+    vi.spyOn(service, "makeRequest").mockResolvedValue({ json: treeJson });
+
+    const result = await service.getTree("user", "repo", "main");
+
+    expect(service.makeRequest).toHaveBeenCalledWith(
+      "/repos/user/repo/git/trees/main?recursive=1",
+    );
+    expect(result.truncated).toBe(false);
+    expect(result.entries.get("a.txt")).toBe("sha-a");
+    expect(result.entries.get("dir/b.sh")).toBe("sha-b");
+    expect(result.entries.has("dir")).toBe(false);
   });
 
   it("creates webhooks, lists repos and deletes repository", async () => {

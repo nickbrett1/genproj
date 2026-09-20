@@ -13,6 +13,7 @@ import { BuildkiteAPIService } from "../clients/buildkite-api.js";
 import { DopplerAPIService } from "../clients/doppler-api.js";
 import { SonarCloudAPIService } from "../clients/sonarcloud-api.js";
 import { generateAllFiles } from "./file-generator.js";
+import { computeGitBlobSha } from "../clients/git-blob.js";
 import { isAppOwnedPath, isMergeTargetFile } from "./genproj-overwrite.js";
 
 /**
@@ -344,17 +345,28 @@ export class ProjectGeneratorService {
     // NEVER silently replaced — this protects app code that has taken over
     // a template-owned path (e.g. src/<pkg>/__main__.py) from being
     // clobbered by a scaffold placeholder.
-    let existingContentByPath = null;
+    // One recursive tree fetch replaces the old per-file content read: a blob's
+    // git sha is a pure function of its bytes, so we can classify each
+    // generated file as absent / byte-identical / diverged locally. This is the
+    // difference between ~N and 1 subrequest on regeneration (the Cloudflare
+    // Workers Free tier caps a request at 50).
+    let existingShas = null;
+    let generatedShas = null;
     if (overwrite) {
-      existingContentByPath = new Map();
-      for (const file of generatedFiles) {
-        const existing = await this.services.github.getFileContent(
-          owner,
-          repo,
-          file.filePath,
-        );
-        existingContentByPath.set(file.filePath, existing);
-      }
+      existingShas = await this.#existingBlobShas(
+        owner,
+        repo,
+        repository.defaultBranch || "main",
+        generatedFiles,
+      );
+      generatedShas = new Map(
+        await Promise.all(
+          generatedFiles.map(async (file) => [
+            file.filePath,
+            await computeGitBlobSha(file.content),
+          ]),
+        ),
+      );
     }
 
     // Filter files based on resolutions + idempotent overwrite policy.
@@ -373,12 +385,12 @@ export class ProjectGeneratorService {
         filesToCommit.push(file);
         continue;
       }
-      const existing = existingContentByPath.get(file.filePath);
-      if (existing === null || existing === undefined) {
+      const existingSha = existingShas.get(file.filePath);
+      if (existingSha === undefined) {
         filesToCommit.push(file); // file absent → create it
         continue;
       }
-      if (existing === file.content) {
+      if (existingSha === generatedShas.get(file.filePath)) {
         continue; // byte-identical → nothing to do (idempotent)
       }
       if (resolution === "overwrite") {
@@ -386,6 +398,12 @@ export class ProjectGeneratorService {
         continue;
       }
       if (isMergeTargetFile(file.filePath)) {
+        // Merging is content-aware, so this one file is read individually.
+        const existing = await this.services.github.getFileContent(
+          owner,
+          repo,
+          file.filePath,
+        );
         const merged = mergeDevcontainerJson(existing, file.content);
         if (merged === existing) {
           continue; // merge is a no-op (monotonic across regens)
@@ -430,6 +448,43 @@ export class ProjectGeneratorService {
       `Initial commit: Generated project with ${context.capabilities.length} capabilities`,
       repository.defaultBranch || "main",
     );
+  }
+
+  /**
+   * Maps each existing generated path to its git blob SHA using ONE recursive
+   * tree request (rather than one content request per file).
+   *
+   * A blob's SHA is a pure function of its bytes, so callers compare it against
+   * `computeGitBlobSha(generatedContent)` to classify a file as byte-identical
+   * or diverged without downloading content. If GitHub truncates the tree
+   * (very large repositories), fall back to the old per-file content read so
+   * behaviour stays correct, just more expensive.
+   * @param {string} owner - Repository owner
+   * @param {string} repo - Repository name
+   * @param {string} branch - Branch/ref to read the tree from
+   * @param {Object[]} generatedFiles - Generated files (for the fallback path)
+   * @returns {Promise<Map<string, string>>} Existing path -> blob SHA
+   */
+  async #existingBlobShas(owner, repo, branch, generatedFiles) {
+    const tree = await this.services.github.getTree(owner, repo, branch);
+    if (!tree.truncated) {
+      return tree.entries;
+    }
+    console.warn(
+      "⚠️ Git tree response was truncated; falling back to per-file content reads",
+    );
+    const shas = new Map();
+    for (const file of generatedFiles) {
+      const content = await this.services.github.getFileContent(
+        owner,
+        repo,
+        file.filePath,
+      );
+      if (content !== null && content !== undefined) {
+        shas.set(file.filePath, await computeGitBlobSha(content));
+      }
+    }
+    return shas;
   }
 
   /**
@@ -1014,12 +1069,44 @@ export class ProjectGeneratorService {
     const generatedFiles = await generateAllFiles(context);
     const conflicts = [];
 
-    // In a real scenario, we might want to optimize this by fetching the git tree
-    // For now, we'll check each file individually as the number of generated files is usually small
+    // Resolve the repository's default branch so the tree read matches what
+    // the per-file content API used to return.
+    const repository = await this.services.github.getRepository(
+      user.login,
+      projectName,
+    );
+    const branch = repository?.defaultBranch || "main";
+
+    // ONE recursive tree fetch + locally computed blob SHAs decides divergence;
+    // only genuinely diverged files are read for the diff payload (previously
+    // this was one content read per generated file).
+    const existingShas = await this.#existingBlobShas(
+      user.login,
+      projectName,
+      branch,
+      generatedFiles,
+    );
+    const generatedShas = new Map(
+      await Promise.all(
+        generatedFiles.map(async (file) => [
+          file.filePath,
+          await computeGitBlobSha(file.content),
+        ]),
+      ),
+    );
+
     for (const file of generatedFiles) {
       // Round-4: merge-target files (devcontainer.json) are auto-merged on
       // overwrite — they are never a user-resolvable conflict.
       if (isMergeTargetFile(file.filePath)) {
+        continue;
+      }
+      const existingSha = existingShas.get(file.filePath);
+      // Absent or byte-identical → not a conflict.
+      if (
+        existingSha === undefined ||
+        existingSha === generatedShas.get(file.filePath)
+      ) {
         continue;
       }
       const existingContent = await this.services.github.getFileContent(
@@ -1027,15 +1114,11 @@ export class ProjectGeneratorService {
         projectName,
         file.filePath,
       );
-
-      // If file exists and content is different
-      if (existingContent !== null && existingContent !== file.content) {
-        conflicts.push({
-          path: file.filePath,
-          generatedContent: file.content,
-          existingContent: existingContent,
-        });
-      }
+      conflicts.push({
+        path: file.filePath,
+        generatedContent: file.content,
+        existingContent: existingContent,
+      });
     }
 
     console.log(`⚠️ Found ${conflicts.length} file conflicts`);
