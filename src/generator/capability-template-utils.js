@@ -2964,7 +2964,8 @@ function getDependabotTemplateData(context) {
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: "${interval}"${groups()}`,
+      interval: "${interval}"
+    rebase-strategy: "auto"${groups()}`,
   ];
 
   // Always add GitHub Actions
@@ -2974,7 +2975,8 @@ function getDependabotTemplateData(context) {
   - package-ecosystem: "npm"
     directory: "/"
     schedule:
-      interval: "${interval}"${groups(true)}`);
+      interval: "${interval}"
+    rebase-strategy: "auto"${groups(true)}`);
   }
 
   if (context.capabilities.some((c) => c.startsWith("devcontainer-python"))) {
@@ -2982,7 +2984,8 @@ function getDependabotTemplateData(context) {
   - package-ecosystem: "pip"
     directory: "/"
     schedule:
-      interval: "${interval}"${groups()}`);
+      interval: "${interval}"
+    rebase-strategy: "auto"${groups()}`);
   }
 
   // Java support
@@ -2991,7 +2994,8 @@ function getDependabotTemplateData(context) {
   - package-ecosystem: "maven"
     directory: "/"
     schedule:
-      interval: "${interval}"${groups()}`);
+      interval: "${interval}"
+    rebase-strategy: "auto"${groups()}`);
   }
 
   // Rust support (devcontainer-rust or cloudflare-wrangler with workerType: rust)
@@ -3007,7 +3011,8 @@ function getDependabotTemplateData(context) {
   - package-ecosystem: "cargo"
     directory: "${directory}"
     schedule:
-      interval: "${interval}"${groups()}`);
+      interval: "${interval}"
+    rebase-strategy: "auto"${groups()}`);
   }
 
   return {
