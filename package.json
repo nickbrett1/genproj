@@ -47,7 +47,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
-    "agents": "^0.22.0",
+    "agents": "^0.23.0",
     "libsodium-wrappers": "^0.8.4"
   }
 }
