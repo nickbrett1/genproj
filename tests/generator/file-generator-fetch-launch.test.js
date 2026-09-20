@@ -325,10 +325,12 @@ describe("launcher configuration", () => {
     expect(readme).toContain("bin/test-project");
     // A wheel is a release artifact and a useless payload.
     expect(readme).toContain("zipapp");
-    // The universal payload is packed with `tar -C dist .`, so dist/ IS the
-    // payload root: the entry point has to be at dist/bin/<name>, and no earlier
-    // stage can catch its absence (the sha256 matches a payload that cannot run).
-    expect(readme).toContain("dist/bin/test-project");
+    // The universal payload is assembled into a payload root, then packed with
+    // `tar -C <root> .`: the entry point has to be at <root>/bin/<name>, and no
+    // earlier stage can catch its absence (the sha256 matches a payload that
+    // cannot run). The assembler is what makes the gate run the shipped tree.
+    expect(readme).toContain("scripts/build-payload.sh");
+    expect(readme).toContain("<root>/bin/test-project");
     // The launcher's half of the "which launcher is this host running?"
     // contract, which only works if a payload knows what to read.
     expect(readme).toContain("FETCH_LAUNCH_SHA256");

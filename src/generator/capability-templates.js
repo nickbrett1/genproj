@@ -1,4 +1,5 @@
 // src/generator/capability-templates.js
+import { resolveProjectLanguage } from "./capability-template-utils.js";
 
 /**
  * Generator-internal template wiring, one entry per capability.
@@ -268,6 +269,18 @@ export const capabilityTemplates = {
       filePath: "scripts/smoke-launch.sh",
       templateId: "github-release-smoke-launch",
       isExecutable: true,
+    },
+    {
+      id: "github-release-build-payload",
+      filePath: "scripts/build-payload.sh",
+      templateId: "github-release-build-payload",
+      isExecutable: true,
+      // Seeded for the singular (non-rust) unit only: a project whose build
+      // output is not a payload root has one to assemble. A rust matrix links
+      // its payload directly (`build/<target>/` IS the root), so there is
+      // nothing to assemble and a hook would be noise. This is the presence the
+      // pipeline's unconditional call in the singular path relies on.
+      when: (context) => resolveProjectLanguage(context) !== "rust",
     },
   ],
   "fetch-launch": [

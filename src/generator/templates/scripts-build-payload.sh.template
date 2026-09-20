@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+#
+# Assemble the payload root: the tree the smoke gate runs and the release packs.
+#
+# genproj seeds this file once; after that it is yours. `scripts/` is app-owned,
+# so regeneration never overwrites it — unlike .buildkite/pipeline.yml, which is
+# genproj's and is rewritten on every regeneration.
+#
+# Why this exists
+# ---------------
+# The build step produces a release *input*, not always a payload root. A python
+# build produces a `py3-none-any` wheel in `dist/`; a node build produces a
+# bundle. Neither has `bin/{{projectName}}`, which is what a launcher execs (see
+# LAUNCHING.md). Something has to turn the build output into that root.
+#
+# That something used to live in two places — the smoke gate and the release
+# step each assembled their own copy — which is exactly the drift that lets the
+# gate pass on a tree the tarball will not contain. Now there is one assembler
+# and both call it, with the same arguments and the same output root, so the
+# gate executes the tree the tarball will contain.
+#
+# Contract
+# --------
+# Called as:
+#
+#   bash scripts/build-payload.sh <version> <output-root> [<input-dir>]
+#
+#   <version>      the release version, or the smoke label the gate passes
+#                  ("0.0.0-smoke"). POSITIONAL on purpose: the two callers
+#                  legitimately pass different versions, so it is never read
+#                  from the environment — a single RELEASE_TARGET-style variable
+#                  would be the same for both and would report the wrong one.
+#   <output-root>  where the payload root is assembled. It must end up holding
+#                  `bin/{{projectName}}` for the gate to run it. `release-artifacts.sh`
+#                  packs THIS directory (`tar -C <root> .`), so what runs here
+#                  is what ships.
+#   <input-dir>    where the build step left its output (default: dist).
+#
+# Called by both the smoke gate and the release step, unconditionally. The
+# default body below does the boring thing — copy the build output into the
+# root — so a project whose `dist/` already IS a payload root keeps exactly its
+# old behaviour. A project that must actually assemble something (a bundled
+# interpreter, a vendored runtime, a wheel installed for a pinned platform)
+# replaces this body; that is the point of the hook.
+#
+# Fail closed: an input directory that is not there is an error, not an empty
+# payload. A release that silently ships an empty tarball is worse than one that
+# does not ship.
+set -euo pipefail
+
+VERSION="${1:?usage: build-payload.sh <version> <output-root> [<input-dir>]}"
+ROOT="${2:?usage: build-payload.sh <version> <output-root> [<input-dir>]}"
+INPUT_DIR="${3:-dist}"
+
+case "$ROOT" in
+  "" | "." | "/" | "$INPUT_DIR")
+    echo "build-payload: refusing to assemble into '$ROOT'" >&2
+    exit 2
+    ;;
+esac
+
+if [ ! -d "$INPUT_DIR" ]; then
+  echo "build-payload: no input directory '$INPUT_DIR' - nothing to assemble" >&2
+  exit 1
+fi
+
+echo "build-payload: assembling '$INPUT_DIR' -> '$ROOT' (version ${VERSION})"
+
+rm -rf "$ROOT"
+mkdir -p "$ROOT"
+# `cp -R "$INPUT_DIR"/.` copies the CONTENTS, exactly like the `tar -C` in
+# release-artifacts.sh: `$INPUT_DIR` becomes the payload root rather than a
+# directory inside it. The version is accepted for the assembled tree's build
+# metadata; the default body has nothing to record it in, so it is logged.
+cp -R "$INPUT_DIR"/. "$ROOT"/

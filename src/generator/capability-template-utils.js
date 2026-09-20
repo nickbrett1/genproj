@@ -1621,6 +1621,17 @@ ${extraYaml}${envBlock}${commandYaml}`;
 const MACOS_QUEUE = "mac-studio-linux";
 
 /**
+ * The directory a singular unit's payload root is assembled into.
+ *
+ * One name, two callers: the smoke gate assembles it and then runs it, and the
+ * release step assembles it and then packs it. They must agree, or the gate
+ * stops being a gate — it would test a tree the tarball does not contain. The
+ * assembler itself is the app-owned `scripts/build-payload.sh` (see its
+ * template); this constant is only the path both generated steps hand it.
+ */
+const RELEASE_PAYLOAD_ROOT = "payload";
+
+/**
  * Whether a target label names darwin. A *label* fact only: it says which host
  * may run the eventual artifact, not which host can build the step.
  *
@@ -1912,11 +1923,32 @@ function smokeStepKey(target) {
  * API).
  *
  * @param {Object} unit - The darwin build unit this gate runs
+ * @param {Object} options - Step options
+ * @param {boolean} options.assemblePayload - Whether the build output must be
+ * assembled into a payload root before it can run (the singular, non-rust
+ * case). A rust build links its payload directly, so it is false there.
  * @returns {string} The step, as YAML
  */
-function renderSmokeStep(unit) {
+function renderSmokeStep(unit, { assemblePayload } = {}) {
   const roots = unit.artifactPaths.map((p) => p.replace(/\/\*\*$/, ""));
   const patterns = unit.artifactPaths.map((p) => `"${p}"`).join(" ");
+  // A unit whose build output is not already a payload root — every singular
+  // (non-rust) unit — has to assemble one first, through the same app-owned
+  // script and into the same output root the release step uses, so this gate
+  // executes exactly the tree the tarball will contain. A rust matrix build
+  // links its payload into build/<target>/ directly: that IS the root, so it is
+  // run as-is and nothing is assembled.
+  const assemble = assemblePayload
+    ? `
+      - |
+        # The build output is a release INPUT (a wheel, a bundle), not a payload
+        # root. Assemble it with the same script and the same output root the
+        # release step uses, so this gate runs what the tarball will contain. The
+        # version is positional because the two callers pass different ones: a
+        # smoke label here, the release tag there.
+        bash scripts/build-payload.sh ${'"$${SMOKE_VERSION:-0.0.0-smoke}"'} ${RELEASE_PAYLOAD_ROOT} ${roots[0]}`
+    : "";
+  const smokeRoots = assemblePayload ? [RELEASE_PAYLOAD_ROOT] : roots;
   return `
   - label: ":apple: Smoke-test (${unit.target})"
     key: ${smokeStepKey(unit.target)}
@@ -1938,8 +1970,8 @@ function renderSmokeStep(unit) {
         # why that step uses the agent API instead.
         for pattern in ${patterns}; do
           buildkite-agent artifact download "$$pattern" .
-        done
-      - bash scripts/smoke-launch.sh ${roots.map((r) => `"${r}"`).join(" ")}
+        done${assemble}
+      - bash scripts/smoke-launch.sh ${smokeRoots.map((r) => `"${r}"`).join(" ")}
 `;
 }
 
@@ -2141,6 +2173,16 @@ ${_bkDockerPlugin(
     singleArtifactPaths,
     projectBinaryName,
   });
+  // A singular unit's build output is not a payload root (a wheel, a bundle):
+  // the smoke gate and the release step both assemble one first, through the
+  // one app-owned script. A rust build links its payload into build/<target>/,
+  // which IS the root, so nothing is assembled. `validateReleaseTargets` makes
+  // the mapping exact — `target` is non-rust only, `targets` is rust only — so
+  // "not rust" is precisely "there is something to assemble".
+  const assemblePayload = hasGithubRelease && language !== "rust";
+  const assembledInputDir = assemblePayload
+    ? (singleArtifactPaths[0] || "").replace(/\/\*\*$/, "")
+    : "";
   for (const unit of buildUnits) {
     steps.push(
       renderBuildStep(unit, {
@@ -2163,7 +2205,7 @@ ${_bkDockerPlugin(
     ? buildUnits.filter((unit) => unit.target && isDarwinTarget(unit.target))
     : [];
   for (const unit of darwinBuildUnits) {
-    steps.push(renderSmokeStep(unit));
+    steps.push(renderSmokeStep(unit, { assemblePayload }));
   }
 
   // Every step that consumes the build's output depends on all of its steps,
@@ -2454,6 +2496,19 @@ ${dopplerCliInstallCommands("        ")}      - |
         : []),
     ];
 
+    // Assemble the payload root from the bytes the build step uploaded, using
+    // the same app-owned script and output root the smoke gate used, so the
+    // tarball packs the tree the gate executed. Empty for a rust matrix, whose
+    // per-target build already produced its root.
+    const releaseAssemble = assemblePayload
+      ? `        # The build output is a release INPUT (a wheel, a bundle), not a
+        # payload root: assemble it with the same script the smoke gate calls,
+        # into the same root, so what ships is what the gate ran. The version is
+        # the release tag resolved above.
+        bash scripts/build-payload.sh "$$VERSION" ${RELEASE_PAYLOAD_ROOT} ${assembledInputDir}
+`
+      : "";
+
     steps.push(`
   - label: ":bookmark: Release"
     key: release
@@ -2492,7 +2547,7 @@ ${installGh}${releaseToken}      - |
 ${releaseArtifacts}      - |
         VERSION="$$(cat .release-version)"
         TAG="$$(cat .release-tag)"
-        if [ -f scripts/release-artifacts.sh ]; then
+${releaseAssemble}        if [ -f scripts/release-artifacts.sh ]; then
           bash scripts/release-artifacts.sh "$$VERSION"
         else
           echo "No scripts/release-artifacts.sh - releasing notes only."

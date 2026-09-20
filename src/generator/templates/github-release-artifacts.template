@@ -38,10 +38,21 @@ mkdir -p "$OUT_DIR"
 # releases/latest/download/<name> depends on the exact string, so treat a name
 # as frozen once anything relies on it.
 #
-# `-C dist .` puts the CONTENTS of dist/ at the root of the tarball, so dist/ is
-# the payload root: a launcher that execs `bin/<name>` needs `dist/bin/<name>` to
-# exist before this line runs. Nothing downstream checks it - see LAUNCHING.md.
-if [ -d dist ]; then
+# The release step assembles the payload root with `scripts/build-payload.sh`
+# before this runs, into `payload/` (both it and the smoke gate call that one
+# script, so the gate runs the tree that ships). `-C <root> .` puts the CONTENTS
+# of the root at the top of the tarball: a launcher that execs `bin/<name>` needs
+# `<root>/bin/<name>` to exist before this line runs. Nothing downstream checks
+# it - see LAUNCHING.md.
+#
+# `dist/` is the fallback for a project that has not adopted the assembler yet
+# (or whose release pipeline predates it): packing the build output directly is
+# exactly the old behaviour, and costs nothing when the assembled root is there.
+PAYLOAD_ROOT="${PAYLOAD_ROOT:-payload}"
+if [ -d "$PAYLOAD_ROOT" ]; then
+  tar -czf "$OUT_DIR/{{projectName}}-{{githubReleaseDistTarget}}.tar.gz" -C "$PAYLOAD_ROOT" .
+  echo "packaged $PAYLOAD_ROOT/ as {{projectName}}-{{githubReleaseDistTarget}}.tar.gz"
+elif [ -d dist ]; then
   tar -czf "$OUT_DIR/{{projectName}}-{{githubReleaseDistTarget}}.tar.gz" -C dist .
   echo "packaged dist/ as {{projectName}}-{{githubReleaseDistTarget}}.tar.gz"
 fi
