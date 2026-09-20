@@ -1600,13 +1600,14 @@ ${extraYaml}${envBlock}${commandYaml}`;
  * The queue fleet jobs run on, and the only queue a darwin target may use.
  *
  * Two roles, one value, deliberately: every generated step is dispatched here
- * unless the project names another queue, and a darwin target is dispatched
- * here *whatever* the project names, because the two reasons a queue is chosen
- * are not the same reason. A project changes `buildkite.queue` to control where
- * its containers run - the queue is a container-running decision - and a darwin
- * step is not a container. Left to follow the project's queue it would be sent
- * to a Linux-only queue and hang, or worse, be handed to an agent that starts
- * `cargo` and cannot link a Mach-O binary.
+ * unless the project names another queue, and a step that links a darwin binary
+ * (and, separately, the darwin smoke gate that runs one) is dispatched here
+ * *whatever* the project names, because the two reasons a queue is chosen are
+ * not the same reason. A project changes `buildkite.queue` to control where its
+ * containers run - the queue is a container-running decision - and a native
+ * darwin step is not a container. Left to follow the project's queue it would be
+ * sent to a Linux-only queue and hang, or worse, be handed to an agent that
+ * starts `cargo` and cannot link a Mach-O binary.
  *
  * The name is misleading on purpose, and worth stating: `mac-studio-linux`
  * names the *containers* the queue's steps run in, not its hosts. Those hosts
@@ -1620,16 +1621,23 @@ ${extraYaml}${envBlock}${commandYaml}`;
 const MACOS_QUEUE = "mac-studio-linux";
 
 /**
- * A darwin target cannot be built in a Linux container: it needs the macOS SDK
- * and the linker that ships with Xcode. Those steps therefore run on the agent
- * HOST, with no docker plugin - which is why the queue's Macs need the
- * toolchain installed on the host and not only in the image. It is the docker
- * plugin, and only that, which made every other step a Linux container.
+ * Whether a target label names darwin. A *label* fact only: it says which host
+ * may run the eventual artifact, not which host can build the step.
+ *
+ * A darwin *binary* cannot be linked in a Linux container - it needs the macOS
+ * SDK and the linker that ships with Xcode - so the step that links one runs on
+ * the agent HOST, with no docker plugin (which is why the queue's Macs need the
+ * toolchain installed on the host and not only in the image). But only a step
+ * that actually produces a platform binary is such a step; see
+ * {@link releaseBuildUnits}' `platformBinary` and its use in
+ * {@link renderBuildStep}. A singular non-rust target carries a darwin label
+ * because the *payload* assembled from its output is darwin - the step itself
+ * still produces a portable wheel or bundle and stays a container.
  *
  * The same predicate decides the queue: see {@link MACOS_QUEUE}.
  *
  * @param {string} target - A release target label
- * @returns {boolean} Whether the target needs a macOS host
+ * @returns {boolean} Whether the target names darwin
  */
 function isDarwinTarget(target) {
   return target.endsWith("-apple-darwin");
@@ -1747,7 +1755,10 @@ ${
  * @param {string} params.singleTarget - Declared singular release target ("" if none)
  * @param {string[]} params.singleArtifactPaths - Default artifact paths
  * @param {string} params.projectBinaryName - The cargo package/binary name
- * @returns {Object[]} One entry per build step
+ * @returns {Object[]} One entry per build step. Each carries `platformBinary`:
+ * whether the step *links* a platform binary (only a per-target rust build
+ * does), which is what decides the native/no-container build host rather than
+ * the target label alone.
  */
 function releaseBuildUnits({
   language,
@@ -1762,16 +1773,20 @@ function releaseBuildUnits({
       {
         key: "build",
         label: `:hammer: Build and test (${language})`,
-        // A singular `github-release.target` is one artifact, not a matrix, but
-        // it is still a target. Carrying it here is what subjects a single
-        // darwin artifact to the same no-container, macOS-queue decision the
-        // plural path takes: `renderBuildStep` decides darwin-ness from
-        // `unit.target`, so a singular macOS target that never reached this
-        // field was built in a Linux container - the exact path the darwin
-        // branch exists to avoid. The payload still comes from the language's
-        // own `dist/` (see singleArtifactPaths), because one artifact is packed
-        // there rather than under build/<target>/.
+        // A singular `github-release.target` is one artifact, not a matrix. It
+        // is *not* a build-host instruction: the label says what the payload
+        // assembled from this step's output runs on, and for every language
+        // that can declare one (i.e. every non-rust language - see
+        // validateReleaseTargets) that output is architecture-independent: a
+        // wheel, a JS bundle, a jar. The darwin-ness lives in the payload
+        // (assembled by the app's own script) and in the smoke gate, so this
+        // step stays a container. Only a unit that *links* a platform binary
+        // gets the native, no-container decision - see renderBuildStep.
         target: singleTarget || null,
+        // `language === "rust"` rather than `false`: a rust single unit would
+        // link a platform binary and belong on a Mac, though validation sends
+        // rust to the `targets` matrix and never reaches this branch.
+        platformBinary: language === "rust",
         commands: commands[language],
         artifactPaths: singleArtifactPaths,
         env: {},
@@ -1783,6 +1798,10 @@ function releaseBuildUnits({
     key: targetStepKey(target),
     label: `:hammer: Build (${language}, ${target})`,
     target,
+    // A per-target rust build links a platform binary for `target` and only a
+    // Mac can link the darwin one. This is the one unit shape whose build host
+    // the label genuinely constrains.
+    platformBinary: true,
     commands: rustTargetCommands(target, index === 0, projectBinaryName),
     artifactPaths: [`build/${target}/**`],
     // A musl target needs its own linker named explicitly; see
@@ -1832,25 +1851,32 @@ ${unit.artifactPaths.map((p) => `      - "${p}"`).join("\n")}
 ${envKeys.map((name) => `      ${name}: ${env[name]}`).join("\n")}
 `
     : "";
-  // One predicate, two consequences. A darwin target is not a container: it
-  // gets no docker plugin (the plugin would run it in a Linux container, where
-  // a macOS binary cannot be linked) and it gets the macOS queue rather than
-  // the project's - a project that moved its containers to a Linux queue must
-  // not take its darwin build with them.
-  const darwin = isDarwinTarget(unit.target || "");
+  // One predicate, two consequences - but the predicate is "this step LINKS a
+  // platform binary AND its target is darwin", not "the target is darwin". Only
+  // a per-target rust build links a platform binary (see releaseBuildUnits); a
+  // singular non-rust target's step produces a portable wheel or bundle, so it
+  // stays a container even though its label names darwin. Applying the rule to
+  // the label alone made a python build native, where it cannot pip-install
+  // into Homebrew's PEP-668-managed interpreter at all.
+  //
+  // The two consequences, when the step is native: no docker plugin (the plugin
+  // would run it in a Linux container, where a macOS binary cannot be linked)
+  // and the macOS queue rather than the project's - a project that moved its
+  // containers to a Linux queue must not take its native build with them.
+  const nativeDarwin = unit.platformBinary && isDarwinTarget(unit.target || "");
   // The step's `env:` values do not enter the container on their own - only the
   // names listed in the plugin's `environment:` do, and they take their value
   // from the job environment. Without this the musl target's
   // CARGO_TARGET_<TRIPLE>_LINKER never reaches rustc, whose final link then
   // falls back to the host `cc` and dies on `-m64` (see targetLinkerEnvVar).
-  const buildPlugins = darwin
+  const buildPlugins = nativeDarwin
     ? ""
     : `    plugins:
 ${_bkDockerPlugin(image, envKeys)}`;
   return `
   - label: "${unit.label}"
     key: ${unit.key}
-${hasGitGuardian ? "    depends_on:\n      - secret_scan\n" : ""}${_bkAgents(darwin ? MACOS_QUEUE : queue)}${buildEnv}${buildArtifacts}${buildPlugins}    commands:
+${hasGitGuardian ? "    depends_on:\n      - secret_scan\n" : ""}${_bkAgents(nativeDarwin ? MACOS_QUEUE : queue)}${buildEnv}${buildArtifacts}${buildPlugins}    commands:
 ${buildCommands}
 `;
 }
@@ -1876,11 +1902,14 @@ function smokeStepKey(target) {
  * it. This step runs the seeded, app-owned `scripts/smoke-launch.sh` against
  * the payload the build step uploaded, and the release depends on it.
  *
- * Native, exactly like the darwin build step: no docker plugin (a macOS payload
- * cannot run in a Linux container) and the macOS queue whatever the project's
- * queue is. Being native is also what lets it fetch artifacts with the agent
- * binary directly - the release step cannot, because its Linux container cannot
- * launch the macOS agent binary (which is why that step uses the agent API).
+ * Native always, whether or not the build step was: it is the *payload* that is
+ * darwin - a rust build's linked binary, or a non-rust build's assembled one -
+ * and running it needs a Mac whatever produced it. So no docker plugin (a macOS
+ * payload cannot run in a Linux container) and the macOS queue whatever the
+ * project's queue is. Being native is also what lets it fetch artifacts with the
+ * agent binary directly - the release step cannot, because its Linux container
+ * cannot launch the macOS agent binary (which is why that step uses the agent
+ * API).
  *
  * @param {Object} unit - The darwin build unit this gate runs
  * @returns {string} The step, as YAML
