@@ -3,6 +3,13 @@
 **Date**: 2026-09-20
 **Reported for**: `nickbrett1/netwatch-dash` (python) — `github-release.target: aarch64-apple-darwin`
 **Status**: Fixed; tests added; see _Verification_.
+**Superseded in part 2026-09-20**: the _routing_ this fix added stands (a singular
+target now reaches `renderBuildStep`), but the _decision_ it made it take — a
+darwin target makes the build step native — was wrong for a non-rust project and
+is corrected in
+[`fix-non-rust-darwin-build-not-native.md`](fix-non-rust-darwin-build-not-native.md).
+The build host is now decided by whether the step links a platform binary, not by
+the target label alone.
 
 ## The gap
 

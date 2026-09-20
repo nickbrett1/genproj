@@ -700,11 +700,13 @@ describe("a single platform-specific artifact", () => {
   };
   const buildStep = (yaml) => stepByKey(yaml, "build");
 
-  it("builds a singular darwin artifact on the macOS host, not in a container", async () => {
-    // A macOS payload cannot be assembled inside a Linux container - a bundled
-    // arm64 interpreter, like the one this label exists for, is not something a
-    // `pip install --platform macosx_11_0_arm64` can be trusted to cross-build.
-    // So the step drops the docker plugin and runs on the host.
+  it("containerises the build of a singular darwin artifact", async () => {
+    // A singular darwin target on a non-rust language is a label for the
+    // PAYLOAD, not for this step: what the step compiles is a wheel (or a JS
+    // bundle, or a jar) - architecture-independent. So it stays a container. A
+    // native step here cannot even install itself: `pip install` into the
+    // agent's Homebrew python is refused by PEP 668 (externally-managed-
+    // environment). Only a step that LINKS a platform binary goes native.
     const yaml = pipeline(
       await generate(["buildkite", "github-release", "devcontainer-python"], {
         language: "python",
@@ -712,14 +714,15 @@ describe("a single platform-specific artifact", () => {
       }),
     );
 
-    expect(buildStep(yaml)).not.toContain("docker#v5.13.0");
-    expect(buildStep(yaml)).toContain("queue: mac-studio-linux");
+    expect(buildStep(yaml)).toContain("docker#v5.13.0");
     expect(buildStep(yaml)).toContain(`RELEASE_TARGET: ${DARWIN}`);
+    // The label still reaches the step for anything the project adds to it.
   });
 
-  it("keeps a singular darwin target on the macOS queue when the project moves its containers", async () => {
-    // The queue names where the *containers* run; a darwin build has none, so
-    // moving `buildkite.queue` to a Linux queue must not move it.
+  it("lets a singular darwin artifact's build follow the project's container queue", async () => {
+    // The queue names where the *containers* run, and this step is one - so it
+    // follows `buildkite.queue` like every other container. It is the smoke gate
+    // that runs the assembled payload natively, not this step.
     const yaml = pipeline(
       await generate(["buildkite", "github-release", "devcontainer-python"], {
         language: "python",
@@ -728,13 +731,12 @@ describe("a single platform-specific artifact", () => {
       }),
     );
 
-    expect(buildStep(yaml)).toContain("queue: mac-studio-linux");
-    expect(buildStep(yaml)).not.toContain("queue: linux-medium");
+    expect(buildStep(yaml)).toContain("docker#v5.13.0");
+    expect(buildStep(yaml)).toContain("queue: linux-medium");
   });
 
   it("still containerises a singular target that is not darwin", async () => {
-    // The native path is the darwin exception, not what "singular" means: a
-    // non-darwin label stays on the project's container queue.
+    // A non-darwin singular label also stays on the project's container queue.
     const yaml = pipeline(
       await generate(["buildkite", "github-release", "devcontainer-python"], {
         language: "python",
@@ -747,11 +749,12 @@ describe("a single platform-specific artifact", () => {
     expect(buildStep(yaml)).toContain("queue: linux-medium");
   });
 
-  it("decides the build host from the target, not from which knob declared it", async () => {
-    // The gap this guards: the same triple reached the build step by one of two
-    // paths - the plural matrix (rust) or the singular label (any language) -
-    // and produced two different hosts. Both must land on the macOS host, so
-    // the decision lives in one place.
+  it("decides the build host from what the step produces, not from the target label", async () => {
+    // The gap this guards: `isDarwinTarget(unit.target)` was consulted one step
+    // too early. The label says which host may RUN the artifact, but only a step
+    // that LINKS a platform binary needs a Mac to build it. A rust matrix build
+    // links a Mach-O and goes native; a python singular target does not and
+    // stays a container, though both carry the same darwin label.
     const singular = pipeline(
       await generate(["buildkite", "github-release", "devcontainer-python"], {
         language: "python",
@@ -765,10 +768,13 @@ describe("a single platform-specific artifact", () => {
       }),
     );
 
-    for (const yaml of [singular, plural]) {
-      expect(buildStep(yaml)).not.toContain("docker#v5.13.0");
-      expect(buildStep(yaml)).toContain("queue: mac-studio-linux");
-    }
+    // The rust matrix build links a Mach-O: native, on the macOS queue.
+    const rustBuild = stepByKey(plural, "build_aarch64_apple_darwin");
+    expect(rustBuild).not.toContain("docker#v5.13.0");
+    expect(rustBuild).toContain("queue: mac-studio-linux");
+
+    // The python build produces a portable wheel: containerised.
+    expect(buildStep(singular)).toContain("docker#v5.13.0");
   });
 
   it("runs a singular darwin payload on the macOS host and gates the release on it", async () => {

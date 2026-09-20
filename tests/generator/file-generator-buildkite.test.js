@@ -343,7 +343,8 @@ describe("Buildkite file generation", () => {
           },
         },
       ],
-      // A single platform-specific artifact on the native (no-plugin) path.
+      // A single platform-specific artifact: the build step stays a container
+      // (its wheel is architecture-independent), the smoke gate is native.
       [
         ["buildkite", "github-release", "devcontainer-python"],
         {
