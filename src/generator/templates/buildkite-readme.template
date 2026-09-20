@@ -67,8 +67,14 @@ Provided by the agent's `environment` hook, by name:
 - **Deploy** (`cloudflare-wrangler`) — `CLOUDFLARE_API_TOKEN` and
   `CLOUDFLARE_ACCOUNT_ID`, plus `DOPPLER_TOKEN` when the `doppler` capability is
   selected (for `scripts/setup-wrangler-config.sh` and the secret sync).
-- **Image publish** (`docker-container`) — `GHCR_USERNAME` and `GHCR_TOKEN`.
-  Runs on the agent, which has the Docker daemon it needs.
+- **Image publish** (`docker-container`) — one of two credential channels,
+  decided by whether the `doppler` capability is selected. With it,
+  `DOPPLER_TOKEN` lets the step read `GHCR_UPDATE_TOKEN` from Doppler
+  (`common`/`prd`) at run time; the registry token is then never in the agent's
+  `environment` hook, where every job on the fleet could read it. Without it,
+  provide `GHCR_USERNAME` and `GHCR_TOKEN` in the agent environment — the same
+  names the CircleCI context supplies. Runs on the agent, which has the Docker
+  daemon it needs.
 
 This list is a bullet list rather than a table on purpose: a generated file has
 to survive `prettier --check` in this project's own lint step, and prettier
