@@ -1156,8 +1156,19 @@ RUN mvn -B package${svelteBuildCopyLine}`;
     // Rust: `cargo fetch` downloads crate sources from the lockfile before
     // the source copy, so the fetch layer is cached unless Cargo.toml or
     // Cargo.lock changes.
+    //
+    // `cargo fetch` parses Cargo.toml to resolve the dependency graph, and
+    // Cargo rejects a manifest with no targets ("no targets specified in the
+    // manifest: either src/lib.rs, src/main.rs, a [lib] section, or [[bin]]
+    // section must be present"). At the fetch layer only the manifests exist,
+    // so we stub a target first. The stub must be removed before the real
+    // source copy: `COPY` merges directories rather than replacing them, so a
+    // leftover src/main.rs would become an extra target the user never wrote
+    // (and a duplicate `main` symbol against the real one).
     dockerBuildCommands = `COPY Cargo.toml Cargo.lock* ./
-RUN cargo fetch
+RUN mkdir -p src && echo 'fn main() {}' > src/main.rs \\
+    && cargo fetch \\
+    && rm -rf src
 COPY src ./src${svelteBuildCopyLine}
 RUN cargo build --release`;
   }
