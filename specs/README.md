@@ -15,6 +15,8 @@ Design documents for this service, in the order they were written:
 | [`012-genproj-goose-requires-doppler`](012-genproj-goose-requires-doppler/spec.md)             | Defect record: goose was installed and wrapped in every devcontainer, but only runs under the Doppler wrapper — one `hasGoose` gate for the binary, the shell wrapper, the config and the self-update.          |
 | [`013-genproj-subrequest-free-tier`](013-genproj-subrequest-free-tier/spec.md)                 | Defect record: regeneration blew the Workers Free-tier 50-subrequest cap — GraphQL `createCommitOnBranch` replaces the per-file blob POSTs, one recursive tree fetch replaces the per-file content reads.       |
 | [`014-genproj-docker-container-credentials`](014-genproj-docker-container-credentials/spec.md) | Defect record: the Buildkite publish step resolved GHCR credentials only from Doppler while `docker-container` declared only `["docker"]`; fixed by a `hasDoppler` gate (fallback-only), not a hard dependency. |
+| [`015-genproj-docker-publish-idempotent`](015-genproj-docker-publish-idempotent/spec.md)       | Defect record: two builds of one commit raced the macOS keychain in `docker login`; fixed with a per-job `DOCKER_CONFIG` and a skip for an already-published commit.                                            |
+| [`016-genproj-docker-publish-plugin-path`](016-genproj-docker-publish-plugin-path/spec.md)     | Defect record: that per-job `DOCKER_CONFIG` also moved the CLI-plugin directory, hiding `docker-buildx` — the publish died on `--bootstrap`, exit 125.                                                          |
 
 They were written while the generator lived inside the front-end repository and
 moved here with the code. Read them as the reasoning behind the current shape,
