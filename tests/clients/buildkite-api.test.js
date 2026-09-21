@@ -49,6 +49,97 @@ describe("BuildkiteAPIService", () => {
     );
   });
 
+  it("pins the bootstrap/upload step to the queue it is given", () => {
+    // The upload step is dispatched BEFORE .buildkite/pipeline.yml is read, so
+    // the queue rules in that file do not apply to it. Left unset it lands on
+    // any agent the cluster offers; the wrapper has to name the fleet itself.
+    const wrapper = BuildkiteAPIService.configurationWrapper(
+      undefined,
+      "mac-studio-linux",
+    );
+    expect(wrapper).toContain("agents:\n      queue: mac-studio-linux");
+    // ...and the queue block precedes the command it qualifies.
+    expect(wrapper.indexOf("agents:")).toBeLessThan(
+      wrapper.indexOf("command:"),
+    );
+  });
+
+  it("sends the bootstrap queue in the pipeline's configuration", async () => {
+    const json = vi.fn().mockResolvedValue({ slug: "demo", id: "p1" });
+    vi.spyOn(service, "makeRequest").mockResolvedValue({ json });
+
+    await service.createPipeline("nick-brett", {
+      name: "demo",
+      repository: "https://github.com/nickbrett1/demo.git",
+      queue: "mac-studio-linux",
+    });
+
+    const body = JSON.parse(service.makeRequest.mock.calls[0][1].body);
+    expect(body.configuration).toContain("queue: mac-studio-linux");
+  });
+
+  it("reconciles the bootstrap queue on a pipeline that already exists", async () => {
+    // Creation is idempotent, so a pipeline made before the wrapper pinned a
+    // queue would otherwise keep its queue-less step forever. Re-running
+    // generation has to bring it into line.
+    const createError = new Error(
+      'Buildkite API error: 422 Unprocessable Entity - {"message":"Validation Failed","errors":[{"field":"name","message":"has already been taken"}]}',
+    );
+    const makeRequest = vi
+      .spyOn(service, "makeRequest")
+      .mockRejectedValueOnce(createError)
+      .mockResolvedValueOnce({
+        json: vi
+          .fn()
+          .mockResolvedValue({ slug: "demo", configuration: "steps: []\n" }),
+      })
+      .mockResolvedValueOnce({
+        json: vi.fn().mockResolvedValue({ slug: "demo" }),
+      });
+
+    const result = await service.createPipeline("nick-brett", {
+      name: "demo",
+      repository: "https://github.com/nickbrett1/demo.git",
+      queue: "mac-studio-linux",
+    });
+
+    expect(result.existed).toBe(true);
+    const [endpoint, options] = makeRequest.mock.calls[2];
+    expect(endpoint).toBe("/organizations/nick-brett/pipelines/demo");
+    expect(options.method).toBe("PATCH");
+    expect(JSON.parse(options.body).configuration).toContain(
+      "queue: mac-studio-linux",
+    );
+  });
+
+  it("leaves a matching existing configuration untouched", async () => {
+    const desired = BuildkiteAPIService.configurationWrapper(
+      undefined,
+      "mac-studio-linux",
+    );
+    const createError = new Error(
+      'Buildkite API error: 422 Unprocessable Entity - {"message":"Validation Failed","errors":[{"field":"name","message":"has already been taken"}]}',
+    );
+    const makeRequest = vi
+      .spyOn(service, "makeRequest")
+      .mockRejectedValueOnce(createError)
+      .mockResolvedValueOnce({
+        json: vi
+          .fn()
+          .mockResolvedValue({ slug: "demo", configuration: desired }),
+      });
+
+    const result = await service.createPipeline("nick-brett", {
+      name: "demo",
+      repository: "https://github.com/nickbrett1/demo.git",
+      queue: "mac-studio-linux",
+    });
+
+    expect(result.existed).toBe(true);
+    // POST (rejected) + getPipeline only; no PATCH.
+    expect(makeRequest).toHaveBeenCalledTimes(2);
+  });
+
   it("creates a pipeline with a non-empty configuration and the cluster id", async () => {
     const json = vi.fn().mockResolvedValue({ slug: "demo", id: "p1" });
     const makeRequest = vi

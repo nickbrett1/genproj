@@ -3,7 +3,9 @@
 `pipeline.yml` in this directory is the source of truth for this project's CI.
 The pipeline object in Buildkite carries a one-line wrapper that uploads this
 file, so edits take effect on the next push — there is nothing to change in the
-Buildkite UI.
+Buildkite UI. That wrapper is dispatched to `{{buildkiteQueue}}` as well: it runs
+_before_ this file is read, so it cannot inherit the queue from the steps below,
+and it is pinned explicitly so a build never lands on a shared cloud agent.
 
 ## How a build runs
 

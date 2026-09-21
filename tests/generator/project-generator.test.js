@@ -826,6 +826,9 @@ describe("ProjectGeneratorService", () => {
         service.services.buildkite.createPipeline.mock.calls[0];
       expect(options.repository).toBe("https://github.com/owner/repo.git");
       expect(options.clusterId).toBe("test-cluster");
+      // The bootstrap (pipeline-upload) step must name the fleet queue: the
+      // repository file's own queues are not read until after it runs.
+      expect(options.queue).toBe("mac-studio-linux");
 
       // The first build uses the initial commit sha, not just the branch.
       expect(service.services.buildkite.triggerBuild).toHaveBeenCalledWith(

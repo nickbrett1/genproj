@@ -13,6 +13,7 @@ import { BuildkiteAPIService } from "../clients/buildkite-api.js";
 import { DopplerAPIService } from "../clients/doppler-api.js";
 import { SonarCloudAPIService } from "../clients/sonarcloud-api.js";
 import { generateAllFiles } from "./file-generator.js";
+import { MACOS_QUEUE } from "./capability-template-utils.js";
 import { computeGitBlobSha } from "../clients/git-blob.js";
 import { isAppOwnedPath, isMergeTargetFile } from "./genproj-overwrite.js";
 
@@ -753,6 +754,14 @@ export class ProjectGeneratorService {
           repository: `https://github.com/${owner}/${repo}.git`,
           clusterId,
           defaultBranch,
+          // The bootstrap step — the `pipeline upload` wrapper Buildkite runs
+          // before it reads .buildkite/pipeline.yml — carries its own queue
+          // rule, because the repository file it uploads is not read yet when
+          // it is dispatched. Default it to the fleet so the upload always
+          // lands on our own hardware, and let a project that deliberately
+          // moved its steps to another queue move this step with them (the two
+          // must agree, or the bootstrap lands somewhere its steps are not).
+          queue: capabilityConfig.queue || MACOS_QUEUE,
         });
       const slug = pipeline.slug || repo;
 

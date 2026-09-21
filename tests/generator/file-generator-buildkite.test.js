@@ -365,7 +365,7 @@ describe("Buildkite file generation", () => {
     const step = content.slice(content.indexOf("key: docker_publish"));
     expect(step).toContain("GHCR_USERNAME/GHCR_TOKEN are not set on the agent");
     expect(step).not.toContain("GHCR_UPDATE_TOKEN");
-    expect(step).toContain('echo "$$GHCR_TOKEN" | docker login ghcr.io');
+    expect(step).toContain("export DOCKER_AUTH_CONFIG=");
   });
 
   it("contributes no extra steps when no contributing capability is selected", async () => {
@@ -605,20 +605,20 @@ describe("Buildkite docker smoke gate (roost regression)", () => {
 });
 
 describe("Buildkite docker publish (roost build 16 regression)", () => {
-  // Three red builds on roost's first generation, and only one of them was
-  // earned. #12/#13/#14 failed at docker_smoke - the gate doing its job on a
-  // dead image. #16 failed at docker_publish, inside `docker login`, on the
-  // SAME commit as #15, which published fine 96 seconds later: two agents on
-  // one macOS host (mac-studio-1/-2) behind the osxkeychain credential helper,
-  // two builds of one commit (the push webhook and the API "First build
-  // (genproj)"), two keychain writes started 37ms apart, and the loser died
-  // with "The specified item already exists in the keychain. (-25299)".
+  // roost build 16 failed at docker_publish on the SAME commit as the green #15:
+  // two agents on one macOS host (mac-studio-1/-2), two builds of one commit
+  // (the push webhook and the API "First build (genproj)"), two `docker logins`
+  // 37ms apart, and the loser died with "The specified item already exists in
+  // the keychain. (-25299)".
   //
-  // Note what this means for the skip guard: the two publish steps overlapped
-  // for their whole duration, so at the moment #16 would have checked, nothing
-  // was published yet and it would have proceeded to log in regardless. The
-  // skip alone does not fix that red - the keychain write does. Both are pinned
-  // below, because both are the fix.
+  // The first fix pointed DOCKER_CONFIG at a per-job directory, and was wrong
+  // twice over - both halves are pinned below because both are easy to
+  // reintroduce. On macOS the CLI falls back to the osxkeychain helper even with
+  // no credsStore configured, so the race survived; and DOCKER_CONFIG is also
+  // the root for cli-plugins, so a fresh directory hides `docker buildx`
+  // entirely (the next build died parsing `--bootstrap` with the root docker
+  // parser). The credential now travels in DOCKER_AUTH_CONFIG: no helper writes
+  // anything, and no shared state is left to race.
   const publishCaps = [
     "buildkite",
     "devcontainer-rust",
@@ -650,31 +650,25 @@ describe("Buildkite docker publish (roost build 16 regression)", () => {
     expect(publish.commands).toHaveLength(1);
   });
 
-  it("logs in through a per-job docker config instead of the shared keychain", async () => {
+  it("neither calls docker login nor redirects DOCKER_CONFIG", async () => {
     const { command } = await publishCommand();
+    expect(command).not.toContain("docker login");
+    expect(command).not.toContain("DOCKER_CONFIG=");
+    expect(command).not.toContain('echo "$$GHCR_TOKEN"');
+  });
 
-    expect(command).toContain(
-      'export DOCKER_CONFIG="/tmp/bk-docker-$$BUILDKITE_JOB_ID"',
+  it("carries the registry credential in DOCKER_AUTH_CONFIG", async () => {
+    const { command } = await publishCommand();
+    expect(command).toContain("export DOCKER_AUTH_CONFIG=");
+    expect(command).toContain('"auths":{"ghcr.io":{"auth":"');
+    expect(command).toContain('"$$GHCR_USERNAME"');
+    expect(command).toContain('"$$GHCR_TOKEN"');
+    expect(command).toContain("base64");
+    // Before the guard: the package is private, so the guard needs the
+    // credential in order to ask whether this commit is already published.
+    expect(command.indexOf("DOCKER_AUTH_CONFIG")).toBeLessThan(
+      command.indexOf("imagetools inspect"),
     );
-    expect(command).toContain('mkdir -p "$$DOCKER_CONFIG"');
-    // DOCKER_CONFIG also relocates the CLI-plugin directory, so the fresh
-    // config dir hides docker-buildx and every buildx call dies as an unknown
-    // ROOT flag ("unknown flag: --bootstrap", exit 125) before the push. The
-    // plugin dir has to be linked back in. Pinned because that failure names
-    // the flag - which is real - and points nowhere near the missing plugin.
-    expect(command).toContain(
-      'ln -sfn "$$HOME/.docker/cli-plugins" "$$DOCKER_CONFIG/cli-plugins"',
-    );
-    // The export has to come before the login, or the login writes to ~/.docker
-    // and the race is back.
-    expect(command.indexOf("export DOCKER_CONFIG")).toBeLessThan(
-      command.indexOf("docker login ghcr.io"),
-    );
-    // And the isolated config is removed again - it holds a write:packages
-    // token in plaintext once docker has written auth into it.
-    expect(command).toContain('rm -rf "$$DOCKER_CONFIG"');
-    // A single login: two logins in one step would race with itself.
-    expect((command.match(/docker login ghcr\.io/g) || []).length).toBe(1);
   });
 
   it("skips the publish when the commit is already in the registry", async () => {
@@ -701,19 +695,18 @@ describe("Buildkite docker publish (roost build 16 regression)", () => {
     expect(guard).not.toContain("|| true");
   });
 
-  it("still publishes in the no-doppler channel with the same guard", async () => {
-    // The guard and the isolated config live outside the doppler branch, so a
-    // project that takes its credentials from the agent environment gets both.
+  it("still supplies the credential in the no-doppler channel", async () => {
+    // The credential and the guard live outside the doppler branch, so a project
+    // that takes its credentials from the agent environment gets both.
     const { command } = await publishCommand([
       "buildkite",
       "devcontainer-node",
       "docker-container",
     ]);
-    expect(command).toContain(
-      'export DOCKER_CONFIG="/tmp/bk-docker-$$BUILDKITE_JOB_ID"',
-    );
+    expect(command).toContain("export DOCKER_AUTH_CONFIG=");
     expect(command).toContain("imagetools inspect");
     expect(command).not.toContain("GHCR_UPDATE_TOKEN");
+    expect(command).not.toContain("docker login");
   });
 
   it("emits YAML that still parses", async () => {
