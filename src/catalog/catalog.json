@@ -598,7 +598,7 @@
     {
       "id": "buildkite",
       "name": "Buildkite Integration",
-      "description": "Runs CI on a self-hosted Buildkite agent (Apple silicon) instead of a metered cloud fleet. The pipeline and its GitHub webhook are created during generation, so there is no manual \"set up project\" step. Can run alongside CircleCI, so a repository can migrate without a flag day.",
+      "description": "Runs CI on a self-hosted Buildkite agent (Apple silicon) instead of a metered cloud fleet. The pipeline and its GitHub webhook are created during generation, so there is no manual \"set up project\" step. It can coexist with an existing CI provider, so a repository can migrate without a flag day.",
       "category": "ci-cd",
       "icon": "circle",
       "iconColor": "green",
@@ -751,7 +751,7 @@
     {
       "id": "doppler",
       "name": "Doppler Secrets Management",
-      "description": "Integrates Doppler for secure secrets management. Enables the various MCP servers that rely on privileged tokens to access their services (e.g. Buildkite, CircleCI, GitHub, SonarQube).",
+      "description": "Integrates Doppler for secure secrets management. Enables the various MCP servers that rely on privileged tokens to access their services (e.g. Buildkite, GitHub, SonarQube).",
       "category": "secrets",
       "icon": "secret",
       "iconColor": "blue",

@@ -1194,6 +1194,149 @@ function getHostPort(publishPort, exposePort) {
 }
 
 /**
+ * The CI-provider-specific prose in the docker-container deploy runbook.
+ *
+ * `docker-container` is CI-agnostic — it can be selected with `circleci`, with
+ * `buildkite`, or with neither — but the runbook is the one generated file that
+ * has to *name* the provider that publishes the image. So the wording is chosen
+ * here rather than hardcoded: a Buildkite-selected project reads as Buildkite
+ * (its pipeline, the agent's `environment` hook, and Doppler for secrets),
+ * never as CircleCI. When both CI capabilities are selected Buildkite wins, so
+ * a buildkite-selected render never carries a stale CircleCI reference.
+ *
+ * @param {Object} context - Generation context (capabilities, configuration)
+ * @param {Object} vars - Values interpolated into the prose
+ * @returns {{dockerPublishIntro: string, ciPublishJobName: string,
+ *   registryCredentialSource: string, ciSetupSection: string}}
+ */
+function getDockerDeployCiDocs(context, vars) {
+  const {
+    projectName,
+    registryPrefix,
+    registryNamespace,
+    buildPlatforms,
+    circleciContext,
+  } = vars;
+  const imageRef = `${registryPrefix}/${registryNamespace}/${projectName}`;
+  const caps = context.capabilities || [];
+  const hasBuildkite = caps.includes("buildkite");
+  const hasCircleci = caps.includes("circleci");
+  const hasDoppler = caps.includes("doppler");
+  const classicPatWarning = `> GitHub **fine-grained** PATs cannot access the Container registry (GHCR)
+> yet, and offer no "Packages: read & write" permission — do not use one here.`;
+
+  if (hasBuildkite) {
+    // The pipeline's publish step resolves the credential from Doppler
+    // (`common`/`prd`, GHCR_UPDATE_TOKEN) when doppler is selected, and from
+    // the agent's `environment` hook otherwise. The wording mirrors the emitted
+    // pipeline exactly (see getBuildkiteTemplateData), so the runbook and the
+    // step cannot disagree about where the credential comes from.
+    const credentialSource = hasDoppler
+      ? `- Registry credentials are resolved at run time from Doppler
+  (\`common\`/\`prd\`, secret \`GHCR_UPDATE_TOKEN\`) using the \`DOPPLER_TOKEN\` the
+  agent's \`environment\` hook provides:
+  - \`GHCR_USERNAME\` — the GHCR namespace the image is published under
+  - the resolved \`GHCR_UPDATE_TOKEN\` — a **classic** PAT with the
+    \`write:packages\` scope, used to push to GHCR`
+      : `- Registry credentials come from the agent's \`environment\` hook, where
+  they are set by name:
+  - \`GHCR_USERNAME\` — the GitHub account name
+  - \`GHCR_TOKEN\` — a **classic** PAT with the \`write:packages\` scope, used
+    to push to GHCR`;
+    const setupSteps = hasDoppler
+      ? `1. In the agent's \`environment\` hook, export \`DOPPLER_TOKEN\` so the
+   \`docker_publish\` step can read \`GHCR_UPDATE_TOKEN\` from Doppler
+   (\`common\`/\`prd\`) at run time.
+2. Confirm \`plugins-path\` is set in \`buildkite-agent.cfg\` — every step here
+   uses a plugin, and agent v4 has no usable default.`
+      : `1. In the agent's \`environment\` hook, export:
+   - \`GHCR_USERNAME\` = your GitHub username
+   - \`GHCR_TOKEN\` = a **classic** personal access token with the
+     \`write:packages\` scope — create one at
+     https://github.com/settings/tokens/new?scopes=write:packages (the UI
+     auto-selects the \`repo\` scope alongside it)
+2. Confirm \`plugins-path\` is set in \`buildkite-agent.cfg\` — every step here
+   uses a plugin, and agent v4 has no usable default.`;
+    const secretNote = hasDoppler
+      ? `The registry token never lands in the agent's \`environment\` hook, where
+every job on the fleet could read it.`
+      : `A step-level \`env:\` value does **not** reach the container unless the name
+is listed in the docker plugin's \`environment:\`, which is why these live in the
+agent hook.`;
+
+    return {
+      dockerPublishIntro: `The repository's Buildkite pipeline (\`.buildkite/pipeline.yml\`) contains a
+\`docker_publish\` step that builds the image for \`${buildPlatforms}\` and
+pushes it to \`${imageRef}\` on every push to \`main\` (tagged with the commit
+SHA and \`latest\`).`,
+      ciPublishJobName: "docker_publish",
+      registryCredentialSource: credentialSource,
+      ciSetupSection: `### One-time CI setup (agent \`environment\` hook)
+
+Before the first push can publish an image, the agent must supply the registry
+credentials:
+
+${setupSteps}
+
+${secretNote} See \`.buildkite/README.md\` for the full list of agent
+prerequisites.
+
+${classicPatWarning}`,
+    };
+  }
+
+  if (hasCircleci) {
+    return {
+      dockerPublishIntro: `The repository's CircleCI config contains a \`docker-publish\` job that builds
+the image for \`${buildPlatforms}\` and pushes it to \`${imageRef}\` on every
+push to \`main\` (tagged with the commit SHA and \`latest\`).`,
+      ciPublishJobName: "docker-publish",
+      registryCredentialSource: `- Registry credentials are read from the CircleCI context (\`${circleciContext}\`):
+  - \`GHCR_USERNAME\` — the GitHub account name
+  - \`GHCR_TOKEN\` — a **classic** PAT with the \`write:packages\` scope, used to
+    \`docker login\`/push to GHCR`,
+      ciSetupSection: `### One-time CI setup (CircleCI context)
+
+Before the first push can publish an image, the CircleCI context must exist
+with the registry credentials:
+
+1. CircleCI -> Organization Settings -> Contexts -> Create Context, and name
+   it \`${circleciContext}\` (this is what the generated pipeline reads).
+2. Add these environment variables to the context:
+   - \`GHCR_USERNAME\` = your GitHub username
+   - \`GHCR_TOKEN\` = a **classic** personal access token with the
+     \`write:packages\` scope — create one at
+     https://github.com/settings/tokens/new?scopes=write:packages (the UI
+     auto-selects the \`repo\` scope alongside it)
+
+${classicPatWarning}`,
+    };
+  }
+
+  // Neither CI capability: no publish job is generated, so the runbook has to
+  // be honest about that rather than naming a provider the project does not
+  // use.
+  return {
+    dockerPublishIntro: `No CI capability is selected, so no publish job is generated. Build and
+push the image yourself, then the rest of this runbook applies unchanged:
+
+\`\`\`bash
+docker buildx build --platform ${buildPlatforms} -t ${imageRef}:latest --push .
+\`\`\``,
+    ciPublishJobName: "publish",
+    registryCredentialSource: `- Registry credentials are whatever your local Docker daemon is logged in to.`,
+    ciSetupSection: `### One-time CI setup
+
+No CI provider is selected, so there is no context or agent hook to configure.
+Log the Docker daemon in to the registry once:
+
+\`\`\`bash
+docker login ${registryPrefix}
+\`\`\``,
+  };
+}
+
+/**
  * Builds template data for the docker-container deployment capability.
  * Provides language-aware Dockerfile fragments, compose fragments, and
  * registry metadata for generated deploy artifacts.
@@ -1238,6 +1381,15 @@ function getDockerContainerTemplateData(context) {
   // guidance). Defaults to `common`, matching the circleci capability.
   const circleciContext =
     context.configuration?.circleci?.context?.name || "common";
+  // CI-provider-specific prose for the deploy runbook. Chosen from the selected
+  // CI capability so a Buildkite project never reads as CircleCI-shaped.
+  const deployCiDocs = getDockerDeployCiDocs(context, {
+    projectName,
+    registryPrefix,
+    registryNamespace,
+    buildPlatforms,
+    circleciContext,
+  });
 
   // glibc base by default: Alpine (musl) breaks native npm/python modules
   // (duckdb, better-sqlite3, sharp, ...) which ship glibc prebuilds.
@@ -1621,6 +1773,7 @@ ${composeEnvVars}`
     registryPrefix,
     registryNamespace,
     circleciContext,
+    ...deployCiDocs,
     dockerBaseImage,
     dockerRuntimeImage,
     dockerAptInstall,
@@ -2775,18 +2928,18 @@ ${_bkDockerPlugin(playwrightImage, ["CHROME_PATH"])}    # CHROME_PATH must be li
       ? `      - |
 ${dopplerCliInstallCommands("        ")}      - |
         # sync-doppler-secrets.sh needs jq and exits without it ("jq is not
-        # installed or not in PATH"); CircleCI's deploy job installed it, and the
-        # failure lands AFTER a successful wrangler deploy, which reads as a
-        # deploy failure. Install it first, once, before anything else.
+        # installed or not in PATH"); the failure lands AFTER a successful
+        # wrangler deploy, which reads as a deploy failure. Install it first,
+        # once, before anything else.
         if ! command -v jq >/dev/null 2>&1; then
           apt-get update && apt-get install -y --no-install-recommends jq
         fi
       - |
-        # CircleCI supplied the Cloudflare credentials through its context; there
-        # is no context here, so resolve them from Doppler. Exporting at this
-        # point persists for the rest of the step (the docker plugin runs every
-        # command in one shell), so nothing has to be listed in the plugin's
-        # environment: and no per-repo credential sits in the agent hook.
+        # Resolve the Cloudflare credentials from Doppler rather than the
+        # agent's environment hook, so no per-repo credential sits there.
+        # Exporting at this point persists for the rest of the step (the docker
+        # plugin runs every command in one shell), so nothing has to be listed
+        # in the plugin's environment:.
         export CLOUDFLARE_API_TOKEN="$$(doppler secrets get CLOUDFLARE_API_TOKEN --project common --config ${dopplerConfig} --plain)"
         export CLOUDFLARE_ACCOUNT_ID="$$(doppler secrets get CLOUDFLARE_ACCOUNT_ID --project common --config ${dopplerConfig} --plain)"
 `
@@ -2908,9 +3061,8 @@ ${syncSecrets("preview")}`);
           echo "GHCR_UPDATE_TOKEN is missing from Doppler (common/prd) - cannot publish." >&2
           exit 1
         fi`
-      : `        # No doppler capability: the registry credentials come from the agent
-        # environment, the same GHCR_USERNAME/GHCR_TOKEN names the CircleCI
-        # context provides.
+      : `        # No doppler capability: the registry credentials come from the agent's
+        # \`environment\` hook, where they are set by name.
         if [ -z "$$GHCR_USERNAME" ] || [ -z "$$GHCR_TOKEN" ]; then
           echo "GHCR_USERNAME/GHCR_TOKEN are not set on the agent - cannot publish." >&2
           exit 1

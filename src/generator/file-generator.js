@@ -2408,10 +2408,19 @@ see "MicroPython board" for flashing and running it.
         quickstarts[language]
       : nodeQuickstart;
 
+  // Name the CI provider that actually publishes the image. Buildkite wins
+  // when both are selected, mirroring the deploy runbook, so a
+  // buildkite-selected README never points at a CircleCI pipeline. With no CI
+  // capability the image is built by hand, and the runbook says so.
+  const ciProviderLabel = context.capabilities.includes("buildkite")
+    ? "Buildkite"
+    : context.capabilities.includes("circleci")
+      ? "CircleCI"
+      : "docker buildx";
   const deploySection = hasDocker
     ? `## Deployment
 
-See \`deploy/README.md\` for the deployment runbook (CircleCI -> GHCR ->
+See \`deploy/README.md\` for the deployment runbook (${ciProviderLabel} -> GHCR ->
 Watchtower -> Docker host). Deploy with:
 
 \`\`\`bash
