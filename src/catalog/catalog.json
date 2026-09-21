@@ -321,6 +321,43 @@
       "website": "https://code.visualstudio.com/docs/devcontainers/containers"
     },
     {
+      "id": "svelte",
+      "name": "Svelte",
+      "description": "Initializes a Svelte 5 + Vite frontend built to static assets. Frontend only: no adapter, no server routes, no server of any kind. The project's primary-language server serves the built files.",
+      "category": "frameworks",
+      "icon": "globe",
+      "iconColor": "red",
+      "selectedByDefault": false,
+      "provides": [{ "type": "frontend", "value": "svelte" }],
+      "dependencies": ["devcontainer-node"],
+      "conflicts": [],
+      "requiresAuth": [],
+      "authServices": [],
+      "externalServices": [],
+      "configurationSchema": {
+        "type": "object",
+        "properties": {
+          "directory": {
+            "type": "string",
+            "description": "Directory the Svelte app is scaffolded into. Leave empty to derive it: the repository root when the primary language is node (the app owns the repo), and \"web\" for any other primary language (the frontend is a sub-build of the Rust/Python/Java project, so it must not share the language's src/ tree). Set \".\" to force the repository root, or a name such as \"web\" to force that directory."
+          },
+          "outputDirectory": {
+            "type": "string",
+            "description": "Where the built static assets land, relative to the Svelte directory. The non-node language build copies from here, and the primary language's server serves it. Defaults to \"dist\" (plain Vite's output).",
+            "default": "dist"
+          }
+        }
+      },
+      "vscodeExtensions": ["svelte.svelte-vscode"],
+      "benefits": [
+        "Svelte 5 with Runes, built by Vite",
+        "Output is static assets any server can serve",
+        "No Node runtime in the final image"
+      ],
+      "links": [],
+      "website": "https://svelte.dev/"
+    },
+    {
       "id": "sveltekit",
       "name": "SvelteKit",
       "description": "Initializes a SvelteKit project with Svelte 5.",
@@ -328,8 +365,8 @@
       "icon": "globe",
       "iconColor": "orange",
       "selectedByDefault": false,
-      "provides": [],
-      "dependencies": ["devcontainer-node"],
+      "provides": [{ "type": "frontend", "value": "svelte" }],
+      "dependencies": ["devcontainer-node", "svelte"],
       "conflicts": [],
       "requiresAuth": [],
       "authServices": [],
@@ -1172,7 +1209,7 @@
           },
           "healthcheck": {
             "type": "string",
-            "description": "Health mechanism: \"none\", \"http:<path>\" (e.g. \"http:/healthz\"; installs curl on Python images), or \"command:<cmd>\". The Dockerfile HEALTHCHECK and Homepage widget are only emitted when declared. Node web apps default to \"http:/health\".",
+            "description": "Health mechanism: \"none\", \"http:<path>\" (e.g. \"http:/healthz\"; installs curl on non-node images, which do not ship it), or \"command:<cmd>\". The Dockerfile HEALTHCHECK and Homepage widget are only emitted when declared. A node web app defaults to \"http:/health\" (the SvelteKit app is the node server). A non-node primary owns the path in its own server.",
             "default": ""
           },
           "language": {

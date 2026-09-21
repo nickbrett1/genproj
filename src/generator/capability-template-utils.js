@@ -1,4 +1,136 @@
 import { UNIVERSAL_TARGET, UNAME_CANDIDATES } from "./target-labels.js";
+import { capabilities as catalogCapabilities } from "../catalog/index.js";
+
+const catalogIndexById = new Map(
+  catalogCapabilities.map((capability, index) => [capability.id, index]),
+);
+
+function getCatalogCapability(id) {
+  return catalogCapabilities.find((capability) => capability.id === id);
+}
+
+/**
+ * Whether a capability contributes the given `provides` type.
+ *
+ * The frontend build/stage/Dockerfile logic keys off the **contribution type**
+ * (`frontend`) rather than a capability id, so a new frontend capability is
+ * picked up without editing the template logic. `svelte` and `sveltekit` both
+ * provide `frontend`.
+ *
+ * @param {Object} capability - A catalog capability
+ * @param {string} type - The `provides[].type` to test
+ * @returns {boolean}
+ */
+export function capabilityProvides(capability, type) {
+  return (capability?.provides ?? []).some((entry) => entry.type === type);
+}
+
+/**
+ * The selected capability ids that provide a contribution `type`.
+ * @param {Object} context - Generation context (capabilities)
+ * @param {string} type - The `provides[].type` to match
+ * @returns {string[]}
+ */
+export function capabilityIdsProviding(context, type) {
+  return (context?.capabilities || []).filter((id) =>
+    capabilityProvides(getCatalogCapability(id), type),
+  );
+}
+
+/**
+ * Whether the selection has a frontend to build (any capability providing
+ * `{ type: "frontend" }`). This answers "is there a frontend?" by contribution
+ * type, so template logic does not hardcode `sveltekit`.
+ * @param {Object} context - Generation context
+ * @returns {boolean}
+ */
+export function hasFrontend(context) {
+  return capabilityIdsProviding(context, "frontend").length > 0;
+}
+
+/**
+ * The order capability templates are collected in, independent of the order
+ * the caller happened to list the capabilities.
+ *
+ * Two capabilities may emit the same `filePath` — `svelte` writes the base
+ * `svelte.config.js` and `sveltekit` overwrites it with the kit config — and the
+ * catalog deliberately removed selection-order effects (for `language`), so the
+ * precedence must not reintroduce one. This is a **dependency-first** order
+ * (dependencies before dependents), ties broken by catalog order, so a superset
+ * (`sveltekit` depends on `svelte`) is always collected after the thing it
+ * supersedes. A last-wins dedupe then makes the superset win.
+ *
+ * @param {string[]} capabilityIds - Capability ids in any order
+ * @returns {string[]} The same ids, in a canonical deterministic order
+ */
+export function canonicalCapabilityOrder(capabilityIds) {
+  const byCatalogOrder = (a, b) =>
+    (catalogIndexById.get(a) ?? Infinity) -
+    (catalogIndexById.get(b) ?? Infinity);
+  const selected = new Set(capabilityIds);
+  const emitted = [];
+  const visited = new Set();
+  const visit = (capabilityId) => {
+    if (visited.has(capabilityId)) return;
+    visited.add(capabilityId);
+    const dependencies = (
+      getCatalogCapability(capabilityId)?.dependencies ?? []
+    )
+      .filter((dependency) => selected.has(dependency))
+      .sort(byCatalogOrder);
+    for (const dependency of dependencies) {
+      visit(dependency);
+    }
+    emitted.push(capabilityId);
+  };
+  for (const capabilityId of [...capabilityIds].sort(byCatalogOrder)) {
+    visit(capabilityId);
+  }
+  return emitted;
+}
+
+/**
+ * The frontend capability whose configuration governs the scaffold, when more
+ * than one frontend provider is selected.
+ *
+ * SvelteKit is a superset of Svelte (`sveltekit` depends on `svelte`), so when
+ * both are selected it is SvelteKit's `directory`/`outputDirectory` that apply.
+ * Rather than special-casing the id, this returns the provider that no other
+ * selected provider depends on - the superset - which is deterministic and
+ * independent of selection order.
+ *
+ * @param {Object} context - Generation context
+ * @returns {string} A capability id, or "" when there is no frontend
+ */
+export function frontendCapabilityId(context) {
+  const ids = capabilityIdsProviding(context, "frontend");
+  if (ids.length <= 1) {
+    return ids[0] || "";
+  }
+  const selected = new Set(ids);
+  const dependsOnAnotherProvider = (id) => {
+    const seen = new Set();
+    const stack = [...(getCatalogCapability(id)?.dependencies ?? [])];
+    while (stack.length > 0) {
+      const dependency = stack.pop();
+      if (seen.has(dependency)) continue;
+      seen.add(dependency);
+      if (selected.has(dependency)) return true;
+      stack.push(...(getCatalogCapability(dependency)?.dependencies ?? []));
+    }
+    return false;
+  };
+  return (
+    ids.find((id) => !dependsOnAnotherProvider(id)) ??
+    ids
+      .slice()
+      .sort(
+        (a, b) =>
+          (catalogIndexById.get(a) ?? Infinity) -
+          (catalogIndexById.get(b) ?? Infinity),
+      )[0]
+  );
+}
 
 /**
  * Emits the `.agents/mcp_config.json` block — Cursor / Antigravity target.
@@ -198,7 +330,7 @@ function getGooseMcpConfig(context) {
   const hasSonarQube = caps.includes("sonarcloud");
   const hasDoppler = caps.includes("doppler");
   const hasXcode = caps.includes("xcode-development");
-  const hasSvelte = caps.includes("sveltekit");
+  const hasSvelte = hasFrontend(context);
 
   // MCPHub `dev` group — the default project toolset (auth-off end state).
   // No headers / env keys / envs: safe on a now auth-free trusted tailnet.
@@ -725,7 +857,14 @@ export const resolveLanguage = resolveProjectLanguage;
  * @returns {string} The directory, without a trailing slash; "" for the root
  */
 export function resolveSvelteDirectory(context) {
-  const config = context?.configuration?.sveltekit || {};
+  // No frontend capability selected → no frontend directory. Returning "" here
+  // (rather than "web" for every non-node language) keeps a language-only
+  // project from growing a spurious `web/` seam.
+  const frontendCapability = frontendCapabilityId(context);
+  if (!frontendCapability) {
+    return "";
+  }
+  const config = context?.configuration?.[frontendCapability] || {};
   const declared =
     typeof config.directory === "string" ? config.directory.trim() : "";
   if (declared) {
@@ -743,10 +882,19 @@ export function resolveSvelteDirectory(context) {
  * @returns {string} The output directory name, e.g. "build"
  */
 export function resolveSvelteOutputDirectory(context) {
-  const config = context?.configuration?.sveltekit || {};
+  const frontendCapability = frontendCapabilityId(context);
+  if (!frontendCapability) {
+    return "build";
+  }
+  const capability = getCatalogCapability(frontendCapability);
+  const config = context?.configuration?.[frontendCapability] || {};
+  // The default comes from the capability's own schema (SvelteKit → "build",
+  // plain Vite → "dist"), so the two capabilities can differ deliberately
+  // without this function hardcoding either.
+  const withDefaults = applyDefaults(capability, config);
   const declared =
-    typeof config.outputDirectory === "string"
-      ? config.outputDirectory.trim()
+    typeof withDefaults.outputDirectory === "string"
+      ? withDefaults.outputDirectory.trim()
       : "";
   return declared || "build";
 }
@@ -981,9 +1129,11 @@ function getHostPort(publishPort, exposePort) {
  * Health mechanism (memo §2.8): config option `healthcheck` on
  * docker-container (`none | http:<path> | command:<cmd>`). The Dockerfile
  * HEALTHCHECK, the Homepage widget and the health route are only emitted when
- * a mechanism is declared; Node web apps default to `http:/health` (the
- * sveltekit capability emits the route). Python containers default to `none`
- * because the framework is unknown — declare one to opt in.
+ * a mechanism is declared; a node primary defaults to `http:/health` (the
+ * SvelteKit app is the node server, and it emits the route). Python containers
+ * default to `none` because the framework is unknown — declare one to opt in.
+ * A non-node primary owns `/healthz` in its own server; genproj emits the
+ * static assets and the seam (see the generated frontend README), not a route.
  *
  * @param {Object} context - Generation context (capabilities, configuration, projectName)
  * @returns {Object} Data consumed by the docker-container templates
@@ -1020,7 +1170,11 @@ function getDockerContainerTemplateData(context) {
   // falling back to the node image (memo: genproj-docker-build-speedup).
   const isJava = language === "java";
   const isRust = language === "rust";
-  const hasSveltekit = (context.capabilities || []).includes("sveltekit");
+  // "Is there a frontend to build?" is answered by the `frontend` contribution
+  // type, not by the `sveltekit` id: any capability providing
+  // `{ type: "frontend" }` (svelte, sveltekit, and whatever comes next) is a
+  // frontend. See `hasFrontend` / `frontendCapabilityId`.
+  const hasFrontendSelected = hasFrontend(context);
   const dockerBaseImage =
     config.baseImage ||
     (isPython
@@ -1033,38 +1187,27 @@ function getDockerContainerTemplateData(context) {
             ? "rust:1-slim"
             : "node:22-slim");
 
-  // The container's HTTP server is the SvelteKit app (adapter-node emits a
-  // standalone `build/index.js` server; the /health route is a SvelteKit
-  // +server.js). Only node can run it, so whenever a SvelteKit app is selected
-  // the RUNTIME stage is a node image and the entry point runs the
-  // adapter-node server - even when the project's primary language is rust (or
-  // python/java), where the frontend is a sub-build (`buildsSvelteFrontend`
-  // below). Before this, a rust+sveltekit project emitted `rust:1-slim` with
-  // `CMD ["<rust-bin>"]`: the build stage baked the frontend in, nothing ever
-  // served it, and the image's own HEALTHCHECK could never pass (roost).
+  // The container's HTTP server is the project's primary language. When that
+  // language is node the built app *is* a Node server (SvelteKit adapter-node
+  // emits a standalone `build/index.js`). When it is anything else the Svelte
+  // UI is built to STATIC assets (adapter-static / plain Vite) that the
+  // language's own server serves - the runtime image is the language image and
+  // carries no node. The frontend is still built in its own `frontend` stage,
+  // because the language image has no node to build it with.
   //
-  // The build stage stays on the language image (it needs the toolchain); only
-  // the runtime image changes. A language binary that is still built is copied
-  // in as before, so a project that does want the binary alongside the server
-  // still has it - override `command` to make it the entry point.
-  const servesSvelteWithNode = hasSveltekit;
-  // The runtime image carries node whenever the project is node-primary or
-  // serves a SvelteKit app; the HEALTHCHECK uses `node -e fetch` there and curl
-  // only elsewhere (needing the apt auto-install below).
-  const runtimeHasNode = isNode || servesSvelteWithNode;
-  const dockerRuntimeImage = servesSvelteWithNode
-    ? isNode
-      ? dockerBaseImage
-      : "node:22-slim"
-    : dockerBaseImage;
+  // This reverses the earlier "Node serves the SvelteKit app regardless of the
+  // primary language" assumption (roost): the design has Rust serve the hub
+  // (§6.2), and a Node runtime in a Rust image was never the intended shape.
+  const runtimeHasNode = isNode;
+  const dockerRuntimeImage = dockerBaseImage;
 
   // Python package name (src-layout) and Rust binary name (package name)
   // used by the manifest-first build and the runtime stage below.
   const pkgName = toPythonPackageName(projectName);
   const rustBinName = cargoPackageName(projectName || "my-project");
 
-  // ---- Svelte frontend sub-build (sveltekit in a non-node project).
-  // When node is the primary language the Svelte app IS the build and the node
+  // ---- Svelte frontend sub-build (a frontend in a non-node project).
+  // When node is the primary language the frontend IS the build and the node
   // branch below handles it. Otherwise the frontend is a separate build that
   // the language's own stage (which has no node) cannot perform, so it gets a
   // preceding node stage and the output is copied into the language stage - both
@@ -1072,7 +1215,7 @@ function getDockerContainerTemplateData(context) {
   // runtime that serves it from disk finds it. Where the output lands
   // ({{svelteDirectory}}/{{svelteOutputDirectory}}) is the documented seam: see
   // the generated web/README.md.
-  const buildsSvelteFrontend = hasSveltekit && language !== "node";
+  const buildsSvelteFrontend = hasFrontendSelected && language !== "node";
   const svelteDirectory = buildsSvelteFrontend
     ? resolveSvelteDirectory(context)
     : "";
@@ -1111,8 +1254,9 @@ RUN npm run build
   if (healthcheckSetting.startsWith("http:")) {
     healthcheckPath = healthcheckSetting.slice("http:".length) || "/health";
   }
-  // Node web apps default to a /health route (mirrors the Node fix: the
-  // sveltekit capability emits src/routes/health/+server.js).
+  // A node web app defaults to a /health route: the SvelteKit app is the node
+  // server and the generator emits src/routes/health/+server.js for it. A
+  // non-node primary has no such route — its own server owns /healthz.
   if (!healthcheckSetting && isNode) {
     healthcheckSetting = "http:/health";
     healthcheckPath = "/health";
@@ -1224,16 +1368,12 @@ RUN cargo build --release`;
   } else {
     dockerRuntimeCommands = `COPY --from=build /app/target/release/${rustBinName} /usr/local/bin/${rustBinName}`;
   }
-  // A non-node project that serves SvelteKit runs the adapter-node server, so
-  // the runtime needs node's own portrait of itself: production mode, the
-  // published port, and a non-loopback bind (adapter-node defaults to
-  // 0.0.0.0, but the port defaults to 3000 and the project may have moved it).
-  if (servesSvelteWithNode && !isNode) {
-    dockerRuntimeCommands = `ENV NODE_ENV=production\nENV HOST=0.0.0.0\nENV PORT=${exposePort}\n${dockerRuntimeCommands}`;
-  }
-  // A bundled frontend is a runtime asset whether the binary embeds it at
-  // compile time (the build stage already has it) or serves it from disk; the
-  // copy is harmless in the former case and load-bearing in the latter.
+  // A non-node project keeps node out of the runtime image entirely: the
+  // frontend was built to static assets in the `frontend` stage, and the
+  // language's own server serves them. The built assets are a runtime asset
+  // whether the binary embeds them at compile time (the build stage already has
+  // them) or serves them from disk; the copy is harmless in the former case and
+  // load-bearing in the latter.
   if (svelteFrontendCopy) {
     dockerRuntimeCommands += `\n${svelteFrontendCopy}`;
   }
@@ -1285,14 +1425,8 @@ RUN cargo build --release`;
     if (isPython) dockerCommand = `CMD ["python", "-m", "${pkgName}"]`;
     else if (isNode) dockerCommand = 'CMD ["node", "build/index.js"]';
     else if (isJava) dockerCommand = 'CMD ["java", "-jar", "/app/app.jar"]';
-    // The SvelteKit app is the server even when the primary language is not
-    // node: the runtime image is a node image (see dockerRuntimeImage) and the
-    // adapter-node output is at <sveltePrefix><output>/index.js. Checked before
-    // the rust fallback so a rust+sveltekit project no longer runs its stub
-    // binary. A user who wants the language binary as the entry point sets
-    // `command` on the docker-container capability and that wins above.
-    else if (servesSvelteWithNode)
-      dockerCommand = `CMD ["node", "${sveltePrefix}${svelteOutputDirectory}/index.js"]`;
+    // Non-node: the language's own binary is the entry point (and the server,
+    // for a project that adds one). The frontend is static assets it serves.
     else dockerCommand = `CMD ["${rustBinName}"]`;
   }
   const dockerRunCommand = [dockerScriptCopy, dockerEntrypoint, dockerCommand]
@@ -2440,15 +2574,15 @@ ${_bkDockerPlugin(
     ];
   }
 
-  // --- frontend build (sveltekit in a non-node project) --------------------
+  // --- frontend build (a frontend in a non-node project) -------------------
   // A Svelte app in a Rust/Python/Java project is a sub-build: the language's
   // own CI image (rust:1-slim, python:3.13-slim, eclipse-temurin:21-jdk) has no
   // node, so the frontend cannot be built inside the language's build step. It
   // gets its own step, on a node image, and every build unit waits for it -
   // which is what proves the UI builds in CI rather than discovering it at
-  // image-build time.
+  // image-build time. Keyed off the `frontend` contribution type, not sveltekit.
   const svelteDirectory =
-    caps.includes("sveltekit") && language !== "node"
+    hasFrontend(context) && language !== "node"
       ? resolveSvelteDirectory(context)
       : "";
   const needsFrontendBuild = svelteDirectory !== "";
@@ -2698,8 +2832,33 @@ ${syncSecrets("preview")}`);
     // branch (not just main), so a broken image fails the pull request rather
     // than the deploy, and publish depends on it (see below), so an image that
     // cannot serve never reaches GHCR.
+    //
+    // It is only meaningful where genproj can expect the image to serve that
+    // healthcheck. genproj scaffolds a server only when the primary language is
+    // node (the SvelteKit/node app); for a Rust/Python/Java primary the
+    // scaffolded binary is a placeholder and the server is the developer's to
+    // add, so a health-gate on it would be red by default. A declared
+    // `command`/`entrypoint` is the user owning the entry point, so the gate
+    // applies there too. No healthcheck at all means there is nothing to poll.
+    const smokeHealthcheck =
+      typeof dcConfig.healthcheck === "string"
+        ? dcConfig.healthcheck.trim()
+        : "";
+    const smokeLanguage = resolveProjectLanguage(context);
+    // A node project defaults to http:/health (see the Dockerfile emitter), so
+    // no declared healthcheck still means there IS one; `none` opts out.
+    const smokeHasHealthcheck =
+      smokeHealthcheck !== "none" &&
+      (smokeHealthcheck !== "" || smokeLanguage === "node");
+    const smokeDeclaresEntrypoint =
+      (Array.isArray(dcConfig.command) && dcConfig.command.length > 0) ||
+      (Array.isArray(dcConfig.entrypoint) && dcConfig.entrypoint.length > 0);
+    const emitsSmokeGate =
+      smokeHasHealthcheck &&
+      (smokeLanguage === "node" || smokeDeclaresEntrypoint);
     const smokeTimeoutChecks = 30;
-    steps.push(`
+    if (emitsSmokeGate)
+      steps.push(`
   - label: ":male-doctor: Smoke test image (starts and serves HTTP)"
     key: docker_smoke
 ${buildDependencies}${_bkAgents(queue)}    env:
@@ -2739,8 +2898,7 @@ ${buildDependencies}${_bkAgents(queue)}    env:
     steps.push(`
   - label: ":docker: Build and publish image (GHCR)"
     key: docker_publish
-${buildDependencies}      - docker_smoke
-    if: build.branch == "main"
+${buildDependencies}${emitsSmokeGate ? "      - docker_smoke\n" : ""}    if: build.branch == "main"
 ${_bkAgents(queue)}    env:
       IMAGE: ${imageRef}
       CACHE_REF: ${cacheRef}

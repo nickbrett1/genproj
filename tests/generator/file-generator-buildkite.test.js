@@ -487,10 +487,17 @@ describe("Buildkite docker smoke gate (roost regression)", () => {
   // "CI was green and the image was dead": the publish step only ever proved
   // the image BUILT. The smoke gate builds it, runs it, and asserts it serves
   // HTTP before anything is published.
-  const dockerCaps = ["buildkite", "devcontainer-rust", "docker-container"];
+  //
+  // It only applies where genproj can expect the image to serve its own
+  // healthcheck: a node primary (genproj scaffolds the SvelteKit/node server)
+  // or a declared command/entrypoint (the user owns the entry point). A
+  // Rust/Python/Java primary scaffolds a placeholder binary, so a health gate
+  // there would be red by default — see the language-follows reversal in
+  // docker-sveltekit-runtime.test.js.
+  const nodeDockerCaps = ["buildkite", "devcontainer-node", "docker-container"];
 
-  it("adds a smoke step that runs the image and checks its healthcheck", async () => {
-    const files = await generate(dockerCaps, { language: "rust" });
+  it("adds a smoke step for a node project that serves HTTP", async () => {
+    const files = await generate(nodeDockerCaps, {});
     const content = pipelineFrom(files).content;
 
     expect(content).toContain("key: docker_smoke");
@@ -507,12 +514,42 @@ describe("Buildkite docker smoke gate (roost regression)", () => {
   });
 
   it("makes publish depend on the smoke gate so a dead image never ships", async () => {
-    const files = await generate(dockerCaps, { language: "rust" });
+    const files = await generate(nodeDockerCaps, {});
     const doc = parse(pipelineFrom(files).content);
     const publish = doc.steps.find((s) => s.key === "docker_publish");
     expect(publish).toBeDefined();
     expect(publish.depends_on).toContain("docker_smoke");
     expect(publish.if).toBe('build.branch == "main"');
+  });
+
+  it("adds the smoke step for a non-node project only when it declares an entry point", async () => {
+    const withoutEntrypoint = await generate(
+      ["buildkite", "devcontainer-rust", "docker-container"],
+      {
+        language: "rust",
+        "docker-container": { healthcheck: "http:/healthz" },
+      },
+    );
+    // No declared command: genproj cannot scaffold a server, so no gate.
+    expect(pipelineFrom(withoutEntrypoint).content).not.toContain(
+      "docker_smoke",
+    );
+
+    const withEntrypoint = await generate(
+      ["buildkite", "devcontainer-rust", "docker-container"],
+      {
+        language: "rust",
+        "docker-container": {
+          healthcheck: "http:/healthz",
+          command: ["roost"],
+        },
+      },
+    );
+    const doc = parse(pipelineFrom(withEntrypoint).content);
+    expect(doc.steps.find((s) => s.key === "docker_smoke")).toBeDefined();
+    expect(
+      doc.steps.find((s) => s.key === "docker_publish").depends_on,
+    ).toContain("docker_smoke");
   });
 
   it("emits no docker smoke step when docker-container is not selected", async () => {

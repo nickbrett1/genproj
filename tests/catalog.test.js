@@ -28,6 +28,7 @@ const EXPECTED_IDS = [
   "spec-kit",
   "docker",
   "devcontainer-node",
+  "svelte",
   "sveltekit",
   "dagster",
   "devcontainer-python",
@@ -159,7 +160,27 @@ describe("catalog metadata", () => {
         { type: "sonarcloud.language", value: "java" },
       ],
       "devcontainer-rust": [{ type: "language", value: "rust" }],
+      // A frontend contribution, so the frontend build/stage logic keys off
+      // the contribution type rather than the sveltekit id.
+      svelte: [{ type: "frontend", value: "svelte" }],
+      sveltekit: [{ type: "frontend", value: "svelte" }],
     });
+  });
+
+  it("SvelteKit is a superset of Svelte (implies the svelte capability)", () => {
+    expect(getCapabilityById("sveltekit").dependencies).toEqual([
+      "devcontainer-node",
+      "svelte",
+    ]);
+    const result = resolveDependencies(["sveltekit"]);
+    expect(result.resolvedCapabilities).toEqual(
+      expect.arrayContaining(["sveltekit", "svelte", "devcontainer-node"]),
+    );
+    expect(result.addedDependencies).toContain("svelte");
+    // And a bare svelte selection does not pull sveltekit in.
+    expect(resolveDependencies(["svelte"]).resolvedCapabilities).not.toContain(
+      "sveltekit",
+    );
   });
 
   it("provides the effective Primary Language for every devcontainer", () => {

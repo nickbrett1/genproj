@@ -51,6 +51,9 @@ import {
   applyDefaults,
   resolveDopplerTarget,
   resolveSvelteDirectory,
+  resolveProjectLanguage,
+  capabilityProvides,
+  canonicalCapabilityOrder,
 } from "./capability-template-utils.js";
 import { buildScriptsBlock, buildGitHooksBlock } from "./file-generator.js";
 
@@ -538,6 +541,16 @@ function generateSingleTemplateFile(
   otherCapabilities,
   allCapabilities,
 ) {
+  // A template may opt out of a project entirely (e.g. svelte's index.html is
+  // SvelteKit-incompatible and is suppressed when sveltekit is selected). The
+  // real generator honours this in collectSingleTemplateFile; the preview must
+  // match, or it shows files the generated repository will not have.
+  if (
+    typeof template.when === "function" &&
+    !template.when({ capabilities: allCapabilities })
+  ) {
+    return;
+  }
   try {
     const extraData = getCapabilityTemplateData(capabilityId, {
       capabilities: allCapabilities,
@@ -563,6 +576,18 @@ function generateSingleTemplateFile(
         "    // See https://kit.svelte.dev/docs/adapter-cloudflare for more information.";
     } else if (
       capabilityId === "sveltekit" &&
+      resolveProjectLanguage({
+        capabilities: allCapabilities,
+        configuration: projectConfig.configuration,
+      }) !== "node"
+    ) {
+      adapterPackage = "@sveltejs/adapter-static";
+      adapterComment =
+        "// adapter-static: the SvelteKit app builds to static assets that the\n" +
+        "    // primary language's server serves. It is not a Node server.\n" +
+        "    // See https://kit.svelte.dev/docs/adapter-static for more information.";
+    } else if (
+      capabilityId === "sveltekit" &&
       otherCapabilities.includes("docker-container")
     ) {
       adapterPackage = "@sveltejs/adapter-node";
@@ -586,13 +611,12 @@ function generateSingleTemplateFile(
     // Mirror the generator's relocation of a Svelte app that does not own the
     // repository root (see resolveSvelteDirectory): the preview must show the
     // same paths the generated repository will have.
-    const directory =
-      capabilityId === "sveltekit"
-        ? resolveSvelteDirectory({
-            capabilities: allCapabilities,
-            configuration: projectConfig.configuration,
-          })
-        : "";
+    const directory = capabilityProvides(capability, "frontend")
+      ? resolveSvelteDirectory({
+          capabilities: allCapabilities,
+          configuration: projectConfig.configuration,
+        })
+      : "";
     const filePath = directory
       ? `${directory}/${template.filePath}`
       : template.filePath;
@@ -622,7 +646,8 @@ async function generateNonDevelopmentContainerFiles(
   allCapabilities,
   files,
 ) {
-  for (const capabilityId of otherCapabilities) {
+  const collected = [];
+  for (const capabilityId of canonicalCapabilityOrder(otherCapabilities)) {
     const capability = capabilities.find((c) => c.id === capabilityId);
     // `capability.templates` is only present when a caller injects it (tests);
     // the real catalog keeps template wiring in `capability-templates.js`.
@@ -640,10 +665,17 @@ async function generateNonDevelopmentContainerFiles(
           allCapabilities,
         );
         if (file) {
-          files.push(file);
+          collected.push(file);
         }
       }
     }
+  }
+  // Same deterministic last-wins precedence as the generator (svelte base →
+  // sveltekit override), so the preview shows one file per path.
+  for (const file of new Map(
+    collected.map((entry) => [entry.path, entry]),
+  ).values()) {
+    files.push(file);
   }
 }
 
@@ -666,8 +698,18 @@ function generatePackageJsonFile(
   let overrides = "";
 
   const hasSvelteKit = allCapabilities.includes("sveltekit");
+  const hasFrontendCapability = allCapabilities.some((id) =>
+    capabilityProvides(
+      capabilities.find((capability) => capability.id === id),
+      "frontend",
+    ),
+  );
   const hasWrangler = allCapabilities.includes("cloudflare-wrangler");
   const hasDocker = allCapabilities.includes("docker-container");
+  const language = resolveProjectLanguage({
+    capabilities: allCapabilities,
+    configuration: projectConfig.configuration,
+  });
 
   if (hasSvelteKit) {
     overrides = ',\n  "overrides": {\n    "cookie": "^1.0.2"\n  }';
@@ -681,10 +723,25 @@ function generatePackageJsonFile(
       devDependencies += ',\n    "@sveltejs/adapter-cloudflare": "^7.2.4"';
       // Wrangler is also needed as dev dep
       devDependencies += ',\n    "wrangler": "^4.56.0"';
+    } else if (language !== "node") {
+      // Non-node primary: static assets served by the language's server.
+      devDependencies += ',\n    "@sveltejs/adapter-static": "^3.0.8"';
     } else if (hasDocker) {
       devDependencies += ',\n    "@sveltejs/adapter-node": "^5.4.2"';
     } else {
       devDependencies += ',\n    "@sveltejs/adapter-auto": "^3.0.0"';
+    }
+  } else if (hasFrontendCapability) {
+    // Plain Svelte 5 + Vite, built to static assets (no adapter, no server).
+    scripts =
+      ',\n    "dev": "vite",\n    "build": "vite build",\n    "preview": "vite preview --host 127.0.0.1"';
+    overrides =
+      ',\n  "overrides": {\n    "@sveltejs/vite-plugin-svelte": "^7.3.0",\n    "vite": "^8.2.2"\n  }';
+    devDependencies +=
+      '"@sveltejs/vite-plugin-svelte": "^7.3.0",\n    "svelte": "^5.53.8",\n    "vite": "^8.2.2"';
+    if (hasWrangler) {
+      scripts += ',\n    "deploy": "wrangler deploy"';
+      devDependencies += ',\n    "wrangler": "^4.56.0"';
     }
   } else if (hasWrangler) {
     // Normal Node.js setup
@@ -1209,11 +1266,14 @@ async function generatePreviewFiles(projectConfig, executionOrder) {
     });
   }
 
-  // 2.2: docker-container SvelteKit apps need a /health route for the
-  // container HEALTHCHECK and the Homepage widget.
+  // 2.2: docker-container SvelteKit apps whose primary language is node need a
+  // /health route for the container HEALTHCHECK and the Homepage widget. A
+  // non-node primary uses adapter-static and the language's server owns
+  // /healthz, so no +server.js is emitted there.
   if (
     executionOrder.includes("sveltekit") &&
     executionOrder.includes("docker-container") &&
+    resolveProjectLanguage(context) === "node" &&
     !files.some((f) => f.path === "src/routes/health/+server.js")
   ) {
     const healthSource = HEALTH_ROUTE_SOURCE;
@@ -1224,6 +1284,31 @@ async function generatePreviewFiles(projectConfig, executionOrder) {
       size: healthSource.length,
       type: "file",
     });
+  }
+
+  // adapter-static needs every route prerenderable; mirror the generator's
+  // root layout marker so the preview matches.
+  if (
+    executionOrder.includes("sveltekit") &&
+    resolveProjectLanguage(context) !== "node"
+  ) {
+    const directory = resolveSvelteDirectory(context);
+    const layoutPath = directory
+      ? `${directory}/src/routes/+layout.js`
+      : "src/routes/+layout.js";
+    if (!files.some((f) => f.path === layoutPath)) {
+      const layoutSource =
+        "// adapter-static: every route is rendered to static assets at build\n" +
+        "// time; the primary language's server serves them. See README.md.\n" +
+        "export const prerender = true;\n";
+      files.push({
+        path: layoutPath,
+        name: "+layout.js",
+        content: layoutSource,
+        size: layoutSource.length,
+        type: "file",
+      });
+    }
   }
 
   // Generate .gitignore and README.md (language-aware)
