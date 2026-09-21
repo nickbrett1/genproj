@@ -11,7 +11,7 @@ FROM {{dockerBaseImage}} AS build
 WORKDIR /app
 {{dockerBuildCommands}}
 
-FROM {{dockerBaseImage}}
+FROM {{dockerRuntimeImage}}
 WORKDIR /app
 # Link the GHCR container package to its GitHub repo on push. GHCR auto-links
 # the package to {{registryNamespace}}/{{projectName}} so it inherits the

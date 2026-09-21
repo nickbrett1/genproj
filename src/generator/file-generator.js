@@ -75,6 +75,14 @@ const svelteAppHtml = templateFiles["svelte-app-html.template"];
 const sveltePageSvelte = templateFiles["svelte-page-svelte.template"];
 const svelteConfigJs = templateFiles["svelte-config-js.template"];
 const svelteViteConfigJs = templateFiles["svelte-vite-config-js.template"];
+const svelteIndexHtml = templateFiles["svelte-index-html.template"];
+const svelteMainJs = templateFiles["svelte-main-js.template"];
+const svelteAppSvelte = templateFiles["svelte-app-svelte.template"];
+const svelteFrontendConfigJs =
+  templateFiles["svelte-frontend-config-js.template"];
+const svelteFrontendViteConfigJs =
+  templateFiles["svelte-frontend-vite-config-js.template"];
+const sveltePackageJson = templateFiles["svelte-package-json.template"];
 const docsifyIndex = templateFiles["docsify-index.template"];
 const docsifyReadme = templateFiles["docsify-readme.template"];
 const devcontainerServeDocumentsCjs =
@@ -101,6 +109,10 @@ import {
   resolveMicropythonChip,
   resolveSvelteDirectory,
   resolveSvelteOutputDirectory,
+  hasFrontend,
+  frontendCapabilityId,
+  capabilityProvides,
+  canonicalCapabilityOrder,
 } from "./capability-template-utils.js";
 import {
   validateFetchLaunch,
@@ -951,6 +963,12 @@ const templateImports = {
   "svelte-page-svelte": sveltePageSvelte,
   "svelte-config-js": svelteConfigJs,
   "svelte-vite-config-js": svelteViteConfigJs,
+  "svelte-index-html": svelteIndexHtml,
+  "svelte-main-js": svelteMainJs,
+  "svelte-app-svelte": svelteAppSvelte,
+  "svelte-frontend-config-js": svelteFrontendConfigJs,
+  "svelte-frontend-vite-config-js": svelteFrontendViteConfigJs,
+  "svelte-package-json": sveltePackageJson,
   "docsify-index": docsifyIndex,
   "docsify-readme": docsifyReadme,
   "devcontainer-serve-docs-cjs": devcontainerServeDocumentsCjs,
@@ -1064,7 +1082,11 @@ function collectSingleTemplateFile(
       registryNamespace: context.registryNamespace,
     });
 
-    // Special handling for SvelteKit config adapter
+    // Special handling for SvelteKit config adapter. The adapter follows the
+    // primary language: a node-primary project's SvelteKit app IS the server
+    // (adapter-node), while any other primary language builds STATIC assets
+    // (adapter-static) that the language's own server serves. Cloudflare wins
+    // where it applies (it conflicts with docker-container).
     let adapterPackage = "@sveltejs/adapter-auto";
     let adapterComment =
       "// adapter-auto only supports some environments, see https://kit.svelte.dev/docs/adapter-auto for a list.\n" +
@@ -1079,6 +1101,15 @@ function collectSingleTemplateFile(
       adapterComment =
         "// adapter-cloudflare is configured for Wrangler deployment\n" +
         "    // See https://kit.svelte.dev/docs/adapter-cloudflare for more information.";
+    } else if (
+      capabilityId === "sveltekit" &&
+      resolveProjectLanguage(context) !== "node"
+    ) {
+      adapterPackage = "@sveltejs/adapter-static";
+      adapterComment =
+        `// adapter-static: the SvelteKit app builds to static assets that the\n` +
+        `    // ${resolveProjectLanguage(context)} server serves. It is not a Node server.\n` +
+        "    // See https://kit.svelte.dev/docs/adapter-static for more information.";
     } else if (
       capabilityId === "sveltekit" &&
       context.capabilities.includes("docker-container")
@@ -1101,13 +1132,14 @@ function collectSingleTemplateFile(
       adapterPackage,
       adapterComment,
     });
-    // A Svelte app in a non-node project lives in its own directory (see
+    // A frontend app in a non-node project lives in its own directory (see
     // resolveSvelteDirectory), so its files are emitted under that prefix
     // rather than the repository root. A node project is unaffected ("").
-    const filePath =
-      capabilityId === "sveltekit"
-        ? `${sveltePrefix(context)}${template.filePath}`
-        : template.filePath;
+    // Keyed off the `frontend` contribution type, not the sveltekit id.
+    const isFrontendCapability = capabilityProvides(capability, "frontend");
+    const filePath = isFrontendCapability
+      ? `${sveltePrefix(context)}${template.filePath}`
+      : template.filePath;
     return {
       filePath,
       content: /\.ya?ml$/i.test(filePath)
@@ -1129,9 +1161,9 @@ export function collectNonDevelopmentContainerFiles(
   context,
   otherCapabilities,
 ) {
-  const files = [];
+  const collected = [];
 
-  for (const capabilityId of otherCapabilities) {
+  for (const capabilityId of canonicalCapabilityOrder(otherCapabilities)) {
     const capability = capabilities.find((c) => c.id === capabilityId);
     // `capability.templates` is only present when a caller injects it (tests);
     // the real catalog keeps template wiring in `capability-templates.js`.
@@ -1147,12 +1179,17 @@ export function collectNonDevelopmentContainerFiles(
           template,
         );
         if (file) {
-          files.push(file);
+          collected.push(file);
         }
       }
     }
   }
-  return files;
+
+  // Explicit last-wins precedence: when two capabilities emit the same path
+  // (svelte base → sveltekit override), the later capability in the canonical
+  // order owns the file's contents. A `Map` keeps the first-seen position but
+  // stores the last-seen value, so the output order stays stable.
+  return [...new Map(collected.map((file) => [file.filePath, file])).values()];
 }
 
 function addExtensionsFromContainerJson(allExtensions, json) {
@@ -1624,8 +1661,10 @@ fi
 
 function _getFrameworkConfig(context) {
   const hasSvelteKit = context.capabilities.includes("sveltekit");
+  const hasSvelte = hasFrontend(context);
   const hasWrangler = context.capabilities.includes("cloudflare-wrangler");
   const hasDocker = context.capabilities.includes("docker-container");
+  const language = resolveProjectLanguage(context);
   let scripts =
     ',\n    "test": "echo \\"Error: no test specified\\" && exit 1",\n    "build": "echo \'No build step required\'"';
   let devDependencies = "";
@@ -1648,10 +1687,33 @@ function _getFrameworkConfig(context) {
       scripts += ',\n    "deploy": "wrangler deploy"';
       devDependencies +=
         ',\n    "@sveltejs/adapter-cloudflare": "^7.2.4",\n    "wrangler": "^4.56.0"';
+    } else if (language !== "node") {
+      // Non-node primary: the frontend is static assets the language's server
+      // serves, so the SvelteKit build uses adapter-static rather than a Node
+      // server. This is what lets a rust/python/java project keep node out of
+      // its runtime image.
+      devDependencies += ',\n    "@sveltejs/adapter-static": "^3.0.8"';
     } else if (hasDocker) {
       devDependencies += ',\n    "@sveltejs/adapter-node": "^5.4.2"';
     } else {
       devDependencies += ',\n    "@sveltejs/adapter-auto": "^3.0.0"';
+    }
+  } else if (hasSvelte) {
+    // Plain Svelte 5 + Vite, built to static assets. No adapter and no server:
+    // the primary language's server serves the output.
+    typeField = "module";
+    overrides =
+      ',\n  "overrides": {\n    "@sveltejs/vite-plugin-svelte": "^7.3.0",\n    "vite": "^8.2.2"\n  }';
+    scripts =
+      ',\n    "test": "echo \\"Error: no test specified\\" && exit 1",\n    "dev": "vite",\n    "build": "vite build",\n    "preview": "vite preview --host 127.0.0.1"';
+    devDependencies +=
+      '"@sveltejs/vite-plugin-svelte": "^7.3.0",\n    "svelte": "^5.53.8",\n    "vite": "^8.2.2"';
+    if (hasWrangler) {
+      // Plain Svelte + Wrangler is not the SvelteKit/Cloudflare path: the
+      // worker entry point stays the generic one, but the deploy command and
+      // dependency are added so the manifest is consistent.
+      scripts += ',\n    "deploy": "wrangler deploy"';
+      devDependencies += ',\n    "wrangler": "^4.56.0"';
     }
   } else if (hasWrangler) {
     scripts += ',\n    "deploy": "wrangler deploy"';
@@ -2115,6 +2177,24 @@ def describe_board(board):
  * @param {Object} context - Generation context
  * @returns {Object} README file object
  */
+/**
+ * Whether `capabilityId` depends on `dependencyId` directly or transitively.
+ * @param {string} capabilityId
+ * @param {string} dependencyId
+ * @param {Set<string>} [seen]
+ * @returns {boolean}
+ */
+function dependsOnCapability(capabilityId, dependencyId, seen = new Set()) {
+  if (seen.has(capabilityId)) return false;
+  seen.add(capabilityId);
+  const capability = capabilities.find((c) => c.id === capabilityId);
+  for (const dependency of capability?.dependencies ?? []) {
+    if (dependency === dependencyId) return true;
+    if (dependsOnCapability(dependency, dependencyId, seen)) return true;
+  }
+  return false;
+}
+
 export function generateReadmeFile(context) {
   const projectName = context.projectName || context.name || "my-project";
   const description =
@@ -2128,13 +2208,35 @@ export function generateReadmeFile(context) {
     ["circleci", "buildkite"].includes(id),
   );
 
+  // A capability that a selected superset both *provides the same contribution
+  // as* and *depends on* is implied by that superset, so it is not listed as a
+  // separate choice (SvelteKit provides `frontend` and depends on `svelte`, so a
+  // SvelteKit project does not read as two frameworks). Narrow by design: it
+  // only suppresses a dependency that is itself a contribution of the dependent.
+  const listedCapabilities = (context.capabilities || []).filter((id) => {
+    const provided = new Set(
+      (capabilities.find((c) => c.id === id)?.provides ?? []).map(
+        (entry) => entry.type,
+      ),
+    );
+    if (provided.size === 0) return true;
+    const subsumed = context.capabilities.some((otherId) => {
+      if (otherId === id) return false;
+      const shares = (
+        capabilities.find((c) => c.id === otherId)?.provides ?? []
+      ).some((entry) => provided.has(entry.type));
+      return shares && dependsOnCapability(otherId, id);
+    });
+    return !subsumed;
+  });
+
   const capabilitiesSection =
-    context.capabilities && context.capabilities.length > 0
+    listedCapabilities.length > 0
       ? `## Capabilities
 
 This project includes the following capabilities:
 
-${context.capabilities
+${listedCapabilities
   .map((id) => {
     const cap = capabilities.find((c) => c.id === id);
     if (!cap) return `- ${id}`;
@@ -3044,12 +3146,15 @@ export async function generateAllFiles(context) {
     context.capabilities.includes("devcontainer-node") &&
     context.capabilities.includes("sveltekit")
   ) {
-    // The /health route is generated for docker-container SvelteKit apps
-    // (added later in this function), so derive its presence from the
-    // capabilities rather than scanning the file list.
+    // The /health route is generated for docker-container SvelteKit apps whose
+    // primary language is node (the Node server serves it); a non-node primary
+    // uses adapter-static and the language's server owns /healthz, so no
+    // +server.js is emitted there. Derive its presence from the capabilities
+    // rather than scanning the file list.
     const hasHealth =
       context.capabilities.includes("docker-container") &&
-      context.capabilities.includes("sveltekit");
+      context.capabilities.includes("sveltekit") &&
+      resolveProjectLanguage(context) === "node";
     allGeneratedFiles.push({
       filePath: `${svelte}src/test-setup.js`,
       content: 'import "@testing-library/jest-dom/vitest";\n',
@@ -3071,11 +3176,15 @@ export async function generateAllFiles(context) {
     });
   }
 
-  // 2.2: docker-container SvelteKit apps need a /health route for the
-  // container HEALTHCHECK and the Homepage widget.
+  // 2.2: a docker-container SvelteKit app whose primary language is node needs
+  // a /health route for the container HEALTHCHECK and the Homepage widget. A
+  // non-node primary uses adapter-static: a +server.js route cannot be
+  // prerendered, and the language's own server owns /healthz (see the generated
+  // frontend README), so none is emitted.
   if (
     context.capabilities.includes("sveltekit") &&
-    context.capabilities.includes("docker-container")
+    context.capabilities.includes("docker-container") &&
+    resolveProjectLanguage(context) === "node"
   ) {
     allGeneratedFiles.push({
       filePath: `${svelte}src/routes/health/+server.js`,
@@ -3083,16 +3192,45 @@ export async function generateAllFiles(context) {
     });
   }
 
+  // adapter-static needs every route prerenderable, and it has no fallback
+  // page by default. A root layout that prerenders everything turns the app
+  // into the static bundle the language's server serves (and keeps the build
+  // from erroring on a non-prerenderable route).
+  if (
+    context.capabilities.includes("sveltekit") &&
+    resolveProjectLanguage(context) !== "node"
+  ) {
+    allGeneratedFiles.push({
+      filePath: `${svelte}src/routes/+layout.js`,
+      content:
+        "// adapter-static: every route is rendered to static assets at build\n" +
+        "// time; the primary language's server serves them. See README.md.\n" +
+        "export const prerender = true;\n",
+    });
+  }
+
   // A relocated frontend gets a README stating the contract: where the built
-  // assets land, which is what the language's Docker stage and any embed read.
-  // Without it the seam is invisible and the first person to wire up the
-  // serving path has to reverse-engineer it from the Dockerfile.
-  if (svelte) {
+  // assets land, and that the primary language's server serves them and owns
+  // /healthz. Without it the seam is invisible and the first person to wire up
+  // the serving path has to reverse-engineer it from the Dockerfile.
+  if (hasFrontend(context) && svelte) {
     allGeneratedFiles.push({
       filePath: `${svelte}README.md`,
       content: buildSvelteFrontendReadme(context),
     });
   }
+
+  // Deterministic last-wins dedupe over the whole file set. Capability
+  // templates are collected first (already deduped among themselves), then the
+  // project-level generated files (package.json, vite.config.js, README, ...)
+  // — which supersede any capability's base copy of the same path. A capability
+  // that emits a file another generator also owns (svelte's base package.json /
+  // vite.config.js) therefore records the base without ever clobbering the
+  // authoritative producer. A `Map` keeps the first-seen position and the
+  // last-seen value, so output order is stable.
+  allGeneratedFiles = [
+    ...new Map(allGeneratedFiles.map((file) => [file.filePath, file])).values(),
+  ];
 
   return allGeneratedFiles;
 }
@@ -3109,15 +3247,30 @@ export function buildSvelteFrontendReadme(context) {
   const language = resolveProjectLanguage(context);
   const directory = resolveSvelteDirectory(context);
   const outputDirectory = resolveSvelteOutputDirectory(context);
-  return `# Frontend (SvelteKit)
+  const frontendCapability = frontendCapabilityId(context);
+  const framework =
+    frontendCapability === "sveltekit"
+      ? "SvelteKit (adapter-static)"
+      : "Svelte";
+  return `# Frontend (${framework})
 
 This directory holds the project's Svelte app. It is a **sub-build**: the
-project's primary language is \`${language}\`, and this app is built separately
-and consumed by the \`${language}\` binary.
+project's primary language is \`${language}\`, and this app is built to **static
+assets** that the \`${language}\` server serves. There is no adapter and no server
+of its own here — a plain Vite build, or SvelteKit's \`adapter-static\`.
 
 ## Where the build output lands
 
 \`npm run build\` writes the static assets to \`${directory}/${outputDirectory}\`.
+
+## Who serves it
+
+The **\`${language}\` server is the web server**, and it owns \`/healthz\`. Point it
+at \`${directory}/${outputDirectory}\`, either at **compile time** (e.g.
+\`rust-embed\` or \`include_dir!\`) or at **runtime** from disk — both are copied
+into the image by the Dockerfile. There is **no Node runtime** in the image.
+genproj scaffolds the assets and this seam, not the serving code, so implement
+\`/healthz\` (and the static file route) in the \`${language}\` app.
 
 ## How it is built
 
@@ -3127,13 +3280,6 @@ and consumed by the \`${language}\` binary.
 - **Docker** builds it in a \`frontend\` stage in the root \`Dockerfile\` and copies
   \`${directory}/${outputDirectory}\` into the \`${language}\` build stage and the
   runtime image.
-
-## How the \`${language}\` binary consumes it
-
-That is your decision, and the seam is deliberate: read
-\`${directory}/${outputDirectory}\` either at **compile time** (e.g. \`rust-embed\`
-or \`include_dir!\`) or at **runtime** from disk. Both are already copied into the
-image by the Dockerfile.
 
 ## Working on it locally
 
@@ -3193,6 +3339,7 @@ describe("generated app smoke test", () => {
 
 export function generateViteConfigFile(context) {
   const hasSvelteKit = context.capabilities.includes("sveltekit");
+  const hasSvelte = hasFrontend(context) && !hasSvelteKit;
 
   // Coverage is reported (lcov feeds SonarCloud) and thresholds ARE enforced:
   // generated SvelteKit projects ship a smoke test that satisfies them (see
@@ -3241,6 +3388,18 @@ import { defineConfig } from "vite";
 export default defineConfig({
   plugins: [sveltekit(), svelteTesting()],
 ${testConfigSvelte}
+});
+`;
+  } else if (hasSvelte) {
+    // Plain Svelte + Vite. No component smoke test is generated for a bare
+    // Svelte app, so the test config tolerates no test files (mirrors the bare
+    // Node scaffold) while keeping the coverage gate for when tests are added.
+    content = `import { svelte } from "@sveltejs/vite-plugin-svelte";
+import { defineConfig } from "vitest/config";
+
+export default defineConfig({
+  plugins: [svelte()],
+${testConfigVanilla}
 });
 `;
   } else {

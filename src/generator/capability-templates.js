@@ -85,6 +85,51 @@ export const capabilityTemplates = {
       isExecutable: true,
     },
   ],
+  svelte: [
+    // Frontend only: Svelte 5 + Vite built to static assets. No adapter, no
+    // routes/, no server of any kind. The primary language's server serves the
+    // output (see the generated web/README.md).
+    //
+    // These are the BASE files. `sveltekit` (which depends on `svelte`) emits
+    // the same `svelte.config.js`, `vite.config.js` and `package.json` paths
+    // and wins through the collector's deterministic last-wins precedence. The
+    // index/main/App files are SvelteKit-incompatible (SvelteKit uses
+    // `src/app.html` and `src/routes/+page.svelte`), so they are suppressed
+    // when SvelteKit is selected rather than left as dead files.
+    {
+      id: "svelte-index-html",
+      filePath: "index.html",
+      templateId: "svelte-index-html",
+      when: (context) => !context.capabilities.includes("sveltekit"),
+    },
+    {
+      id: "svelte-main-js",
+      filePath: "src/main.js",
+      templateId: "svelte-main-js",
+      when: (context) => !context.capabilities.includes("sveltekit"),
+    },
+    {
+      id: "svelte-app-svelte",
+      filePath: "src/App.svelte",
+      templateId: "svelte-app-svelte",
+      when: (context) => !context.capabilities.includes("sveltekit"),
+    },
+    {
+      id: "svelte-frontend-config-js",
+      filePath: "svelte.config.js",
+      templateId: "svelte-frontend-config-js",
+    },
+    {
+      id: "svelte-frontend-vite-config-js",
+      filePath: "vite.config.js",
+      templateId: "svelte-frontend-vite-config-js",
+    },
+    {
+      id: "svelte-package-json",
+      filePath: "package.json",
+      templateId: "svelte-package-json",
+    },
+  ],
   sveltekit: [
     {
       id: "svelte-app-html",
