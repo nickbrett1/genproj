@@ -132,7 +132,9 @@ describe("SvelteKit File Generation", () => {
       (f) => f.filePath === "src/routes/health/+server.js",
     );
     expect(healthRoute).toBeDefined();
-    expect(healthRoute.content).toContain("ok: true");
+    // JSON body (Homepage's customapi widget parses it as JSON).
+    expect(healthRoute.content).toContain('status: "ok"');
+    expect(healthRoute.content).toContain("application/json");
 
     // 3.1: no OWNER placeholder in compose; real namespace substituted.
     const compose = files.find((f) => f.filePath === "docker-compose.yml");

@@ -120,6 +120,12 @@ describe("docker-container runtime follows the primary language", () => {
     expect(find("src/main.rs")).toContain(
       'const HEALTH_PATH: &str = "/healthz"',
     );
+    // The health body is JSON, not text/plain "ok": Homepage's `customapi`
+    // widget parses it as JSON, so a bare "ok" makes the dashboard tile error.
+    const mainRs = find("src/main.rs");
+    expect(mainRs).toContain('const HEALTH_BODY: &str = r#"{"status": "ok"}"#');
+    expect(mainRs).toContain('"application/json"');
+    expect(mainRs).not.toContain('text/plain; charset=utf-8", b"ok"');
   });
 
   it("python+svelte gets the same harness in __main__.py", async () => {
@@ -137,6 +143,9 @@ describe("docker-container runtime follows the primary language", () => {
     expect(mainPy).toContain("ThreadingHTTPServer");
     expect(mainPy).toContain('"0.0.0.0"');
     expect(mainPy).toContain('HEALTH_PATH = "/healthz"');
+    expect(mainPy).toContain('HEALTH_BODY = b\'{"status": "ok"}\'');
+    expect(mainPy).toContain('"application/json"');
+    expect(mainPy).not.toContain('b"ok"');
     expect(mainPy).toContain('STATIC_DIR = Path("web/dist")');
     // The Python runtime image serves with curl, like any non-node image.
     expect(find("Dockerfile")).toContain(

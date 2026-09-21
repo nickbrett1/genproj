@@ -186,6 +186,13 @@ describe("Python Dockerfile (memo §2.2, §3.1, §3.2, §2.8)", () => {
       (f) => f.filePath === "deploy/homepage-services.yaml",
     );
     expect(homepage.content).toContain("url: http://localhost:3001/healthz");
+    // customapi renders nothing without mappings; the generated health payload
+    // answers {"status":"ok"}, so map that field.
+    expect(homepage.content).toContain("mappings:");
+    expect(homepage.content).toContain("field: status");
+    expect(compose.content).toContain(
+      "homepage.widget.mappings[0].field=status",
+    );
   });
 
   it("omits HEALTHCHECK and the widget when no health mechanism is declared (Python default)", async () => {

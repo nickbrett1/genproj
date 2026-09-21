@@ -1597,9 +1597,14 @@ ${composeEnvVars}`
     );
     // Widget only when a real health endpoint exists (memo §2.8).
     if (healthcheckPath) {
+      // The customapi widget renders nothing without `mappings` (its default is
+      // an empty list), so emit the health payload's own `status` field - the
+      // generated health endpoints answer `{"status":"ok"}`.
       labels.push(
         '      - "homepage.widget.type=customapi"',
         `      - "homepage.widget.url=http://localhost:${hostPort}${healthcheckPath}"`,
+        '      - "homepage.widget.mappings[0].field=status"',
+        '      - "homepage.widget.mappings[0].label=Status"',
       );
     }
   }
@@ -1609,7 +1614,7 @@ ${composeEnvVars}`
   // must still point at the published HOST port, never the container port
   // (memo: genproj-homepage-port-wart).
   const homepageWidget = healthcheckPath
-    ? `    widget:\n      type: customapi\n      url: http://localhost:${hostPort}${healthcheckPath}`
+    ? `    widget:\n      type: customapi\n      url: http://localhost:${hostPort}${healthcheckPath}\n      mappings:\n        - field: status\n          label: Status`
     : "";
 
   return {
