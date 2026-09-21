@@ -63,7 +63,7 @@ Gated on `hasGoose`:
   `{{gooseInstall}}`, a standalone `RUN` fragment (`GOOSE_INSTALL_FRAGMENT`,
   `gooseInstallFragment()`), so it can be absent without leaving a dangling `\`
   continuation behind. The `mkdir -p "$HOME/.local/bin"` that preceded it stays
-  (Cursor and Antigravity still install there).
+  (Antigravity still installs there).
 - **`gooseAlias` and the worktree block** — `{{gooseAlias}}` was already
   doppler-gated; the worktree workflow moved to its own template
   (`devcontainer-zshrc-goose-wt.template`, appended by `gooseWorktreeZshrc()`)

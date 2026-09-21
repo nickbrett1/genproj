@@ -54,8 +54,6 @@ fi
 
 {{dopplerSetup}}
 
-{{shellSetup}}
-
 {{pythonSetup}}
 
 {{micropythonSetup}}

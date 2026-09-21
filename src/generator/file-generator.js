@@ -173,15 +173,6 @@ agy-dev() {
   doppler run --project common --config dev -- doppler run --forward-signals --project {{dopplerProject}} --config dev -- agy "$@"
 }`;
 
-// `uv` deliberately does NOT live here. It is the delivery vehicle for
-// `spec-kit` (a Python program) and nothing else in the devcontainer consumes
-// it, so it travels with that capability in the Dockerfile instead — installing
-// it from `shell-tools` re-added it to every project unconditionally.
-export const SHELL_SETUP_SCRIPT = `
-echo "INFO: Installing Cursor CLI..."
-curl https://cursor.com/install -fsS | bash
-`;
-
 export const GIT_SAFE_DIR_SCRIPT = `
 echo "INFO: Configuring git safe directory..."
 git config --global --add safe.directory /workspaces/{{projectName}}`;
@@ -1585,12 +1576,6 @@ fi
             : "",
           geminiSetup: context.capabilities.includes("coding-agents")
             ? `echo "INFO: Ensuring gemini directory permissions..."\nmkdir -p "$USER_HOME_DIR/.gemini"\nsudo chown -R "$CURRENT_USER:$CURRENT_USER" "$USER_HOME_DIR/.gemini"\n`
-            : "",
-          shellSetup: context.capabilities.includes("shell-tools")
-            ? SHELL_SETUP_SCRIPT.replaceAll(
-                "{{projectName}}",
-                () => context.projectName || context.name || "my-project",
-              )
             : "",
           pythonSetup: context.capabilities.some((c) =>
             c.startsWith("devcontainer-python"),

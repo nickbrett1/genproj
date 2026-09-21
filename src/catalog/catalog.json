@@ -37,7 +37,7 @@
     {
       "id": "coding-agents",
       "name": "AI Coding Agents",
-      "description": "Sets up the AI coding agents in the devcontainer: goose (config, MCP servers and spec-first recipes) plus the Cursor and Antigravity CLIs.",
+      "description": "Sets up the AI coding agents in the devcontainer: goose (config, MCP servers and spec-first recipes) plus the Antigravity CLI.",
       "category": "agents",
       "icon": "robot",
       "iconColor": "blue",
@@ -55,7 +55,7 @@
       "vscodeExtensions": ["saoudrizwan.claude-dev", "GitHub.copilot"],
       "benefits": [
         "goose pre-installed, with project MCP servers and recipes wired up",
-        "Cursor CLI and Antigravity CLI available",
+        "Antigravity CLI available",
         "Svelte MCP for context-aware AI",
         "Memos, Vikunja and Fintechnick MCP integrations"
       ],
@@ -63,10 +63,6 @@
         {
           "label": "goose",
           "url": "https://github.com/aaif-goose/goose"
-        },
-        {
-          "label": "Cursor",
-          "url": "https://cursor.sh"
         },
         {
           "label": "Svelte MCP",

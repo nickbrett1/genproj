@@ -17,7 +17,6 @@ import {
   TemplateEngine,
   AGY_DEV_ALIAS,
   GOOSE_ALIAS,
-  SHELL_SETUP_SCRIPT,
   GIT_SAFE_DIR_SCRIPT,
   GIT_GITHUB_AUTH_SETUP_SCRIPT,
   AGY_SETUP_SCRIPT,
@@ -360,12 +359,6 @@ function createDevelopmentContainerShellFiles(
         : "",
       geminiSetup: allCapabilities.includes("coding-agents")
         ? `echo "INFO: Ensuring gemini directory permissions..."\nmkdir -p "$USER_HOME_DIR/.gemini"\nsudo chown -R "$CURRENT_USER:$CURRENT_USER" "$USER_HOME_DIR/.gemini"\n`
-        : "",
-      shellSetup: allCapabilities.includes("shell-tools")
-        ? SHELL_SETUP_SCRIPT.replaceAll(
-            "{{projectName}}",
-            projectConfig.name || "my-project",
-          )
         : "",
       pythonSetup: allCapabilities.some((c) =>
         c.startsWith("devcontainer-python"),
