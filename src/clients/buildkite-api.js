@@ -71,14 +71,27 @@ export class BuildkiteAPIService extends BaseAPIService {
    * standard one-step wrapper, and the repository file stays the source of
    * truth for the actual steps.
    *
+   * The wrapper also pins the **queue** for its own step. This is the
+   * *bootstrap* step: it runs before Buildkite has read
+   * `.buildkite/pipeline.yml`, so the queue the generated steps declare does
+   * not apply to it. Left unset, the upload lands on whatever agent the
+   * cluster offers — which is how a self-hosted-only setup silently starts
+   * burning hosted agents on the one step that runs on every build. It is
+   * dispatched to the same queue the repository's own steps use.
+   *
    * @param {string} [pipelineFile] - Repo-relative pipeline file to upload
+   * @param {string} [queue] - Agent queue for the upload step. Omitted, the
+   *   step carries no queue rule (the historical behaviour); callers in
+   *   genproj always pass the fleet queue.
    * @returns {string} Pipeline configuration YAML
    */
-  static configurationWrapper(pipelineFile = ".buildkite/pipeline.yml") {
+  static configurationWrapper(pipelineFile = ".buildkite/pipeline.yml", queue) {
+    const agents = queue ? ["    agents:", `      queue: ${queue}`] : [];
     return [
       "steps:",
       '  - label: ":pipeline: Upload repo pipeline"',
       "    key: repo-pipeline",
+      ...agents,
       `    command: "buildkite-agent pipeline upload ${pipelineFile}"`,
       "",
     ].join("\n");
@@ -132,12 +145,13 @@ export class BuildkiteAPIService extends BaseAPIService {
    * @param {string} options.repository - Clone URL, e.g. https://github.com/owner/repo.git
    * @param {string} [options.clusterId] - Cluster UUID; mandatory when the org has one
    * @param {string} [options.defaultBranch='main'] - Default branch
+   * @param {string} [options.queue] - Agent queue for the bootstrap/upload step
    * @param {Object} [options.settings] - Provider settings, e.g. { build_pull_requests: true }
    * @returns {Promise<{pipeline: BuildkitePipeline, existed: boolean}>} The pipeline
    */
   async createPipeline(
     org,
-    { name, repository, clusterId, defaultBranch = "main", settings },
+    { name, repository, clusterId, defaultBranch = "main", queue, settings },
   ) {
     console.log(`🔄 Creating Buildkite pipeline: ${name} (${repository})`);
 
@@ -145,7 +159,7 @@ export class BuildkiteAPIService extends BaseAPIService {
       name,
       repository,
       default_branch: defaultBranch,
-      configuration: BuildkiteAPIService.configurationWrapper(),
+      configuration: BuildkiteAPIService.configurationWrapper(undefined, queue),
     };
     if (clusterId) {
       body.cluster_id = clusterId;
@@ -180,6 +194,27 @@ export class BuildkiteAPIService extends BaseAPIService {
             `ℹ️ Buildkite pipeline "${name}" already exists — reusing it.`,
           );
           const existing = await this.getPipeline(org, name);
+
+          // Reconcile the bootstrap step. A pipeline created before the
+          // wrapper pinned a queue keeps its old, queue-less configuration
+          // forever otherwise: creation is idempotent, so re-running
+          // generation would never bring it into line. Comparing first keeps
+          // an unchanged pipeline from being PATCHed on every generation.
+          const desired = BuildkiteAPIService.configurationWrapper(
+            undefined,
+            queue,
+          );
+          if (queue && existing.configuration !== desired) {
+            console.log(
+              `🔧 Updating "${existing.slug || name}" bootstrap step to queue "${queue}".`,
+            );
+            const updated = await this.setConfiguration(
+              org,
+              existing.slug || name,
+              desired,
+            );
+            return { pipeline: updated, existed: true };
+          }
           return { pipeline: existing, existed: true };
         }
 

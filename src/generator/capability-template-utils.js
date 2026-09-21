@@ -2229,7 +2229,7 @@ ${extraYaml}${envBlock}${commandYaml}`;
  * about the fleet, not a per-project choice, and the one fleet is declared here
  * rather than restated per capability.
  */
-const MACOS_QUEUE = "mac-studio-linux";
+export const MACOS_QUEUE = "mac-studio-linux";
 
 /**
  * The directory a singular unit's payload root is assembled into.
@@ -3157,26 +3157,23 @@ ${_bkAgents(queue)}    env:
       - |
 ${dockerCredentialCommands}
         # One shell on purpose: Buildkite runs each command in its own shell, so
-        # the credential above would be gone by the next one, and an exit 0 in a
+        # the credential below would be gone by the next one, and an exit 0 in a
         # separate command would not stop the commands after it.
         #
-        # The docker config is per JOB, never the shared ~/.docker keychain. Two
-        # builds of one commit log in at the same moment, and the loser used to
-        # die with "The specified item already exists in the keychain.
-        # (-25299)" before it ever reached buildx (see
-        # specs/015-genproj-docker-publish-idempotent).
-        export DOCKER_CONFIG="/tmp/bk-docker-$$BUILDKITE_JOB_ID"
-        mkdir -p "$$DOCKER_CONFIG"
-        # DOCKER_CONFIG also relocates the CLI-plugin directory, so the empty
-        # config dir hides docker-buildx and every buildx call below dies as an
-        # unknown ROOT flag - "unknown flag: --bootstrap", exit 125 - before the
-        # push ever happens. The flag is real; what went missing is the plugin.
-        # Link the real plugin dir back in, so the config stays per-job and
-        # buildx stays reachable.
-        ln -sfn "$$HOME/.docker/cli-plugins" "$$DOCKER_CONFIG/cli-plugins"
+        # No \`login\` subcommand, and no per-job DOCKER_CONFIG. Both were tried and
+        # both failed on the build host: the macOS CLI falls back to the
+        # osxkeychain helper even with no credsStore configured, so two builds of
+        # one commit still wrote the same keychain item and the loser died with
+        # "The specified item already exists in the keychain. (-25299)"; and
+        # DOCKER_CONFIG is also the root for cli-plugins, so redirecting it hides
+        # \`docker buildx\` entirely (the next command died with "unknown flag:
+        # --bootstrap", parsed by the root docker parser).
+        # DOCKER_AUTH_CONFIG carries the same credential with no helper writing
+        # anything, so there is no shared state left to race. See
+        # specs/015-genproj-docker-publish-idempotent.
+        export DOCKER_AUTH_CONFIG='{"auths":{"ghcr.io":{"auth":"'"$$(printf '%s:%s' "$$GHCR_USERNAME" "$$GHCR_TOKEN" | base64)"'"}}}'
         BUILDX_BUILDER_NAME="bk-$$BUILDKITE_PIPELINE_SLUG-$$BUILDKITE_JOB_ID"
-        trap 'rm -rf "$$DOCKER_CONFIG"; docker buildx rm "$$BUILDX_BUILDER_NAME" >/dev/null 2>&1 || true' EXIT
-        echo "$$GHCR_TOKEN" | docker login ghcr.io -u "$$GHCR_USERNAME" --password-stdin
+        trap 'docker buildx rm "$$BUILDX_BUILDER_NAME" >/dev/null 2>&1 || true' EXIT
         # Skip if this commit is already published: the release step's ls-remote
         # guard, for an image. Only a positive answer skips - if the registry
         # cannot be reached the push still runs, because "could not ask" must
