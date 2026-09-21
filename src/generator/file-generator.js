@@ -3215,12 +3215,7 @@ fn handle(mut stream: TcpStream) -> std::io::Result<()> {
             let body = fs::read(&file)?;
             respond(&mut stream, 200, content_type(&file), &body)
         }
-        None => respond(
-            &mut stream,
-            404,
-            "text/plain; charset=utf-8",
-            b"not found",
-        ),
+        None => respond(&mut stream, 404, "text/plain; charset=utf-8", b"not found"),
     }
 }
 
