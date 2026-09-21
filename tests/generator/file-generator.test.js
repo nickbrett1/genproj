@@ -73,7 +73,6 @@ RUN if [ -d "$HOME/.oh-my-zsh" ]; then rm -rf "$HOME/.oh-my-zsh"; fi \\
     && git clone https://github.com/zsh-users/zsh-syntax-highlighting.git $HOME/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting \\
     && git clone https://github.com/zsh-users/zsh-autosuggestions $HOME/.oh-my-zsh/custom/plugins/zsh-autosuggestions \\
     && git clone --depth=1 https://github.com/romkatv/powerlevel10k.git $HOME/.oh-my-zsh/custom/themes/powerlevel10k \\
-    && curl https://cursor.com/install -fsS | bash \\
     {{specKitInstallation}}&& curl -fsSL https://antigravity.google/cli/install.sh | bash \\
     && mkdir -p "$HOME/.local/bin"
 {{gooseInstall}}
@@ -135,7 +134,6 @@ RUN if [ -d "$HOME/.oh-my-zsh" ]; then rm -rf "$HOME/.oh-my-zsh"; fi \\
     && git clone https://github.com/zsh-users/zsh-syntax-highlighting.git $HOME/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting \\
     && git clone https://github.com/zsh-users/zsh-autosuggestions $HOME/.oh-my-zsh/custom/plugins/zsh-autosuggestions \\
     && git clone --depth=1 https://github.com/romkatv/powerlevel10k.git $HOME/.oh-my-zsh/custom/themes/powerlevel10k \\
-    && curl https://cursor.com/install -fsS | bash \\
     {{specKitInstallation}}&& curl -fsSL https://antigravity.google/cli/install.sh | bash \\
     && mkdir -p "$HOME/.local/bin"
 {{gooseInstall}}
@@ -197,7 +195,6 @@ RUN if [ -d "$HOME/.oh-my-zsh" ]; then rm -rf "$HOME/.oh-my-zsh"; fi \\
     && git clone https://github.com/zsh-users/zsh-syntax-highlighting.git $HOME/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting \\
     && git clone https://github.com/zsh-users/zsh-autosuggestions $HOME/.oh-my-zsh/custom/plugins/zsh-autosuggestions \\
     && git clone --depth=1 https://github.com/romkatv/powerlevel10k.git $HOME/.oh-my-zsh/custom/themes/powerlevel10k \\
-    && curl https://cursor.com/install -fsS | bash \\
     {{specKitInstallation}}&& curl -fsSL https://antigravity.google/cli/install.sh | bash \\
     && mkdir -p "$HOME/.local/bin"
 {{gooseInstall}}

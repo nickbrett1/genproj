@@ -122,13 +122,6 @@ fi
 echo "INFO: Installing uv tool..."
 curl -LsSf https://astral.sh/uv/install.sh | sudo env CARGO_HOME=/usr/local UV_INSTALL_DIR=/usr/local/bin sh
 
-echo "INFO: Installing Cursor CLI..."
-curl https://cursor.com/install -fsS | bash
-
-
-
-
-
 # Setup node dependencies and expose node_modules/.bin on PATH
 # (memo: genproj node devcontainer .venv PATH — same class of bug as python
 # .venv). postCreate runs with the workspace as CWD, but cd explicitly so
