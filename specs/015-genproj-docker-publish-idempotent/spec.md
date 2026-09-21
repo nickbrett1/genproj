@@ -6,11 +6,11 @@ This is a defect record. It began as a red build that looked like noise and was
 not: roost's first generation produced builds `#12`–`#16`, and **two different
 kinds of red** are in them.
 
-| build               | failed step       | what it was                                                                                 |
-| ------------------- | ----------------- | ------------------------------------------------------------------------------------------- |
-| `#12`, `#13`, `#14` | `docker_smoke`    | the gate working: a dead image was rejected and `docker_publish` never ran (`waiting_failed`) |
-| `#15`               | —                 | passed, and published the image                                                              |
-| `#16`               | `docker_publish`  | **spurious**: died in `docker login` milliseconds in, on the same commit as `#15`             |
+| build               | failed step      | what it was                                                                                   |
+| ------------------- | ---------------- | --------------------------------------------------------------------------------------------- |
+| `#12`, `#13`, `#14` | `docker_smoke`   | the gate working: a dead image was rejected and `docker_publish` never ran (`waiting_failed`) |
+| `#15`               | —                | passed, and published the image                                                               |
+| `#16`               | `docker_publish` | **spurious**: died in `docker login` milliseconds in, on the same commit as `#15`             |
 
 ## The failure
 
@@ -48,7 +48,7 @@ So the fix has two halves, and the second is the one that carries `#16`:
    cannot collide there. The `trap` removes the directory again: once docker has
    written auth into it, it holds the token in plaintext.
 2. **Skip what is already there.** `docker buildx imagetools inspect
-   "$IMAGE:$BUILDKITE_COMMIT"` and `exit 0` when it resolves, so the second
+"$IMAGE:$BUILDKITE_COMMIT"` and `exit 0` when it resolves, so the second
    build of a commit does not rebuild and repush the same tag.
 
 ## The shape that makes it work, and the trap it avoids
@@ -73,7 +73,7 @@ green.
   loser waits for a publish it does not need.
 - **Not firing the duplicate build at all** — suppressing the API
   `First build (genproj)` when the push webhook will build the same commit — is
-  the cleaner root-cause fix and is deliberately *not* attempted here: it
+  the cleaner root-cause fix and is deliberately _not_ attempted here: it
   changes when builds happen for every project, and it lives in the generation
   trigger rather than in the pipeline this defect is about. Worth revisiting on
   its own.
@@ -87,8 +87,8 @@ left alone rather than made to match.
 
 ## How it is pinned
 
-`tests/generator/file-generator-buildkite.test.js` → *Buildkite docker publish
-(roost build 16 regression)*: the step is one command; the config is exported
+`tests/generator/file-generator-buildkite.test.js` → _Buildkite docker publish
+(roost build 16 regression)_: the step is one command; the config is exported
 before the login and removed afterwards; exactly one login; the skip exists and
 precedes the build; the skip is positive-only; the no-doppler channel gets both
 halves; and the step still parses with `if`, `depends_on: [build, docker_smoke]`
