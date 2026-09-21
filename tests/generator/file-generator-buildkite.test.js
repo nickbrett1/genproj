@@ -603,3 +603,115 @@ describe("Buildkite docker smoke gate (roost regression)", () => {
     expect(pipelineFrom(files).content).not.toContain("docker_smoke");
   });
 });
+
+describe("Buildkite docker publish (roost build 16 regression)", () => {
+  // Three red builds on roost's first generation, and only one of them was
+  // earned. #12/#13/#14 failed at docker_smoke - the gate doing its job on a
+  // dead image. #16 failed at docker_publish, inside `docker login`, on the
+  // SAME commit as #15, which published fine 96 seconds later: two agents on
+  // one macOS host (mac-studio-1/-2) behind the osxkeychain credential helper,
+  // two builds of one commit (the push webhook and the API "First build
+  // (genproj)"), two keychain writes started 37ms apart, and the loser died
+  // with "The specified item already exists in the keychain. (-25299)".
+  //
+  // Note what this means for the skip guard: the two publish steps overlapped
+  // for their whole duration, so at the moment #16 would have checked, nothing
+  // was published yet and it would have proceeded to log in regardless. The
+  // skip alone does not fix that red - the keychain write does. Both are pinned
+  // below, because both are the fix.
+  const publishCaps = [
+    "buildkite",
+    "devcontainer-rust",
+    "devcontainer-node",
+    "svelte",
+    "docker-container",
+    "doppler",
+  ];
+
+  const publishCommand = async (capabilities = publishCaps) => {
+    const files = await generateAllFiles({
+      name: "roost",
+      registryNamespace: "nickbrett1",
+      capabilities,
+      configuration: { language: "rust", buildkite: {} },
+    });
+    const doc = parse(pipelineFrom(files).content);
+    const publish = doc.steps.find((step) => step.key === "docker_publish");
+    return { publish, command: String(publish.commands[0]) };
+  };
+
+  it("keeps the whole publish in one shell", async () => {
+    // Load-bearing, not tidiness. Buildkite runs each command of a step in its
+    // own shell, so the credentials resolved in command 1 are gone by command 2,
+    // and - the part that makes a naive skip guard useless - an `exit 0` in one
+    // command does NOT stop the commands after it. Split back into three
+    // commands and the skip below would skip nothing while looking correct.
+    const { publish } = await publishCommand();
+    expect(publish.commands).toHaveLength(1);
+  });
+
+  it("logs in through a per-job docker config instead of the shared keychain", async () => {
+    const { command } = await publishCommand();
+
+    expect(command).toContain(
+      'export DOCKER_CONFIG="/tmp/bk-docker-$$BUILDKITE_JOB_ID"',
+    );
+    expect(command).toContain('mkdir -p "$$DOCKER_CONFIG"');
+    // The export has to come before the login, or the login writes to ~/.docker
+    // and the race is back.
+    expect(command.indexOf("export DOCKER_CONFIG")).toBeLessThan(
+      command.indexOf("docker login ghcr.io"),
+    );
+    // And the isolated config is removed again - it holds a write:packages
+    // token in plaintext once docker has written auth into it.
+    expect(command).toContain('rm -rf "$$DOCKER_CONFIG"');
+    // A single login: two logins in one step would race with itself.
+    expect((command.match(/docker login ghcr\.io/g) || []).length).toBe(1);
+  });
+
+  it("skips the publish when the commit is already in the registry", async () => {
+    const { command } = await publishCommand();
+
+    expect(command).toContain(
+      'if docker buildx imagetools inspect "$$IMAGE:$$BUILDKITE_COMMIT"',
+    );
+    expect(command).toContain("already in the registry - skipping the build.");
+    // Before the build, which is the whole point.
+    expect(command.indexOf("imagetools inspect")).toBeLessThan(
+      command.indexOf("docker buildx build"),
+    );
+  });
+
+  it("treats an unreachable registry as 'not published', never as 'published'", async () => {
+    // Only a positive answer skips. The check is an `if` on success, so a
+    // network failure or a 401 falls through to the push - "could not ask" must
+    // not read as "already done", which would silently stop publishing.
+    const { command } = await publishCommand();
+    const guard = command.slice(command.indexOf("if docker buildx imagetools"));
+    expect(guard).toContain("then");
+    expect(guard).not.toMatch(/imagetools inspect[^\n]*\|\|\s*exit 0/);
+    expect(guard).not.toContain("|| true");
+  });
+
+  it("still publishes in the no-doppler channel with the same guard", async () => {
+    // The guard and the isolated config live outside the doppler branch, so a
+    // project that takes its credentials from the agent environment gets both.
+    const { command } = await publishCommand([
+      "buildkite",
+      "devcontainer-node",
+      "docker-container",
+    ]);
+    expect(command).toContain(
+      'export DOCKER_CONFIG="/tmp/bk-docker-$$BUILDKITE_JOB_ID"',
+    );
+    expect(command).toContain("imagetools inspect");
+    expect(command).not.toContain("GHCR_UPDATE_TOKEN");
+  });
+
+  it("emits YAML that still parses", async () => {
+    const { publish } = await publishCommand();
+    expect(publish.if).toBe('build.branch == "main"');
+    expect(publish.depends_on).toContain("docker_smoke");
+    expect(publish.env.IMAGE).toBe("ghcr.io/nickbrett1/roost");
+  });
+});
