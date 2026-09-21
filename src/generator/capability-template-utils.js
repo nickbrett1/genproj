@@ -900,6 +900,82 @@ export function resolveSvelteOutputDirectory(context) {
 }
 
 /**
+ * Languages genproj emits a serving harness for.
+ *
+ * A serving harness is the **harness** half of a non-node frontend project:
+ * the binary binds the container port, serves the built static frontend, and
+ * answers the declared healthcheck. The **domain** half (the wire protocol,
+ * business endpoints) stays the developer's.
+ *
+ * Rust and Python are here because the generator already scaffolds their entry
+ * point (`src/main.rs`, `src/<pkg>/__main__.py`) and both can serve HTTP from
+ * the standard library alone, so the harness costs no dependency. Java is
+ * deliberately absent: genproj emits a Java devcontainer and **no build
+ * system** (no `pom.xml`), so there is no scaffold to compile a harness into -
+ * adding one is a separate, larger change. A Java frontend project therefore
+ * keeps the placeholder and gets no smoke gate (nothing can serve).
+ */
+export const SERVING_HARNESS_LANGUAGES = ["rust", "python"];
+
+/**
+ * The health path a docker-container `healthcheck` declares, or "" when it
+ * declares none / a non-http mechanism. Shared by the Dockerfile emitter, the
+ * serving harness and the smoke gate so all three agree on one path.
+ * @param {Object} config - The `docker-container` capability configuration
+ * @returns {string} The path (e.g. "/healthz"), or ""
+ */
+export function resolveDeclaredHealthPath(config) {
+  const setting =
+    typeof config?.healthcheck === "string" ? config.healthcheck.trim() : "";
+  if (!setting.startsWith("http:")) return "";
+  return setting.slice("http:".length) || "/healthz";
+}
+
+/**
+ * Describes the minimal serving harness a non-node frontend project needs, or
+ * null when none applies.
+ *
+ * The harness is emitted when the primary language is one genproj can scaffold
+ * a server for (see {@link SERVING_HARNESS_LANGUAGES}) **and** a frontend is
+ * present to serve. A non-node project with no frontend is unchanged: its
+ * placeholder binary makes no healthcheck promise and gets no smoke gate.
+ *
+ * The container contract the harness must honour - the port the Dockerfile
+ * `EXPOSE`s and the healthcheck it `HEALTHCHECK`s - is read from the same
+ * `docker-container` configuration the Dockerfile is rendered from, so the two
+ * cannot drift. Defaults match the Dockerfile's: port 3000 and `/healthz`
+ * (the path a frontend project now declares when the user declares none).
+ *
+ * @param {Object} context - Generation context (capabilities, configuration)
+ * @returns {{language: string, port: number, staticDirectory: string, healthPath: string}|null}
+ */
+export function servingHarnessSpec(context) {
+  const language = resolveProjectLanguage(context);
+  if (!SERVING_HARNESS_LANGUAGES.includes(language)) return null;
+  if (!hasFrontend(context)) return null;
+  const config = context?.configuration?.["docker-container"] || {};
+  // Python only scaffolds `src/<pkg>/__main__.py` when the app declares no
+  // entry point of its own (round-3 fix: never clobber the app's real entry
+  // point). Where the app owns it there is no harness, so there is no health
+  // promise and no default healthcheck either. Rust always scaffolds a
+  // `src/main.rs`, so this does not apply there.
+  const ownsEntrypoint =
+    (Array.isArray(config.command) && config.command.length > 0) ||
+    (Array.isArray(config.entrypoint) && config.entrypoint.length > 0);
+  if (language === "python" && ownsEntrypoint) return null;
+  const directory = resolveSvelteDirectory(context);
+  const outputDirectory = resolveSvelteOutputDirectory(context);
+  return {
+    language,
+    port: config.exposePort ?? 3000,
+    staticDirectory: directory
+      ? `${directory}/${outputDirectory}`
+      : outputDirectory,
+    healthPath: resolveDeclaredHealthPath(config) || "/healthz",
+  };
+}
+
+/**
  * Whether the project targets a MicroPython board.
  *
  * The `micropython` capability tells the generator that the deliverable is
@@ -1175,6 +1251,11 @@ function getDockerContainerTemplateData(context) {
   // `{ type: "frontend" }` (svelte, sveltekit, and whatever comes next) is a
   // frontend. See `hasFrontend` / `frontendCapabilityId`.
   const hasFrontendSelected = hasFrontend(context);
+  // The serving harness this project will get, if any (non-node + frontend).
+  // It decides the default healthcheck below: with a harness the container
+  // really serves /healthz, so - like a node project's /health - a frontend
+  // project declares one by default instead of emitting no HEALTHCHECK at all.
+  const harness = servingHarnessSpec(context);
   const dockerBaseImage =
     config.baseImage ||
     (isPython
@@ -1255,11 +1336,19 @@ RUN npm run build
     healthcheckPath = healthcheckSetting.slice("http:".length) || "/health";
   }
   // A node web app defaults to a /health route: the SvelteKit app is the node
-  // server and the generator emits src/routes/health/+server.js for it. A
-  // non-node primary has no such route — its own server owns /healthz.
+  // server and the generator emits src/routes/health/+server.js for it.
+  //
+  // A NON-node frontend project now defaults to /healthz too, because the
+  // serving harness genproj scaffolds answers it (see servingHarnessSpec). That
+  // is what lets the smoke gate apply by default: the promise and the server
+  // are emitted together. A non-node project WITHOUT a frontend still declares
+  // nothing - its placeholder binary makes no promise.
   if (!healthcheckSetting && isNode) {
     healthcheckSetting = "http:/health";
     healthcheckPath = "/health";
+  } else if (!healthcheckSetting && harness) {
+    healthcheckSetting = `http:${harness.healthPath}`;
+    healthcheckPath = harness.healthPath;
   }
 
   // ---- apt packages (memo §3.2): aptPackages config emitted into the
@@ -2833,29 +2922,34 @@ ${syncSecrets("preview")}`);
     // than the deploy, and publish depends on it (see below), so an image that
     // cannot serve never reaches GHCR.
     //
-    // It is only meaningful where genproj can expect the image to serve that
-    // healthcheck. genproj scaffolds a server only when the primary language is
-    // node (the SvelteKit/node app); for a Rust/Python/Java primary the
-    // scaffolded binary is a placeholder and the server is the developer's to
-    // add, so a health-gate on it would be red by default. A declared
-    // `command`/`entrypoint` is the user owning the entry point, so the gate
-    // applies there too. No healthcheck at all means there is nothing to poll.
+    // It applies wherever genproj can expect the image to serve its own
+    // healthcheck:
+    //   - a node primary (genproj scaffolds the SvelteKit/node server); or
+    //   - a non-node primary WITH a frontend (genproj now scaffolds a serving
+    //     harness for it - see servingHarnessSpec - so the image serves the
+    //     default /healthz out of the box); or
+    //   - a declared command/entrypoint (the user owns the entry point).
+    // A non-node project with NO frontend still gets no gate: its placeholder
+    // binary makes no promise, so a health-gate there would be red by default.
+    // No healthcheck at all means there is nothing to poll.
     const smokeHealthcheck =
       typeof dcConfig.healthcheck === "string"
         ? dcConfig.healthcheck.trim()
         : "";
     const smokeLanguage = resolveProjectLanguage(context);
-    // A node project defaults to http:/health (see the Dockerfile emitter), so
-    // no declared healthcheck still means there IS one; `none` opts out.
+    const smokeServesByDefault =
+      smokeLanguage === "node" || servingHarnessSpec(context) !== null;
+    // A node project defaults to http:/health and a non-node frontend project
+    // to http:/healthz (see the Dockerfile emitter), so no declared
+    // healthcheck still means there IS one; `none` opts out.
     const smokeHasHealthcheck =
       smokeHealthcheck !== "none" &&
-      (smokeHealthcheck !== "" || smokeLanguage === "node");
+      (smokeHealthcheck !== "" || smokeServesByDefault);
     const smokeDeclaresEntrypoint =
       (Array.isArray(dcConfig.command) && dcConfig.command.length > 0) ||
       (Array.isArray(dcConfig.entrypoint) && dcConfig.entrypoint.length > 0);
     const emitsSmokeGate =
-      smokeHasHealthcheck &&
-      (smokeLanguage === "node" || smokeDeclaresEntrypoint);
+      smokeHasHealthcheck && (smokeServesByDefault || smokeDeclaresEntrypoint);
     const smokeTimeoutChecks = 30;
     if (emitsSmokeGate)
       steps.push(`

@@ -488,12 +488,14 @@ describe("Buildkite docker smoke gate (roost regression)", () => {
   // the image BUILT. The smoke gate builds it, runs it, and asserts it serves
   // HTTP before anything is published.
   //
-  // It only applies where genproj can expect the image to serve its own
-  // healthcheck: a node primary (genproj scaffolds the SvelteKit/node server)
-  // or a declared command/entrypoint (the user owns the entry point). A
-  // Rust/Python/Java primary scaffolds a placeholder binary, so a health gate
-  // there would be red by default — see the language-follows reversal in
-  // docker-sveltekit-runtime.test.js.
+  // It applies where genproj can expect the image to serve its own
+  // healthcheck: a node primary (genproj scaffolds the SvelteKit/node server),
+  // a non-node primary WITH a frontend (genproj now scaffolds a serving
+  // harness — src/main.rs / __main__.py — that serves the default /healthz, so
+  // the gate is green by default), or a declared command/entrypoint (the user
+  // owns the entry point). A non-node project with NO frontend still gets no
+  // gate: its placeholder binary makes no promise — see the language-follows
+  // reversal in docker-sveltekit-runtime.test.js.
   const nodeDockerCaps = ["buildkite", "devcontainer-node", "docker-container"];
 
   it("adds a smoke step for a node project that serves HTTP", async () => {
@@ -522,19 +524,44 @@ describe("Buildkite docker smoke gate (roost regression)", () => {
     expect(publish.if).toBe('build.branch == "main"');
   });
 
-  it("adds the smoke step for a non-node project only when it declares an entry point", async () => {
-    const withoutEntrypoint = await generate(
+  it("adds the smoke step for a non-node project that has a frontend to serve", async () => {
+    // rust + svelte: genproj scaffolds a serving harness that answers the
+    // default /healthz, so the gate applies even with no declared command and
+    // no declared healthcheck. This is the shape that would have caught the
+    // dead roost image.
+    const files = await generate(
+      [
+        "buildkite",
+        "devcontainer-rust",
+        "devcontainer-node",
+        "svelte",
+        "docker-container",
+      ],
+      { language: "rust" },
+    );
+    const content = pipelineFrom(files).content;
+    const doc = parse(content);
+    const smoke = doc.steps.find((s) => s.key === "docker_smoke");
+    expect(smoke).toBeDefined();
+    expect(smoke.if).toBeUndefined();
+    expect(
+      doc.steps.find((s) => s.key === "docker_publish").depends_on,
+    ).toContain("docker_smoke");
+  });
+
+  it("adds the smoke step for a non-node project only on the shapes that serve", async () => {
+    // No frontend, no declared command: the scaffolded binary is a placeholder,
+    // so genproj cannot scaffold a server and a gate would be red by default.
+    const bareRust = await generate(
       ["buildkite", "devcontainer-rust", "docker-container"],
       {
         language: "rust",
         "docker-container": { healthcheck: "http:/healthz" },
       },
     );
-    // No declared command: genproj cannot scaffold a server, so no gate.
-    expect(pipelineFrom(withoutEntrypoint).content).not.toContain(
-      "docker_smoke",
-    );
+    expect(pipelineFrom(bareRust).content).not.toContain("docker_smoke");
 
+    // A declared command is the user owning the entry point: the gate applies.
     const withEntrypoint = await generate(
       ["buildkite", "devcontainer-rust", "docker-container"],
       {
@@ -550,6 +577,23 @@ describe("Buildkite docker smoke gate (roost regression)", () => {
     expect(
       doc.steps.find((s) => s.key === "docker_publish").depends_on,
     ).toContain("docker_smoke");
+  });
+
+  it("omits the smoke step for a frontend project that opts out of a healthcheck", async () => {
+    const files = await generate(
+      [
+        "buildkite",
+        "devcontainer-rust",
+        "devcontainer-node",
+        "svelte",
+        "docker-container",
+      ],
+      {
+        language: "rust",
+        "docker-container": { healthcheck: "none" },
+      },
+    );
+    expect(pipelineFrom(files).content).not.toContain("docker_smoke");
   });
 
   it("emits no docker smoke step when docker-container is not selected", async () => {

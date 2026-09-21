@@ -102,6 +102,79 @@ describe("docker-container runtime follows the primary language", () => {
     expect(runtime).toContain('CMD ["roost"]');
   });
 
+  it("rust+svelte gets a default /healthz HEALTHCHECK and a serving harness", async () => {
+    // No healthcheck declared: because the harness now serves /healthz,
+    // genproj declares one by default (exactly as a node project defaults to
+    // /health). The Dockerfile promise and the scaffolded server are emitted
+    // together, so the smoke gate is green without a declared command.
+    const { find } = await renderFiles(
+      ["devcontainer-rust", "devcontainer-node", "svelte", "docker-container"],
+      { language: "rust" },
+      "roost",
+    );
+    const dockerfile = find("Dockerfile");
+    expect(dockerfile).toContain("HEALTHCHECK");
+    expect(dockerfile).toContain(
+      "CMD curl -fsS http://127.0.0.1:3000/healthz || exit 1",
+    );
+    expect(find("src/main.rs")).toContain(
+      'const HEALTH_PATH: &str = "/healthz"',
+    );
+  });
+
+  it("python+svelte gets the same harness in __main__.py", async () => {
+    const { find } = await renderFiles(
+      [
+        "devcontainer-python",
+        "devcontainer-node",
+        "svelte",
+        "docker-container",
+      ],
+      { language: "python" },
+      "pyproj",
+    );
+    const mainPy = find("src/pyproj/__main__.py");
+    expect(mainPy).toContain("ThreadingHTTPServer");
+    expect(mainPy).toContain('"0.0.0.0"');
+    expect(mainPy).toContain('HEALTH_PATH = "/healthz"');
+    expect(mainPy).toContain('STATIC_DIR = Path("web/dist")');
+    // The Python runtime image serves with curl, like any non-node image.
+    expect(find("Dockerfile")).toContain(
+      "CMD curl -fsS http://127.0.0.1:3000/healthz || exit 1",
+    );
+  });
+
+  it("python+svelte with a custom entry point owns its server: no harness, no promise", async () => {
+    // The Python scaffold never clobbers an app-owned entry point, so where a
+    // command is declared there is no harness - and therefore no default
+    // healthcheck promising /healthz.
+    const { find } = await renderFiles(
+      [
+        "devcontainer-python",
+        "devcontainer-node",
+        "svelte",
+        "docker-container",
+      ],
+      {
+        language: "python",
+        "docker-container": { command: ["uvicorn", "app:app"] },
+      },
+      "pyproj",
+    );
+    expect(find("src/pyproj/__main__.py")).toBeUndefined();
+    expect(find("Dockerfile")).not.toContain("HEALTHCHECK");
+  });
+
+  it("a non-node project with no frontend keeps the placeholder and no HEALTHCHECK", async () => {
+    const { find } = await renderFiles(
+      ["devcontainer-rust", "docker-container"],
+      { language: "rust" },
+      "plainrust",
+    );
+    expect(find("src/main.rs")).toContain("is running.");
+    expect(find("Dockerfile")).not.toContain("HEALTHCHECK");
+  });
+
   it("node+sveltekit is unchanged: node runtime, node build CMD", async () => {
     const { find } = await renderFiles([
       "devcontainer-node",
