@@ -723,3 +723,76 @@ describe("Buildkite docker publish (roost build 16 regression)", () => {
     expect(publish.env.IMAGE).toBe("ghcr.io/nickbrett1/roost");
   });
 });
+
+describe("Buildkite output names Buildkite, never another CI provider", () => {
+  // The generated docs must describe the CI that is actually selected. A
+  // buildkite-selected project must never read as CircleCI-shaped: the leak
+  // this pins was `deploy/README.md` and `.buildkite/README.md` telling the
+  // reader to create a CircleCI context and pull GHCR credentials from it,
+  // while the project's only pipeline is `.buildkite/pipeline.yml`.
+  //
+  // The shapes are chosen to exercise every file the CircleCI references used
+  // to appear in: the deploy runbook (docker-container, with and without
+  // doppler), the pipeline README, the emitted pipeline comments
+  // (cloudflare-wrangler deploy), and the root README's capability list.
+  const shapes = [
+    ["buildkite", "devcontainer-node"],
+    ["buildkite", "devcontainer-node", "docker-container"],
+    ["buildkite", "devcontainer-node", "docker-container", "doppler"],
+    ["buildkite", "devcontainer-node", "cloudflare-wrangler"],
+    [
+      "buildkite",
+      "devcontainer-rust",
+      "github-release",
+      "lighthouse-ci",
+      "cloudflare-wrangler",
+      "docker-container",
+      "doppler",
+    ],
+    ["buildkite", "devcontainer-python", "gitguardian", "sonarcloud"],
+  ];
+
+  it.each(shapes)(
+    "emits no CircleCI reference for capabilities %j",
+    async (...capabilities) => {
+      const files = await generateAllFiles({
+        name: "roost",
+        registryNamespace: "nickbrett1",
+        capabilities,
+        configuration: { buildkite: {} },
+      });
+
+      // Every generated file, not a hand-picked subset: a reference in a file
+      // this test does not know about is exactly the leak it needs to catch.
+      for (const file of files) {
+        expect(file.content, `${file.filePath} refers to CircleCI`).not.toMatch(
+          /circleci/i,
+        );
+      }
+    },
+  );
+
+  it("describes the agent environment hook and Doppler in the deploy runbook", async () => {
+    // The positive half: the wording that replaced the CircleCI context is the
+    // Buildkite channel (the agent's `environment` hook), and Doppler when it
+    // is selected.
+    const files = await generateAllFiles({
+      name: "roost",
+      registryNamespace: "nickbrett1",
+      capabilities: [
+        "buildkite",
+        "devcontainer-node",
+        "docker-container",
+        "doppler",
+      ],
+      configuration: { buildkite: {} },
+    });
+    const readme = files.find((f) => f.filePath === "deploy/README.md");
+
+    expect(readme.content).toContain("`.buildkite/pipeline.yml`");
+    expect(readme.content).toContain("`docker_publish` step");
+    expect(readme.content).toContain("agent's `environment` hook");
+    expect(readme.content).toContain("GHCR_UPDATE_TOKEN");
+    expect(readme.content).toContain("`common`/`prd`");
+  });
+});
