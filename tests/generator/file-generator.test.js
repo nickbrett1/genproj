@@ -8,8 +8,8 @@ import { getCapabilityTemplateData } from "../../src/generator/capability-templa
 
 // Manually define the content of the templates for testing purposes
 const nodeJsonTemplateContent = `{
-  "name": "Node.js",
-  "runArgs": ["--sysctl", "net.ipv6.conf.all.disable_ipv6=1", "--cap-add=NET_ADMIN", "--device=/dev/net/tun"],
+  "name": "{{projectName}}",
+  "runArgs": ["--name", "{{projectName}}-devcontainer", "--sysctl", "net.ipv6.conf.all.disable_ipv6=1", "--cap-add=NET_ADMIN", "--device=/dev/net/tun"],
   "build": { "dockerfile": "Dockerfile" },
   "workspaceFolder": "/workspaces/{{projectName}}",
   "remoteUser": "node",

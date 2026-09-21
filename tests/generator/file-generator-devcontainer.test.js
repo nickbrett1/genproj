@@ -55,7 +55,14 @@ describe("primary language (D8): declared, not inferred", () => {
     const devcontainerJson = JSON.parse(
       byPath(generated, ".devcontainer/devcontainer.json").content,
     );
-    expect(devcontainerJson.name).toBe("Python");
+    // The base is python: its feature is present and rust's remoteUser is not
+    // (additional devcontainers merge features/extensions only). The `name`
+    // field is now the project name, not the language, so it can no longer be
+    // used as the language signal.
+    expect(
+      devcontainerJson.features["ghcr.io/devcontainers/features/python:1"],
+    ).toEqual({ version: "3.12" });
+    expect(devcontainerJson.remoteUser).toBeUndefined();
   });
 
   it("lets a declared language win even when its devcontainer is absent", async () => {
@@ -67,7 +74,31 @@ describe("primary language (D8): declared, not inferred", () => {
     const devcontainerJson = JSON.parse(
       byPath(generated, ".devcontainer/devcontainer.json").content,
     );
-    expect(devcontainerJson.name).toBe("Rust");
+    // The rust base is selected (its remoteUser survives), even though no
+    // devcontainer-rust capability is selected.
+    expect(devcontainerJson.remoteUser).toBe("vscode");
+  });
+
+  it("gives every language a descriptive, deterministic container name", async () => {
+    // `name` is the VS Code display label, and `--name` forwarded through
+    // runArgs is what docker actually names the container. Both must be the
+    // project name so a generated project never shows up as a random
+    // adjective-scientist name in Docker UIs.
+    for (const language of ["rust", "node", "python", "java"]) {
+      const generated = await files({
+        projectName: "copper-lantern",
+        capabilities: [`devcontainer-${language}`],
+        configuration: {},
+      });
+      const devcontainerJson = JSON.parse(
+        byPath(generated, ".devcontainer/devcontainer.json").content,
+      );
+      expect(devcontainerJson.name).toBe("copper-lantern");
+      expect(devcontainerJson.runArgs.slice(0, 2)).toEqual([
+        "--name",
+        "copper-lantern-devcontainer",
+      ]);
+    }
   });
 
   it("derives sonar settings from the primary language, not a JavaScript default", () => {

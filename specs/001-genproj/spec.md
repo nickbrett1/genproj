@@ -223,6 +223,7 @@ This section defines required system behavior for known failure modes and edge c
 - **FR-016b**: System MUST configure post-create-setup.sh to install and configure Oh My Zsh with Powerlevel10k theme and zsh-autosuggestions/zsh-syntax-highlighting plugins
 - **FR-016c**: System MUST configure .zshrc with Cursor-specific terminal handling to avoid command detection issues
 - **FR-016d**: System MUST configure Powerlevel10k theme with appropriate settings matching the FTN development environment
+- **FR-016e**: System MUST give every generated devcontainer a descriptive, deterministic Docker container name: the devcontainer.json `name` field (the VS Code display label) MUST be `{{projectName}}`, and `runArgs` MUST pass `--name` `{{projectName}}-devcontainer` through to `docker run`, so a generated project never appears in Docker UIs under a random adjective-scientist name. The `-devcontainer` suffix avoids colliding with a container literally named after the repository and mirrors the `<repo>-dev` agent name convention (spec 008)
 - **FR-017**: System MUST generate VS Code-specific configuration files (settings.json, extensions.json) based on selected capabilities
 - **FR-018**: System MUST create post-create-setup.sh script with git safe directory configuration
 - **FR-019**: System MUST generate dependabot.yml when dependency management is selected with ecosystems automatically determined from selected devcontainer languages
