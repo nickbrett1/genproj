@@ -657,6 +657,14 @@ describe("Buildkite docker publish (roost build 16 regression)", () => {
       'export DOCKER_CONFIG="/tmp/bk-docker-$$BUILDKITE_JOB_ID"',
     );
     expect(command).toContain('mkdir -p "$$DOCKER_CONFIG"');
+    // DOCKER_CONFIG also relocates the CLI-plugin directory, so the fresh
+    // config dir hides docker-buildx and every buildx call dies as an unknown
+    // ROOT flag ("unknown flag: --bootstrap", exit 125) before the push. The
+    // plugin dir has to be linked back in. Pinned because that failure names
+    // the flag - which is real - and points nowhere near the missing plugin.
+    expect(command).toContain(
+      'ln -sfn "$$HOME/.docker/cli-plugins" "$$DOCKER_CONFIG/cli-plugins"',
+    );
     // The export has to come before the login, or the login writes to ~/.docker
     // and the race is back.
     expect(command.indexOf("export DOCKER_CONFIG")).toBeLessThan(
