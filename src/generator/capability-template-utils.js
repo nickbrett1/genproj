@@ -1020,6 +1020,7 @@ function getDockerContainerTemplateData(context) {
   // falling back to the node image (memo: genproj-docker-build-speedup).
   const isJava = language === "java";
   const isRust = language === "rust";
+  const hasSveltekit = (context.capabilities || []).includes("sveltekit");
   const dockerBaseImage =
     config.baseImage ||
     (isPython
@@ -1031,6 +1032,31 @@ function getDockerContainerTemplateData(context) {
           : isRust
             ? "rust:1-slim"
             : "node:22-slim");
+
+  // The container's HTTP server is the SvelteKit app (adapter-node emits a
+  // standalone `build/index.js` server; the /health route is a SvelteKit
+  // +server.js). Only node can run it, so whenever a SvelteKit app is selected
+  // the RUNTIME stage is a node image and the entry point runs the
+  // adapter-node server - even when the project's primary language is rust (or
+  // python/java), where the frontend is a sub-build (`buildsSvelteFrontend`
+  // below). Before this, a rust+sveltekit project emitted `rust:1-slim` with
+  // `CMD ["<rust-bin>"]`: the build stage baked the frontend in, nothing ever
+  // served it, and the image's own HEALTHCHECK could never pass (roost).
+  //
+  // The build stage stays on the language image (it needs the toolchain); only
+  // the runtime image changes. A language binary that is still built is copied
+  // in as before, so a project that does want the binary alongside the server
+  // still has it - override `command` to make it the entry point.
+  const servesSvelteWithNode = hasSveltekit;
+  // The runtime image carries node whenever the project is node-primary or
+  // serves a SvelteKit app; the HEALTHCHECK uses `node -e fetch` there and curl
+  // only elsewhere (needing the apt auto-install below).
+  const runtimeHasNode = isNode || servesSvelteWithNode;
+  const dockerRuntimeImage = servesSvelteWithNode
+    ? isNode
+      ? dockerBaseImage
+      : "node:22-slim"
+    : dockerBaseImage;
 
   // Python package name (src-layout) and Rust binary name (package name)
   // used by the manifest-first build and the runtime stage below.
@@ -1046,7 +1072,6 @@ function getDockerContainerTemplateData(context) {
   // runtime that serves it from disk finds it. Where the output lands
   // ({{svelteDirectory}}/{{svelteOutputDirectory}}) is the documented seam: see
   // the generated web/README.md.
-  const hasSveltekit = (context.capabilities || []).includes("sveltekit");
   const buildsSvelteFrontend = hasSveltekit && language !== "node";
   const svelteDirectory = buildsSvelteFrontend
     ? resolveSvelteDirectory(context)
@@ -1102,7 +1127,7 @@ RUN npm run build
     : [];
   if (
     healthcheckSetting.startsWith("http:") &&
-    !isNode &&
+    !runtimeHasNode &&
     !aptPackages.includes("curl")
   ) {
     aptPackages.push("curl");
@@ -1199,6 +1224,13 @@ RUN cargo build --release`;
   } else {
     dockerRuntimeCommands = `COPY --from=build /app/target/release/${rustBinName} /usr/local/bin/${rustBinName}`;
   }
+  // A non-node project that serves SvelteKit runs the adapter-node server, so
+  // the runtime needs node's own portrait of itself: production mode, the
+  // published port, and a non-loopback bind (adapter-node defaults to
+  // 0.0.0.0, but the port defaults to 3000 and the project may have moved it).
+  if (servesSvelteWithNode && !isNode) {
+    dockerRuntimeCommands = `ENV NODE_ENV=production\nENV HOST=0.0.0.0\nENV PORT=${exposePort}\n${dockerRuntimeCommands}`;
+  }
   // A bundled frontend is a runtime asset whether the binary embeds it at
   // compile time (the build stage already has it) or serves it from disk; the
   // copy is harmless in the former case and load-bearing in the latter.
@@ -1211,7 +1243,7 @@ RUN cargo build --release`;
   // uses curl (auto-added to aptPackages above).
   let dockerHealthcheck = "";
   if (healthcheckSetting.startsWith("http:")) {
-    dockerHealthcheck = isNode
+    dockerHealthcheck = runtimeHasNode
       ? `HEALTHCHECK --interval=30s --timeout=3s --start-period=10s CMD node -e "fetch('http://127.0.0.1:${exposePort}${healthcheckPath}').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"`
       : `HEALTHCHECK --interval=30s --timeout=3s --start-period=10s CMD curl -fsS http://127.0.0.1:${exposePort}${healthcheckPath} || exit 1`;
   } else if (healthcheckSetting.startsWith("command:")) {
@@ -1253,6 +1285,14 @@ RUN cargo build --release`;
     if (isPython) dockerCommand = `CMD ["python", "-m", "${pkgName}"]`;
     else if (isNode) dockerCommand = 'CMD ["node", "build/index.js"]';
     else if (isJava) dockerCommand = 'CMD ["java", "-jar", "/app/app.jar"]';
+    // The SvelteKit app is the server even when the primary language is not
+    // node: the runtime image is a node image (see dockerRuntimeImage) and the
+    // adapter-node output is at <sveltePrefix><output>/index.js. Checked before
+    // the rust fallback so a rust+sveltekit project no longer runs its stub
+    // binary. A user who wants the language binary as the entry point sets
+    // `command` on the docker-container capability and that wins above.
+    else if (servesSvelteWithNode)
+      dockerCommand = `CMD ["node", "${sveltePrefix}${svelteOutputDirectory}/index.js"]`;
     else dockerCommand = `CMD ["${rustBinName}"]`;
   }
   const dockerRunCommand = [dockerScriptCopy, dockerEntrypoint, dockerCommand]
@@ -1309,6 +1349,19 @@ RUN cargo build --release`;
     .map((entry) => (entry.includes("=") ? entry : `${entry}=`))
     .join("\n");
 
+  // The whole compose `environment:` block, not just its entries. A mapping
+  // header with only comment lines under it is YAML null, and Compose v2
+  // rejects it: `services.app.environment must be a mapping` (roost defect 2).
+  // With no env vars we emit an explicit empty mapping (`environment: {}`),
+  // which is both valid and says "nothing here" on purpose.
+  const composeEnvironment =
+    envVars.length > 0
+      ? `    environment:
+      # Set your environment variables here or in a NAS-side .env file
+      # (genproj never commits secrets). See .env.example.
+${composeEnvVars}`
+      : "    environment: {}";
+
   const labels = [];
   if (watchtower || homepage) labels.push("    labels:");
   if (watchtower)
@@ -1341,6 +1394,7 @@ RUN cargo build --release`;
     registryNamespace,
     circleciContext,
     dockerBaseImage,
+    dockerRuntimeImage,
     dockerAptInstall,
     dockerFrontendStage,
     dockerBuildCommands,
@@ -1354,6 +1408,7 @@ RUN cargo build --release`;
     portsConfig,
     volumesConfig,
     composeEnvVars,
+    composeEnvironment,
     envExampleEntries,
     composeLabels: labels.join("\n"),
     homepageWidget,
@@ -2633,10 +2688,59 @@ ${syncSecrets("preview")}`);
           exit 1
         fi`;
 
+    // --- container smoke gate ---------------------------------------------
+    // "CI green and the image dead" is the failure this exists to catch: the
+    // publish step only ever proved the image BUILT. roost shipped a `rust:1-slim`
+    // runtime running a stub that printed one line and exited while every step
+    // passed. This step builds the image, RUNS it, and polls the image's own
+    // HEALTHCHECK until it reports healthy - a container that exits instead of
+    // serving is a failure too, not just an unhealthy one. It runs on EVERY
+    // branch (not just main), so a broken image fails the pull request rather
+    // than the deploy, and publish depends on it (see below), so an image that
+    // cannot serve never reaches GHCR.
+    const smokeTimeoutChecks = 30;
+    steps.push(`
+  - label: ":male-doctor: Smoke test image (starts and serves HTTP)"
+    key: docker_smoke
+${buildDependencies}${_bkAgents(queue)}    env:
+      SMOKE_IMAGE: ${projectName}-smoke
+    commands:
+      - >-
+        docker build -t "$$SMOKE_IMAGE:$$BUILDKITE_COMMIT" .
+      - |
+        set -euo pipefail
+        CONTAINER="$$SMOKE_IMAGE-$$BUILDKITE_JOB_ID"
+        trap 'docker rm -f "$$CONTAINER" >/dev/null 2>&1 || true' EXIT
+        docker run -d --name "$$CONTAINER" "$$SMOKE_IMAGE:$$BUILDKITE_COMMIT" >/dev/null
+        # Poll the DECLARED healthcheck. A container that exits (the old rust
+        # stub restart-looped) is a failure, so running is checked as well as
+        # health: "not running" is reported with its logs, never mistaken for a
+        # slow start.
+        for i in $$(seq 1 ${smokeTimeoutChecks}); do
+          RUNNING="$$(docker inspect -f '{{.State.Running}}' "$$CONTAINER" 2>/dev/null || echo false)"
+          HEALTH="$$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$$CONTAINER" 2>/dev/null || echo unknown)"
+          echo "attempt $$i: running=$$RUNNING health=$$HEALTH"
+          if [ "$$HEALTH" = "healthy" ]; then
+            echo "image starts and serves HTTP (healthcheck passed)"
+            exit 0
+          fi
+          if [ "$$RUNNING" != "true" ]; then
+            echo "container is not running - it exited instead of serving:" >&2
+            docker logs "$$CONTAINER" >&2 || true
+            exit 1
+          fi
+          sleep 2
+        done
+        echo "container never became healthy:" >&2
+        docker logs "$$CONTAINER" >&2 || true
+        exit 1
+`);
+
     steps.push(`
   - label: ":docker: Build and publish image (GHCR)"
     key: docker_publish
-${buildDependencies}    if: build.branch == "main"
+${buildDependencies}      - docker_smoke
+    if: build.branch == "main"
 ${_bkAgents(queue)}    env:
       IMAGE: ${imageRef}
       CACHE_REF: ${cacheRef}
