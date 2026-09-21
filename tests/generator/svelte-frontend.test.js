@@ -72,7 +72,7 @@ describe("the svelte capability scaffolds a static frontend into web/", () => {
     expect(viteConfig).not.toContain("@sveltejs/kit");
   });
 
-  it("builds to static assets (vite build) and documents the serving seam", async () => {
+  it("builds to static assets (vite build) and documents the serving harness", async () => {
     const { find } = await renderFiles(
       ["devcontainer-rust", "devcontainer-node", "svelte"],
       { language: "rust" },
@@ -85,10 +85,49 @@ describe("the svelte capability scaffolds a static frontend into web/", () => {
     expect(pkg.devDependencies).not.toHaveProperty("@sveltejs/adapter-static");
 
     const readme = find("web/README.md");
-    // The README names the static output and that the language server owns /healthz.
+    // The README names the static output and the serving harness the language
+    // entry point now carries.
     expect(readme).toContain("web/dist");
-    expect(readme).toContain("/healthz");
+    expect(readme).toContain("serving harness");
     expect(readme).toContain("no Node runtime");
+  });
+
+  it("scaffolds a dependency-free serving harness as the Rust entry point", async () => {
+    const { find } = await renderFiles(
+      ["devcontainer-rust", "devcontainer-node", "svelte"],
+      { language: "rust" },
+      "roost",
+    );
+    const mainRs = find("src/main.rs");
+
+    // Bind + static + health, and nothing else: no domain logic.
+    expect(mainRs).toContain("TcpListener::bind");
+    expect(mainRs).toContain('"0.0.0.0"');
+    expect(mainRs).toContain('const STATIC_DIR: &str = "web/dist"');
+    expect(mainRs).toContain('const HEALTH_PATH: &str = "/healthz"');
+    // Standard library only - no Cargo dependency is baked in.
+    expect(mainRs).toContain("use std::net::{TcpListener, TcpStream}");
+    expect(mainRs).not.toContain("use axum");
+    expect(mainRs).not.toContain("use hyper");
+    // No wire protocol, no business endpoints.
+    expect(mainRs).not.toContain("POST");
+
+    const cargoToml = find("Cargo.toml");
+    expect(cargoToml).not.toContain("[dependencies]");
+  });
+
+  it("honours the declared health path and the exposed port in the Rust harness", async () => {
+    const { find } = await renderFiles(
+      ["devcontainer-rust", "devcontainer-node", "svelte"],
+      {
+        language: "rust",
+        "docker-container": { healthcheck: "http:/healthz", exposePort: 8080 },
+      },
+      "roost",
+    );
+    const mainRs = find("src/main.rs");
+    expect(mainRs).toContain("const DEFAULT_PORT: u16 = 8080;");
+    expect(mainRs).toContain('const HEALTH_PATH: &str = "/healthz"');
   });
 
   it("honours an explicit svelte.directory / outputDirectory override", async () => {
