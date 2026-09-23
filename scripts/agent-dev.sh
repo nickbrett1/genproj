@@ -3,8 +3,8 @@
 # agent-dev.sh - start, stop and inspect THIS devcontainer's own a2a-goose agent.
 #
 # Every generated devcontainer brings up and registers its own agent, named
-# "genproj-dev" (the repo name plus the "-dev"
-# suffix). ONE AGENT PER REPO IS THE CONTRACT: the registry row is keyed by that
+# "genproj-dev" (the repo name plus the "-dev" suffix).
+# ONE AGENT PER REPO IS THE CONTRACT: the registry row is keyed by that
 # name, so a `start` RECLAIMS the row a previous container left behind rather
 # than adding a second one - a stale "genproj-dev" is overwritten by
 # name, never duplicated.
@@ -65,7 +65,15 @@ COMMON_CONFIG="${A2A_GOOSE_COMMON_CONFIG:-prd}"
 
 CARD_PORT=10001
 ACP_URL="http://127.0.0.1:3284/acp"
-LITELLM_BASE_URL="http://nas:4000"
+
+# The central hub ("roost") this agent registers with over a websocket tunnel,
+# so it appears in the fleet. A `hub:` block is emitted only when it is enabled
+# AND a URL is set: an EMPTY HUB_URL must mean "no hub block at all", never a
+# block with a blank url that the client would refuse to dial. Setting
+# A2A_GOOSE_HUB_ENABLED=false is how a devcontainer opts out of the fleet. The
+# default host `nas` is the same one LITELLM_BASE_URL already resolves against.
+HUB_URL="${A2A_GOOSE_HUB_URL:-ws://nas:3008/agent/ws}"
+HUB_ENABLED="${A2A_GOOSE_HUB_ENABLED:-true}"
 
 # The address the card advertises MUST NOT be loopback - the agent refuses to
 # start on one - and it must be an address the LITELLM PROXY can resolve,
@@ -76,10 +84,10 @@ LITELLM_BASE_URL="http://nas:4000"
 # http://100.72.205.65:10001 -> HTTP 200. A LiteLLM that cannot resolve the card
 # URL registers the agent and then fails every call to it with -32603.
 #
-# So the default is the container's own tailnet IPv4, and a configured value - an
-# IP, or a name you have checked the proxy can resolve - wins over it.
-# A2A_GOOSE_TAILNET_NAME is the spelling this used before the address became an
-# IP; it is still read so a script seeded earlier keeps working.
+# So the default is the container's own tailnet IPv4, and an address set in the
+# environment wins over it. A2A_GOOSE_TAILNET_NAME is the spelling this used
+# before the address became an IP; it is still read so a script seeded earlier
+# keeps working.
 CARD_ADDRESS="${A2A_GOOSE_CARD_ADDRESS:-${A2A_GOOSE_TAILNET_NAME:-}}"
 
 log() {
@@ -110,6 +118,12 @@ Environment passthrough:
   A2A_GOOSE_CARD_ADDRESS  default: this container's tailnet IPv4 (the address the
                      card advertises; it must be one the LiteLLM proxy can
                      resolve, so an IP unless the proxy runs MagicDNS)
+  A2A_GOOSE_HUB_URL  default: ws://nas:3008/agent/ws - the hub (roost) this
+                     agent registers with over a websocket tunnel. An empty
+                     value means no hub block is written at all.
+  A2A_GOOSE_HUB_ENABLED
+                     default: true - set to false to opt this devcontainer out
+                     of the fleet (no hub block is written)
   A2A_GOOSE_PROVIDER_PROJECT / _CONFIG
                      default: goose/prd - where goose's own provider settings
                      (GOOSE_PROVIDER, GOOSE_MODEL, the API key) are read from
@@ -201,11 +215,18 @@ read_secret() {
   }
   # The repo's own config first, so a repo that wants its own token wins; then
   # the shared `common` project, which is where a token every container needs
-  # lives. Without the fallback each repo would have to carry its own copy.
+  # lives; then goose's own project, which is where the hub token
+  # (A2A_GOOSE_HUB_TOKEN) is kept. The fallbacks are the point: these are values
+  # every container needs the same copy of, so no repo has to carry its own.
   value="$(doppler secrets get "${key}" --plain 2>/dev/null || true)"
   if [ -z "${value}" ]; then
     value="$(
       doppler secrets get "${key}" --project "${COMMON_PROJECT}" --config "${COMMON_CONFIG}" --plain 2>/dev/null || true
+    )"
+  fi
+  if [ -z "${value}" ]; then
+    value="$(
+      doppler secrets get "${key}" --project "${PROVIDER_PROJECT}" --config "${PROVIDER_CONFIG}" --plain 2>/dev/null || true
     )"
   fi
   printf '%s' "${value}"
@@ -236,7 +257,7 @@ read_provider_secret() {
 write_env_file() {
   mkdir -p "${CONFIG_DIR}" || return 1
   local content="" key value
-  for key in A2A_GOOSE_BEARER_TOKEN LITELLM_MASTER_KEY LITELLM_BASE_URL GOOSE_SERVER__SECRET_KEY; do
+  for key in A2A_GOOSE_BEARER_TOKEN A2A_GOOSE_HUB_TOKEN LITELLM_MASTER_KEY LITELLM_BASE_URL GOOSE_SERVER__SECRET_KEY; do
     value="$(read_secret "${key}")"
     if [ -n "${value}" ]; then
       content="${content}${key}=${value}"$'\n'
@@ -291,6 +312,19 @@ write_env_file() {
       "It will register, and then fail every turn with 'Failed to resolve provider'." \
       "Fix: run 'doppler login' (or point A2A_GOOSE_PROVIDER_PROJECT / _CONFIG at the right config) and restart."
   fi
+
+  # The hub client refuses to dial at all when credentialEnv is empty, so a hub
+  # enabled with no token is a silent non-registration rather than a refused
+  # start - say it out loud here, because there is nothing downstream that will.
+  if [ "${HUB_ENABLED}" = "true" ] && [ -n "${HUB_URL}" ]; then
+    if ! grep -q '^A2A_GOOSE_HUB_TOKEN=' "${written}" 2>/dev/null; then
+      loud "The hub is enabled (${HUB_URL}) but no A2A_GOOSE_HUB_TOKEN is available." \
+        "It is looked for in this repo's Doppler config, then ${COMMON_PROJECT}/${COMMON_CONFIG}," \
+        "then ${PROVIDER_PROJECT}/${PROVIDER_CONFIG}." \
+        "The agent will start but refuse to dial the hub, so it will not appear in the fleet." \
+        "Fix: run 'doppler login' (or set A2A_GOOSE_HUB_TOKEN) and restart."
+    fi
+  fi
   return 0
 }
 
@@ -298,6 +332,17 @@ write_env_file() {
 # $CONFIG_FILE and pointed at by $A2A_GOOSE_CONFIG.
 write_config_file() {
   mkdir -p "${CONFIG_DIR}" || return 1
+  # The LiteLLM base URL is deployment-specific, so it is read from Doppler -
+  # this repo's config first, then the shared one - rather than fixed at
+  # generation time. Empty means the agent registers against nothing and every
+  # call to it fails; that is worth saying out loud, but it is not fatal.
+  local litellm_base_url
+  litellm_base_url="$(read_secret LITELLM_BASE_URL)"
+  if [ -z "${litellm_base_url}" ]; then
+    loud "No LITELLM_BASE_URL could be read from Doppler - the agent will" \
+      "register against an empty base URL and every call to it will fail." \
+      "Set LITELLM_BASE_URL in this repo's config, or in ${COMMON_PROJECT}/${COMMON_CONFIG}."
+  fi
   umask 077
   cat >"${CONFIG_FILE}" <<YAML
 server:
@@ -321,12 +366,29 @@ goose:
       - "${WORKSPACE}"
 
 registry:
-  litellmBaseUrl: "${LITELLM_BASE_URL}"
+  litellmBaseUrl: "${litellm_base_url}"
   masterKeyEnv: "LITELLM_MASTER_KEY"
   agentName: "${AGENT_NAME}"
   # Re-registering by name is what reclaims the row a previous container left.
   reRegisterOnCardChange: true
 YAML
+  # The hub block is appended, not part of the heredoc, because it is conditional.
+  # A `start` MUST NOT drop a tunnel that was there before: this is the only place
+  # the config is rewritten, so a hub block omitted here is one a running client
+  # loses on the next start. Fields match a2a-goose's config schema exactly -
+  # credentialEnv, connectTimeoutSecs, idleTimeoutSecs are case-sensitive.
+  if [ "${HUB_ENABLED}" = "true" ] && [ -n "${HUB_URL}" ]; then
+    cat >>"${CONFIG_FILE}" <<YAML
+
+hub:
+  enabled: true
+  url: "${HUB_URL}"
+  credentialEnv: "A2A_GOOSE_HUB_TOKEN"
+  kind: "a2a-goose"
+  connectTimeoutSecs: 10
+  idleTimeoutSecs: 90
+YAML
+  fi
   chmod 600 "${CONFIG_FILE}" 2>/dev/null || true
   log "wrote ${CONFIG_FILE}"
 }
@@ -376,8 +438,7 @@ cmd_start() {
     loud "The agent was NOT started: no address to advertise could be resolved." \
       "server.publicUrl must not be loopback, so the agent is not started on a" \
       "guess. Join the container to the tailnet, or set the address explicitly" \
-      "(A2A_GOOSE_CARD_ADDRESS, or tailnetName in the container-agent" \
-      "capability), and retry."
+      "(A2A_GOOSE_CARD_ADDRESS), and retry."
     return 0
   fi
 
