@@ -44,12 +44,16 @@ const APP_OWNED_ROOT_FILES = new Set(["main.py", "config.py"]);
 // wrangler/doppler helpers are emitted by genproj and must be updated on
 // regeneration, or they go stale (e.g. parquet-peek's cloud_login.sh kept its
 // pre-doppler form — no doppler login block — through two regenerations
-// because the whole scripts/ prefix was treated as app code).
+// because the whole scripts/ prefix was treated as app code). agent-dev.sh is
+// the same: it is produced from templates/scripts-agent-dev.sh.template, so a
+// template improvement (the container-agent `hub:` block from #56) only reaches
+// existing repos if the fresh content wins instead of defaulting to `keep`.
 // Genuinely user-owned scripts (e.g. the docker-container
 // `scripts/entrypoint.sh` contract) remain app-owned. Keep this list in sync
 // with the `scripts/` filePaths emitted by file-generator.js and
 // capabilities.js.
 const GENPROJ_OWNED_SCRIPTS = new Set([
+  "scripts/agent-dev.sh",
   "scripts/cloud_login.sh",
   "scripts/run-wrangler-dev.sh",
   "scripts/setup-wrangler-config.sh",
@@ -59,8 +63,9 @@ const GENPROJ_OWNED_SCRIPTS = new Set([
 /**
  * True when the path is user/app-owned code that must never be silently
  * replaced by a scaffold on regeneration. Genproj-owned helper scripts under
- * scripts/ (cloud_login.sh, wrangler/doppler helpers) are NOT app-owned: they
- * are regenerated infra and the fresh template content must win on regen.
+ * scripts/ (agent-dev.sh, cloud_login.sh, wrangler/doppler helpers) are NOT
+ * app-owned: they are regenerated infra and the fresh template content must win
+ * on regen.
  * @param {string} filePath - Generated file path
  * @returns {boolean} True when the path is app-owned
  */
