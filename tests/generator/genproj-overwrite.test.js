@@ -49,6 +49,16 @@ describe("isAppOwnedPath", () => {
     expect(isAppOwnedPath("scripts/setup-wrangler-config.sh")).toBe(false);
     expect(isAppOwnedPath("scripts/sync-doppler-secrets.sh")).toBe(false);
   });
+
+  it("classifies scripts/agent-dev.sh as infra so the hub block propagates on regen", () => {
+    // agent-dev.sh is emitted from templates/scripts-agent-dev.sh.template,
+    // so it is genproj-owned infra, not app code. Without this it stays
+    // app-owned and defaults to `keep` on regen, which is why the container-agent
+    // `hub:` block from #56 never reached existing repos.
+    expect(isAppOwnedPath("scripts/agent-dev.sh")).toBe(false);
+    // A genuinely user-owned script under scripts/ stays app-owned.
+    expect(isAppOwnedPath("scripts/mine.sh")).toBe(true);
+  });
 });
 
 describe("isMergeTargetFile", () => {

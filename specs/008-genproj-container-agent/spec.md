@@ -50,12 +50,12 @@ Earlier the chain ran the other way (`devcontainer-* → container-agent → cod
 
 | Path                                | Owned by | Purpose                                                                                       |
 | ----------------------------------- | -------- | --------------------------------------------------------------------------------------------- |
-| `scripts/agent-dev.sh`              | app      | `start` / `stop` / `status` for this container's agent; seeded once, never overwritten        |
+| `scripts/agent-dev.sh`              | genproj  | `start` / `stop` / `status` for this container's agent; regenerated like other genproj infra  |
 | `.devcontainer/devcontainer.json`   | genproj  | `--stop-timeout 30` appended to `runArgs`                                                     |
 | `.devcontainer/post-start-setup.sh` | genproj  | runs `scripts/agent-dev.sh start` on every container start, guarded so the script is optional |
 | `README.md`                         | genproj  | names the agent and documents the three subcommands                                           |
 
-`scripts/` is app-owned, so `agent-dev.sh` is seeded once and then belongs to the project — the same rule as `release-artifacts.sh` (007 §2). That matters more here than there: the script is the only thing in the repo that knows the container's own agent name, and a project that needs to diverge (a different ACP URL, an extra env var) must be able to without a regeneration undoing it.
+`scripts/` is app-owned, but `agent-dev.sh` is the exception: it is emitted from `templates/scripts-agent-dev.sh.template`, so it is genproj-owned infra and is listed in `GENPROJ_OWNED_SCRIPTS` (like `cloud_login.sh` and the wrangler/doppler helpers). **Revised 2026-09-23 (round 7).** It was originally app-owned and seeded once, but that default meant a template improvement never reached an existing repo: the whole `scripts/` prefix defaults to `keep` on regeneration, so the container-agent `hub:` block added in #56 stayed out of every dev box until someone hand-patched it. Because the script is the only thing in the repo that knows the container's own agent name, a project that genuinely needs to diverge (a different ACP URL, an extra env var) must resolve the path to `keep` explicitly, or fork it to another filename; absent that, the fresh template content wins.
 
 ## 3. Flow: how the agent comes up
 
@@ -178,7 +178,7 @@ The failure this replaced: `write_config_file` rewrote `config.yaml` from a here
 The capability reaches repos that already exist through the same machinery, which is why two merge properties had to be true:
 
 - **`devcontainer.json` is a merge target** (additive, monotonic). `--stop-timeout` reaches an existing devcontainer because `mergeDevcontainerJson` now **unions `runArgs`** — existing entries first, generated-only additions appended, deduped. Before this, `runArgs` was in the "keep existing values" bucket, so the flag would have been generated and then silently discarded for every repo that already had a devcontainer, which is all of them.
-- **`scripts/` is app-owned.** `scripts/agent-dev.sh` is seeded once, on the first regeneration, and never clobbered afterwards (it is deliberately _not_ added to `GENPROJ_OWNED_SCRIPTS`).
+- **`scripts/agent-dev.sh` is genproj-owned infra.** It is in `GENPROJ_OWNED_SCRIPTS`, so on regeneration the fresh template content wins and template improvements (e.g. the #56 `hub:` block) reach existing repos. A diverged copy is only preserved if the path is explicitly resolved to `keep`.
 
 So a backport is: add `container-agent` to the repo's selection, regenerate, and the devcontainer bits are added and the script is seeded. Nothing else in the repo moves.
 

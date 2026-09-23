@@ -424,6 +424,45 @@ describe("ProjectGeneratorService", () => {
       );
     });
 
+    // Round-7: scripts/agent-dev.sh is emitted from templates/
+    // scripts-agent-dev.sh.template, so it is genproj-owned infra — a diverged
+    // agent-dev.sh (e.g. one predating the container-agent `hub:` block from
+    // #56) must be replaced by the fresh template content on overwrite, while a
+    // genuinely user-owned scripts/ file is preserved.
+    it("updates a diverged genproj-owned scripts/agent-dev.sh on overwrite but preserves user scripts", async () => {
+      const scriptFiles = [
+        { filePath: "scripts/agent-dev.sh", content: "new-agent-dev-with-hub" },
+        { filePath: "scripts/mine.sh", content: "new-mine" },
+      ];
+      service.services.github.getTree.mockResolvedValue(
+        await existingTree({
+          "scripts/agent-dev.sh": "old-agent-dev-no-hub", // diverged
+          "scripts/mine.sh": "old-user-script", // diverged
+        }),
+      );
+
+      await service.commitFilesToRepository(repository, scriptFiles, {
+        ...context,
+        overwrite: true,
+      });
+
+      // agent-dev.sh is genproj infra → updated; mine.sh is user code →
+      // preserved.
+      expect(service.services.github.createMultipleFiles).toHaveBeenCalledWith(
+        "owner",
+        "repo",
+        [
+          {
+            path: "scripts/agent-dev.sh",
+            content: "new-agent-dev-with-hub",
+            message: "Add scripts/agent-dev.sh",
+          },
+        ],
+        "Initial commit: Generated project with 1 capabilities",
+        "main",
+      );
+    });
+
     it("overwrites a diverged file when explicitly resolved to overwrite", async () => {
       service.services.github.getTree.mockResolvedValue(
         await existingTree({
