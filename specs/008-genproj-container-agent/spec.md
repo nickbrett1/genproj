@@ -72,6 +72,7 @@ post-start-setup.sh ──► scripts/agent-dev.sh start            (idempotent,
         ├─ write ~/.config/a2a-goose/config.yaml
         │       card.name / registry.agentName = <repo>-dev
         │       registry.litellmBaseUrl = Doppler LITELLM_BASE_URL
+        │       hub: only when enabled and A2A_GOOSE_HUB_URL is non-empty (see §3.6)
         │       server.bind 0.0.0.0:10001, server.publicUrl http://<cardAddress>:10001
         │       goose.acp.url http://127.0.0.1:3284/acp, goose.defaults.cwd /workspaces/<repo>
         ├─ ensure the launcher        cold start only: curl releases/latest/download/fetch-launch.sh
@@ -94,16 +95,17 @@ docker stop ──► SIGTERM ──► deregister ──► goose child exits (
 
 ### 3.3 Where the secrets come from, and why that is not `authServices`
 
-`authServices` is empty and stays empty: nothing is provisioned at generation time, so there is no service for the generator to authorise against. The agent reads four values at start time instead, and writes them to `~/.config/a2a-goose/env` (mode 0600, sourced by the launcher with `set -a`, never in `containerEnv`, never on a command line):
+`authServices` is empty and stays empty: nothing is provisioned at generation time, so there is no service for the generator to authorise against. The agent reads five values at start time instead, and writes them to `~/.config/a2a-goose/env` (mode 0600, sourced by the launcher with `set -a`, never in `containerEnv`, never on a command line):
 
-| key                        | why the agent needs it                                           |
-| -------------------------- | ---------------------------------------------------------------- |
-| `A2A_GOOSE_BEARER_TOKEN`   | the card's bearer token — a2a-goose refuses to start without one |
-| `GOOSE_SERVER__SECRET_KEY` | handed to the goose child as its `X-Secret-Key`                  |
-| `LITELLM_MASTER_KEY`       | registry authentication                                          |
-| `LITELLM_BASE_URL`         | the registry address                                             |
+| key                        | why the agent needs it                                                                        |
+| -------------------------- | --------------------------------------------------------------------------------------------- |
+| `A2A_GOOSE_BEARER_TOKEN`   | the card's bearer token — a2a-goose refuses to start without one                              |
+| `A2A_GOOSE_HUB_TOKEN`      | the hub credential (`hub.credentialEnv`) — the client refuses to dial an empty one (see §3.6) |
+| `GOOSE_SERVER__SECRET_KEY` | handed to the goose child as its `X-Secret-Key`                                               |
+| `LITELLM_MASTER_KEY`       | registry authentication                                                                       |
+| `LITELLM_BASE_URL`         | the registry address                                                                          |
 
-Each is looked up in the repo's **own** Doppler config first — so a repo that wants its own token keeps it — and then in the shared `common` project (`common/prd`, overridable with `A2A_GOOSE_COMMON_PROJECT` / `A2A_GOOSE_COMMON_CONFIG`). The fallback is the point: these are per-agent-installation values that every container needs the same copy of, and the alternative is putting them in each repo's config and re-provisioning all of them when one rotates. `LITELLM_BASE_URL` is deployment-specific — the address differs for whoever runs genproj — so it is not a capability setting: `write_config_file` reads it from the same Doppler lookup and writes it to `registry.litellmBaseUrl`, and the env copy exists so the env file is complete. An empty value is not fatal, but it is said out loud: the agent would register against nothing and every call to it would fail.
+Each is looked up in the repo's **own** Doppler config first — so a repo that wants its own token keeps it — then in the shared `common` project (`common/prd`, overridable with `A2A_GOOSE_COMMON_PROJECT` / `A2A_GOOSE_COMMON_CONFIG`), and finally in goose's own project (`goose/prd`, overridable with `A2A_GOOSE_PROVIDER_PROJECT` / `A2A_GOOSE_PROVIDER_CONFIG`), which is where `A2A_GOOSE_HUB_TOKEN` lives. The fallbacks are the point: these are per-agent-installation values that every container needs the same copy of, and the alternative is putting them in each repo's config and re-provisioning all of them when one rotates. A hub enabled with no token is not fatal — the agent still starts — but the client refuses to dial, so `write_env_file` says so loudly rather than leaving a silent non-registration (see §3.6). `LITELLM_BASE_URL` is deployment-specific — the address differs for whoever runs genproj — so it is not a capability setting: `write_config_file` reads it from the same Doppler lookup and writes it to `registry.litellmBaseUrl`, and the env copy exists so the env file is complete. An empty value is not fatal, but it is said out loud: the agent would register against nothing and every call to it would fail.
 
 A start with no `A2A_GOOSE_BEARER_TOKEN` is **not** attempted. a2a-goose refuses to start without it, so launching anyway would turn a knowable "no token" into a refusal buried in a log; `write_env_file` says the reason once and cmd_start returns. Fail-open still holds — exit 0, the container is untouched — but the message is the reason rather than a preamble to one.
 
@@ -153,6 +155,24 @@ goose refused the request (-32603): Internal error
 
 A missing provider is **not** fatal to the start — goose may still find an `active_provider` in its own config file — so it is reported loudly and `cmd_start` continues (fail-open still holds), and `status` prints the provider it will use. The distinction matters: the bearer token is a certain refusal (a2a-goose will not start), while a missing provider is a certain refusal _per turn_, which shows up at the first call rather than at start.
 
+### 3.6 The hub block, and why a `start` must not drop it
+
+An agent appears in the central hub ("roost") fleet only when its config carries a `hub:` block; the client opens a websocket tunnel to the hub URL and authenticates with the credential named by `credentialEnv`. `write_config_file` is the only writer of `config.yaml`, so it emits the block (after `registry:`):
+
+```yaml
+hub:
+  enabled: true
+  url: "ws://nas:3008/agent/ws"
+  credentialEnv: "A2A_GOOSE_HUB_TOKEN"
+  kind: "a2a-goose"
+  connectTimeoutSecs: 10
+  idleTimeoutSecs: 90
+```
+
+The block is conditional: it is written only when `A2A_GOOSE_HUB_ENABLED` is `true` (the default) **and** `A2A_GOOSE_HUB_URL` is non-empty. An empty `HUB_URL` means "no hub block at all", not a block with a blank url the client would refuse to dial; `A2A_GOOSE_HUB_ENABLED=false` is how a devcontainer opts out of the fleet. Both default to the same host (`nas`) the LiteLLM base URL resolves against, so a host can point at its own hub without editing the script. Like the card address and the LiteLLM base URL this is a runtime concern, not a generation-time one — `configurationSchema` stays empty.
+
+The failure this replaced: `write_config_file` rewrote `config.yaml` from a heredoc that contained only `server:`, `card:`, `goose:` and `registry:`. Every `start` therefore silently dropped a `hub:` block that was already there, and the agent fell out of the fleet while still running a current client — hit live on the NAS, where `nas-goose` ran a hub-capable build but never dialled. The regression guard is `tests/generator/container-agent.test.js`, which runs `write_config_file` and asserts the emitted config carries the block, and omits it when the feature is disabled or the URL is empty.
+
 ## 4. Backport: what lets an existing container gain an agent
 
 The capability reaches repos that already exist through the same machinery, which is why two merge properties had to be true:
@@ -172,6 +192,7 @@ So a backport is: add `container-agent` to the repo's selection, regenerate, and
 - [ ] The card carries its turn deadline (`turn-deadline/v1`), appears in `list_agents` with its own ceiling read from the agent rather than the row, and a turn through LiteLLM at `/a2a/{agent_id}` gets an answer.
 - [ ] `docker stop` → the agent is gone from the roster; a restart reclaims the same row rather than adding one.
 - [ ] A first start with no network leaves the devcontainer usable, says why the agent did not start, and exits 0.
+- [ ] The emitted `config.yaml` carries a `hub:` block (with `credentialEnv: "A2A_GOOSE_HUB_TOKEN"`) when the hub is enabled and a URL is set, and omits it when `A2A_GOOSE_HUB_ENABLED=false` or `A2A_GOOSE_HUB_URL` is empty.
 - [ ] Merging the freshly generated `devcontainer.json` into an existing one is a no-op the second time, and adds `--stop-timeout` the first.
 
 ## 6. Not in v1

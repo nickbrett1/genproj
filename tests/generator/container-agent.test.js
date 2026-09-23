@@ -254,6 +254,7 @@ describe("container-agent: the goose the script starts", () => {
   // - found live on genproj-dev, 2026-09-18.
   const SECRETS = {
     A2A_GOOSE_BEARER_TOKEN: "bearer-xyz",
+    A2A_GOOSE_HUB_TOKEN: "hub-token-xyz",
     LITELLM_MASTER_KEY: "master-xyz",
     LITELLM_BASE_URL: "http://nas:4000",
     GOOSE_SERVER__SECRET_KEY: "server-xyz",
@@ -264,7 +265,7 @@ describe("container-agent: the goose the script starts", () => {
     LITELLM_API_KEY: "sk-litellm",
   };
 
-  const writeEnvFile = async (keys) => {
+  const writeEnvFile = async (keys, env = {}) => {
     const dir = mkdtempSync(join(tmpdir(), "agent-dev-env-"));
     const bin = join(dir, "bin");
     mkdirSync(bin, { recursive: true });
@@ -278,6 +279,10 @@ describe("container-agent: the goose the script starts", () => {
       [
         "set -uo pipefail",
         "unset GOOSE_DISABLE_KEYRING",
+        // The script honours ENV_FILE / A2A_GOOSE_CONFIG from the environment, so
+        // a parent session that has them set (a running agent, say) would send
+        // the write outside the temp HOME this test reads back.
+        "unset ENV_FILE A2A_GOOSE_CONFIG CONFIG_FILE",
         `source ${scriptPath} 2>/dev/null`,
         "write_env_file",
         `printf 'rc=%s\\n' "$?"`,
@@ -291,6 +296,7 @@ describe("container-agent: the goose the script starts", () => {
         ...process.env,
         HOME: home,
         PATH: `${bin}:${process.env.PATH}`,
+        ...env,
       },
     });
     const envFile = join(home, ".config", "a2a-goose", "env");
@@ -305,6 +311,7 @@ describe("container-agent: the goose the script starts", () => {
   it("writes goose's provider settings beside the agent's own secrets", async () => {
     const { contents, mode } = await writeEnvFile(SECRETS);
     expect(contents).toContain("A2A_GOOSE_BEARER_TOKEN=bearer-xyz");
+    expect(contents).toContain("A2A_GOOSE_HUB_TOKEN=hub-token-xyz");
     expect(contents).toContain("GOOSE_PROVIDER=litellm");
     expect(contents).toContain("GOOSE_MODEL=deepseek-v4-flash");
     expect(contents).toContain("GOOSE_PROVIDER__API_KEY=sk-provider");
@@ -332,6 +339,32 @@ describe("container-agent: the goose the script starts", () => {
     expect(stderr).toContain("no goose provider configured");
   });
 
+  it("warns loudly when the hub is enabled but no token could be fetched", async () => {
+    // The hub client refuses to dial an empty credentialEnv, so an absent token
+    // is a silent non-registration unless the start says so.
+    const noHubToken = { ...SECRETS };
+    delete noHubToken.A2A_GOOSE_HUB_TOKEN;
+    const { contents, stderr } = await writeEnvFile(noHubToken);
+    expect(contents).not.toContain("A2A_GOOSE_HUB_TOKEN=");
+    expect(stderr).toContain("no A2A_GOOSE_HUB_TOKEN is available");
+  });
+
+  it("stays quiet about the hub when it is disabled", async () => {
+    const noHubToken = { ...SECRETS };
+    delete noHubToken.A2A_GOOSE_HUB_TOKEN;
+    const { stderr } = await writeEnvFile(noHubToken, {
+      A2A_GOOSE_HUB_ENABLED: "false",
+    });
+    expect(stderr).not.toContain("no A2A_GOOSE_HUB_TOKEN is available");
+  });
+
+  it("falls back to goose's own project, where the hub token lives", async () => {
+    const script = byPath(await withAgent(), "scripts/agent-dev.sh");
+    expect(script.content).toContain(
+      'doppler secrets get "${key}" --project "${PROVIDER_PROJECT}" --config "${PROVIDER_CONFIG}" --plain',
+    );
+  });
+
   it("reads the provider from goose/prd by default, overridable", async () => {
     const script = byPath(await withAgent(), "scripts/agent-dev.sh");
     expect(script.content).toContain(
@@ -353,7 +386,7 @@ describe("container-agent: the goose the script starts", () => {
 describe("container-agent: the agent config", () => {
   // The LiteLLM base URL is deployment-specific, so the rendered script reads
   // it from Doppler rather than taking it from a genproj setting.
-  const writeConfigFile = async (keys) => {
+  const writeConfigFile = async (keys, env = {}, prelude = []) => {
     const dir = mkdtempSync(join(tmpdir(), "agent-dev-config-"));
     const bin = join(dir, "bin");
     mkdirSync(bin, { recursive: true });
@@ -366,7 +399,11 @@ describe("container-agent: the agent config", () => {
       driver,
       [
         "set -uo pipefail",
+        // Same reason as write_env_file above: a leaked ENV_FILE would send the
+        // config write outside this test's temp HOME.
+        "unset ENV_FILE A2A_GOOSE_CONFIG CONFIG_FILE",
         `source ${scriptPath} 2>/dev/null`,
+        ...prelude,
         "write_config_file",
       ].join("\n"),
     );
@@ -378,6 +415,7 @@ describe("container-agent: the agent config", () => {
         ...process.env,
         HOME: home,
         PATH: `${bin}:${process.env.PATH}`,
+        ...env,
       },
     });
     const configFile = join(home, ".config", "a2a-goose", "config.yaml");
@@ -400,6 +438,55 @@ describe("container-agent: the agent config", () => {
     const { contents, stderr } = await writeConfigFile({});
     expect(contents).toContain('litellmBaseUrl: ""');
     expect(stderr).toContain("No LITELLM_BASE_URL could be read from Doppler");
+  });
+
+  // The bug this pins: write_config_file was the only writer of config.yaml, and
+  // its heredoc had no `hub:` block, so every `start` silently dropped the tunnel
+  // a running agent had been using. The client only dials when the block is
+  // present, so the agent fell out of the fleet with no error anywhere.
+  const HUB_LINES = [
+    "hub:",
+    "  enabled: true",
+    '  url: "ws://nas:3008/agent/ws"',
+    '  credentialEnv: "A2A_GOOSE_HUB_TOKEN"',
+    '  kind: "a2a-goose"',
+    "  connectTimeoutSecs: 10",
+    "  idleTimeoutSecs: 90",
+  ];
+
+  it("emits the hub block the client needs to join the fleet, after registry:", async () => {
+    const { contents } = await writeConfigFile({
+      LITELLM_BASE_URL: "http://litellm.internal:4000",
+    });
+    for (const line of HUB_LINES) expect(contents).toContain(line);
+    // Grouped with the other top-level blocks, and last.
+    expect(contents.indexOf("hub:")).toBeGreaterThan(
+      contents.indexOf("registry:"),
+    );
+  });
+
+  it("points the hub block at A2A_GOOSE_HUB_URL, so a host uses its own hub", async () => {
+    const { contents } = await writeConfigFile(
+      {},
+      { A2A_GOOSE_HUB_URL: "ws://hub.example:3008/agent/ws" },
+    );
+    expect(contents).toContain('url: "ws://hub.example:3008/agent/ws"');
+  });
+
+  it("omits the hub block only when explicitly disabled or unaddressed", async () => {
+    // An empty HUB_URL must mean "no hub block at all", not a blank one.
+    const disabled = await writeConfigFile(
+      {},
+      { A2A_GOOSE_HUB_ENABLED: "false" },
+    );
+    expect(disabled.contents).not.toContain("hub:");
+    // HUB_URL emptied after the defaults are applied - the guard, not the
+    // default expansion, is what keeps a blank url out of the file.
+    const blank = await writeConfigFile({}, {}, ['HUB_URL=""']);
+    expect(blank.contents).not.toContain("hub:");
+    // And the block is still written when omitted entirely (the default).
+    const defaults = await writeConfigFile({});
+    expect(defaults.contents).toContain("hub:");
   });
 });
 
