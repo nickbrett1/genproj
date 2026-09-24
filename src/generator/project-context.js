@@ -23,6 +23,7 @@
 import {
   findUnsatisfiedRequiresAny,
   getCapabilityById,
+  getLockedCapabilityIds,
 } from "../catalog/index.js";
 import { json } from "../http.js";
 import { resolveBuildkiteDeployment } from "./external-services.js";
@@ -73,6 +74,12 @@ export function resolveCapabilityDependencies(selectedCapabilities) {
     resolved.push(id);
   };
 
+  // `locked` capabilities are always applied, whatever the caller selected —
+  // visit them first so the guarantee holds for the generate path too (the
+  // preview path has the same seed in `resolveDependencies`).
+  for (const id of getLockedCapabilityIds()) {
+    visit(id);
+  }
   for (const id of selectedCapabilities) {
     visit(id);
   }

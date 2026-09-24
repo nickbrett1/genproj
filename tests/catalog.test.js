@@ -93,7 +93,12 @@ describe("catalog metadata", () => {
     const defaults = capabilities
       .filter((capability) => capability.selectedByDefault)
       .map((capability) => capability.id);
-    expect(defaults).toEqual(["editor-tools", "shell-tools"]);
+    expect(defaults).toEqual([
+      "coding-agents",
+      "container-agent",
+      "editor-tools",
+      "shell-tools",
+    ]);
 
     for (const capability of capabilities) {
       expect(capability.selectedByDefault).toBe(capability.category === "core");
@@ -235,16 +240,14 @@ describe("catalog metadata", () => {
 });
 
 describe("the agent capabilities", () => {
-  it("live in their own `agents` category, distinct from core", () => {
-    expect(getCapabilityById("coding-agents").category).toBe("agents");
-    expect(getCapabilityById("container-agent").category).toBe("agents");
-  });
-
-  it("are optional — not pre-selected and not locked", () => {
+  it("are both core, pre-selected and locked (always applied)", () => {
+    // The agents are core infrastructure: every generated project carries
+    // goose/Antigravity and the container's own registered a2a-goose agent.
     for (const id of ["coding-agents", "container-agent"]) {
       const capability = getCapabilityById(id);
-      expect(capability.selectedByDefault).toBe(false);
-      expect(capability.locked).not.toBe(true);
+      expect(capability.category).toBe("core");
+      expect(capability.selectedByDefault).toBe(true);
+      expect(capability.locked).toBe(true);
     }
   });
 
@@ -257,17 +260,35 @@ describe("the agent capabilities", () => {
     );
   });
 
+  it("are applied — with their doppler dependency — whatever is selected", () => {
+    const result = resolveDependencies(["devcontainer-rust"]);
+    expect(result.resolvedCapabilities).toEqual(
+      expect.arrayContaining([
+        "devcontainer-rust",
+        "coding-agents",
+        "container-agent",
+        "doppler",
+      ]),
+    );
+    // They are a locked baseline, not dependencies pulled in by the selection.
+    expect(result.addedDependencies).not.toContain("coding-agents");
+    expect(result.addedDependencies).not.toContain("container-agent");
+    expect(result.addedDependencies).toContain("doppler");
+  });
+
   it("resolves container-agent → coding-agents → doppler transitively", () => {
     const result = resolveDependencies(["container-agent"]);
     expect(result.resolvedCapabilities).toEqual(
       expect.arrayContaining(["container-agent", "coding-agents", "doppler"]),
     );
-    expect(result.addedDependencies).toEqual(
-      expect.arrayContaining(["coding-agents", "doppler"]),
-    );
+    // Both agents are already present as locked baselines, so only doppler is
+    // newly added.
+    expect(result.addedDependencies).toContain("doppler");
   });
 
-  it("is not pulled in by a devcontainer (a choice, not a default)", () => {
+  it("is not carried by a devcontainer as a dependency", () => {
+    // The agents are a locked baseline, not a dependency of devcontainer-*: the
+    // catalog's dependency edges stay honest about what requires what.
     const devcontainers = capabilities.filter((capability) =>
       capability.id.startsWith("devcontainer-"),
     );
@@ -281,8 +302,6 @@ describe("the agent capabilities", () => {
       expect(devcontainer.dependencies).not.toContain("container-agent");
       expect(devcontainer.dependencies).not.toContain("coding-agents");
     }
-    const result = resolveDependencies(["devcontainer-rust"]);
-    expect(result.resolvedCapabilities).not.toContain("container-agent");
   });
 
   it("does not duplicate container-agent when it is also selected", () => {
@@ -311,10 +330,15 @@ describe("catalog lookups", () => {
   it("filters by category", () => {
     expect(
       getCapabilitiesByCategory("core").map((capability) => capability.id),
-    ).toEqual(["editor-tools", "shell-tools"]);
-    expect(
-      getCapabilitiesByCategory("agents").map((capability) => capability.id),
-    ).toEqual(["coding-agents", "container-agent"]);
+    ).toEqual([
+      "coding-agents",
+      "container-agent",
+      "editor-tools",
+      "shell-tools",
+    ]);
+    // Both agent capabilities moved into `core`, so the `agents` category is
+    // gone rather than left declared-but-empty.
+    expect(getCapabilitiesByCategory("agents")).toEqual([]);
     expect(getCapabilitiesByCategory("nope")).toEqual([]);
   });
 });
@@ -326,7 +350,6 @@ describe("category metadata", () => {
   it("declares the sections the UI renders, in order", () => {
     expect(getVisibleCategories().map((category) => category.id)).toEqual([
       "core",
-      "agents",
       "frameworks",
       "devcontainer",
       "embedded",
@@ -340,8 +363,8 @@ describe("category metadata", () => {
     ]);
   });
 
-  it("gives the agents category its own heading", () => {
-    expect(getCategoryById("agents")?.label).toBe("Agents");
+  it("no longer declares an agents category, now both agents are core", () => {
+    expect(getCategoryById("agents")).toBeUndefined();
   });
 
   it("keeps the dependency-only category out of the rendered sections", () => {
@@ -368,7 +391,6 @@ describe("category metadata", () => {
   it("does not reorder the catalog it was loaded from", () => {
     expect(categories.map((category) => category.id)).toEqual([
       "core",
-      "agents",
       "frameworks",
       "devcontainer",
       "embedded",

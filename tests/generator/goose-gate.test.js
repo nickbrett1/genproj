@@ -32,6 +32,13 @@ import { generatePreview } from "../../src/generator/preview-generator.js";
  * capability that wants goose resolves it (`coding-agents` → `doppler`,
  * `container-agent` → `doppler`, `xcode-development` → `coding-agents`,
  * `circleci` → `doppler`).
+ *
+ * `coding-agents` is now core and `locked` (always applied), so a *resolved*
+ * selection always carries doppler and the gate is open on every path that
+ * resolves first (generation via `resolveCapabilityDependencies`, preview via
+ * `getCapabilityExecutionOrder`). The gate still governs the raw-selection
+ * callers below — `generateMergedDevelopmentContainerFiles` /
+ * `generateAllFiles` — and keeps what-makes-goose-runnable written down.
  */
 
 /** The four devcontainer languages genproj can generate. */
@@ -181,7 +188,11 @@ describe("goose config and recipes follow the same gate", () => {
 });
 
 describe("the preview agrees with the generator", () => {
-  it("shows no goose for a selection that resolves no doppler", async () => {
+  it("shows goose even for a bare devcontainer, because coding-agents is a locked baseline", async () => {
+    // No selection resolves without doppler any more: `coding-agents` is
+    // core+locked, so preview (via getCapabilityExecutionOrder →
+    // resolveDependencies) carries it and its doppler dependency into the
+    // execution order exactly as generation does.
     const preview = await generatePreview({ name: "PreviewProject" }, [
       "devcontainer-node",
     ]);
@@ -198,9 +209,9 @@ describe("the preview agrees with the generator", () => {
       (f) => f.name === "post-start-setup.sh",
     ).content;
 
-    expect(zshrc).not.toContain("goose");
-    expect(dockerfile).not.toContain("goose");
-    expect(postStart).not.toContain("goose");
+    expect(zshrc).toContain("Starting goose with Doppler");
+    expect(dockerfile).toContain("RUN GOOSE_ARCH=");
+    expect(postStart).toContain("goose update");
   });
 
   it("shows goose for a selection that resolves doppler", async () => {

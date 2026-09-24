@@ -53,24 +53,31 @@ describe("capability resolver", () => {
 
     it("resolves dependencies transitively across multiple levels", () => {
       // container-agent → coding-agents → doppler is a two-level chain.
+      // coding-agents is locked, so it is already in the baseline and only its
+      // own dependency (doppler) is newly added by selecting container-agent.
       const result = resolveDependencies(["container-agent"]);
       expect(result.resolvedCapabilities).toEqual(
         expect.arrayContaining(["container-agent", "coding-agents", "doppler"]),
       );
-      expect(result.addedDependencies).toEqual(
-        expect.arrayContaining(["coding-agents", "doppler"]),
-      );
+      expect(result.addedDependencies).toContain("doppler");
       expect(result.isValid).toBe(true);
     });
 
-    it("keeps the agent capabilities optional for a devcontainer", () => {
-      // The agents are opt-in: selecting a devcontainer must not pull them in.
+    it("always applies the locked agent baseline", () => {
+      // Both agent capabilities are core+locked: any selection resolves them
+      // and their doppler dependency.
       const result = resolveDependencies(["devcontainer-rust"]);
       expect(result.resolvedCapabilities).toEqual(
-        expect.arrayContaining(["devcontainer-rust", "docker"]),
+        expect.arrayContaining([
+          "devcontainer-rust",
+          "docker",
+          "coding-agents",
+          "container-agent",
+          "doppler",
+        ]),
       );
-      expect(result.resolvedCapabilities).not.toContain("container-agent");
-      expect(result.resolvedCapabilities).not.toContain("coding-agents");
+      expect(result.addedDependencies).not.toContain("coding-agents");
+      expect(result.addedDependencies).not.toContain("container-agent");
     });
 
     it("does not duplicate an explicitly selected dependency", () => {

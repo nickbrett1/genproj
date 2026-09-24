@@ -74,6 +74,21 @@ export function getCapabilitiesByCategory(category) {
 }
 
 /**
+ * The IDs of capabilities the catalog marks `locked` — always applied, whatever
+ * a caller selects. Generation and preview seed their resolution with these so
+ * the guarantee holds for every entry point (HTTP, MCP), not only for a client
+ * that honours `locked` in its UI. `coding-agents` is the one that matters: it
+ * is core infrastructure for a devcontainer, and its `doppler` dependency comes
+ * with it.
+ * @returns {string[]} The always-applied capability IDs.
+ */
+export function getLockedCapabilityIds() {
+  return capabilities
+    .filter((capability) => capability.locked === true)
+    .map((capability) => capability.id);
+}
+
+/**
  * Gets the unique list of external services that require authentication for a
  * selection of capabilities.
  * @param {string[]} selectedIds An array of capability IDs.

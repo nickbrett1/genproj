@@ -13,7 +13,10 @@
  * @fileoverview Universal capability dependency resolution utilities
  */
 
-import { capabilities as catalogCapabilities } from "../catalog/index.js";
+import {
+  capabilities as catalogCapabilities,
+  getLockedCapabilityIds,
+} from "../catalog/index.js";
 
 const capabilities = Object.fromEntries(
   catalogCapabilities.map((c) => [c.id, c]),
@@ -40,14 +43,19 @@ const capabilities = Object.fromEntries(
  * @returns {DependencyResolution} Resolution result with dependencies
  */
 export function resolveDependencies(selectedCapabilities) {
-  const resolvedCapabilities = new Set(selectedCapabilities);
+  // `locked` capabilities are always applied: seed the resolved set with them
+  // (and enqueue them so their own dependencies resolve too) before walking the
+  // selection. This is the server-side half of the `locked` contract — the
+  // catalog also tells a client not to offer to deselect them.
+  const locked = getLockedCapabilityIds();
+  const resolvedCapabilities = new Set([...locked, ...selectedCapabilities]);
   const addedDependencies = [];
 
   // Transitive closure of dependencies. A dependency may itself have
   // dependencies — devcontainer-* → container-agent → coding-agents — so walk
   // a worklist until no new capability is added. A capability is only ever
   // enqueued once (when first added), which makes cycles terminate.
-  const queue = [...selectedCapabilities];
+  const queue = [...resolvedCapabilities];
 
   while (queue.length > 0) {
     const capabilityId = queue.shift();

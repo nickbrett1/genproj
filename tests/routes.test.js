@@ -66,7 +66,6 @@ describe("GET /v1/catalog", () => {
     const body = await (await get("/v1/catalog")).json();
     expect(body.categories.map((category) => category.id)).toEqual([
       "core",
-      "agents",
       "frameworks",
       "devcontainer",
       "embedded",

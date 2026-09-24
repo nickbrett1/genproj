@@ -56,9 +56,15 @@ can apply, and it is what a UI renders. `src/catalog/schema.json` documents the
 shape and `tests/catalog.test.js` pins the capability set, so any change to it is
 deliberate.
 
-Three fields exist so that clients do not have to hardcode behaviour:
+Four fields exist so that clients do not have to hardcode behaviour:
 
 - `selectedByDefault` — which capabilities are pre-selected.
+- `locked` — capabilities that are always applied. A client must not offer to
+  deselect one, and the resolvers seed every selection with it, so the guarantee
+  holds on the HTTP and MCP paths as well as in a UI. The two agent capabilities
+  are both locked, so every generated project carries goose/Antigravity and the
+  container's own registered agent (and, through their `doppler` dependency,
+  Doppler).
 - `authServices` — which external services a capability needs credentials for.
 - `provides` — what a capability implies downstream, such as a language runtime.
 

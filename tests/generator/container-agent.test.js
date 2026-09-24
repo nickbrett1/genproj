@@ -1,8 +1,10 @@
 /**
  * container-agent — the container's own a2a-goose agent.
  *
- * The capability is unconditional for containers (it is a dependency of every
- * `devcontainer-*`), so these tests pin two things that are easy to regress:
+ * Both agent capabilities are core and `locked`, so `container-agent` is
+ * applied to every generated project — not because a `devcontainer-*` depends
+ * on it (it does not; see spec 017), but because the resolvers seed it. These
+ * tests pin two things that are easy to regress:
  *
  *   1. the wiring: the script is emitted with every placeholder resolved, the
  *      post-start hook starts it, and the README names the agent;
