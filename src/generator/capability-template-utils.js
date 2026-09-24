@@ -1868,7 +1868,12 @@ function _applyDockerContainerConfig(
           name: Build and Push Image
           command: |
             BUILDX_BUILDER_NAME="ci-$$CIRCLE_WORKFLOW_JOB_ID"
-            trap 'docker buildx rm "$$BUILDX_BUILDER_NAME" >/dev/null 2>&1 || true' EXIT
+            # Cleanup must run on cancellation too. A shell killed by SIGTERM or
+            # SIGINT does not run its EXIT trap, which is exactly how builders
+            # and their multi-GB BuildKit state volumes leaked (mac-studio,
+            # 2026-09-23: ~38 GiB of orphaned buildx_buildkit_*_state volumes).
+            trap 'exit 143' TERM INT
+            trap 'docker buildx rm -f "$$BUILDX_BUILDER_NAME" >/dev/null 2>&1 || true; docker volume rm "buildx_buildkit_$$\${BUILDX_BUILDER_NAME}0_state" >/dev/null 2>&1 || true' EXIT
             docker buildx create --bootstrap --name "$$BUILDX_BUILDER_NAME" >/dev/null
             docker buildx build --builder "$$BUILDX_BUILDER_NAME" --platform ${buildPlatforms} \\
               --cache-from type=registry,ref=$CACHE_REF \\
@@ -3120,7 +3125,11 @@ ${buildDependencies}${_bkAgents(queue)}    env:
       - |
         set -euo pipefail
         CONTAINER="$$SMOKE_IMAGE-$$BUILDKITE_JOB_ID"
-        trap 'docker rm -f "$$CONTAINER" >/dev/null 2>&1 || true' EXIT
+        # Remove the per-commit smoke image too, and survive cancellation: a
+        # killed shell does not run its EXIT trap, so these leaked at ~1 GiB
+        # each on mac-studio (2026-09-23: 39 images).
+        trap 'exit 143' TERM INT
+        trap 'docker rm -f "$$CONTAINER" >/dev/null 2>&1 || true; docker rmi "$$SMOKE_IMAGE:$$BUILDKITE_COMMIT" >/dev/null 2>&1 || true' EXIT
         docker run -d --name "$$CONTAINER" "$$SMOKE_IMAGE:$$BUILDKITE_COMMIT" >/dev/null
         # Poll the DECLARED healthcheck. A container that exits (the old rust
         # stub restart-looped) is a failure, so running is checked as well as
@@ -3173,7 +3182,12 @@ ${dockerCredentialCommands}
         # specs/015-genproj-docker-publish-idempotent.
         export DOCKER_AUTH_CONFIG='{"auths":{"ghcr.io":{"auth":"'"$$(printf '%s:%s' "$$GHCR_USERNAME" "$$GHCR_TOKEN" | base64)"'"}}}'
         BUILDX_BUILDER_NAME="bk-$$BUILDKITE_PIPELINE_SLUG-$$BUILDKITE_JOB_ID"
-        trap 'docker buildx rm "$$BUILDX_BUILDER_NAME" >/dev/null 2>&1 || true' EXIT
+        # Cleanup must run on cancellation too. A shell killed by SIGTERM or
+        # SIGINT does not run its EXIT trap, which is exactly how builders and
+        # their multi-GB BuildKit state volumes leaked (mac-studio, 2026-09-23:
+        # ~38 GiB of orphaned buildx_buildkit_*_state volumes).
+        trap 'exit 143' TERM INT
+        trap 'docker buildx rm -f "$$BUILDX_BUILDER_NAME" >/dev/null 2>&1 || true; docker volume rm "buildx_buildkit_$$\${BUILDX_BUILDER_NAME}0_state" >/dev/null 2>&1 || true' EXIT
         # Skip if this commit is already published: the release step's ls-remote
         # guard, for an image. Only a positive answer skips - if the registry
         # cannot be reached the push still runs, because "could not ask" must
