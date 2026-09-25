@@ -435,8 +435,34 @@ cold_start() {
   return 0
 }
 
+# Some hosts run the deployed agent as a *host process* rather than out of the
+# devcontainer this script manages - a launchd job, a DSM boot script, or
+# similar. Those deployments author ENV_FILE and CONFIG_FILE by hand, in shapes
+# this script does not emit (shell `export` lines; top-level
+# `executor:`/`tracing:`), and they carry settings no generator knows about -
+# the bind address, the public URL, LITELLM_CUSTOM_HEADERS, GOOSE_BIN, the hub
+# token. Regenerating over them would silently drop those, and a second agent
+# started here would race the one the unit already runs. So this script refuses
+# to manage a deployment it did not write.
+is_host_deployed() {
+  [ -f "${ENV_FILE}" ] && grep -q '^export ' "${ENV_FILE}" 2>/dev/null && return 0
+  [ -f "${CONFIG_FILE}" ] && grep -qE '^(executor|tracing):' "${CONFIG_FILE}" 2>/dev/null && return 0
+  return 1
+}
+
 cmd_start() {
   mkdir -p "${CONFIG_DIR}" "${STATE_DIR}" 2>/dev/null || true
+
+  if is_host_deployed; then
+    loud "The agent was NOT started: ${CONFIG_DIR} is maintained by hand, not by this script." \
+      "This host runs a host-process deployment - a launchd job, a DSM boot" \
+      "script, or similar - not the devcontainer this script manages. That unit" \
+      "authors env + config.yaml and starts the agent; running this script would" \
+      "rewrite both, dropping settings it does not know about (executor, tracing," \
+      "the bind address, LITELLM_CUSTOM_HEADERS, ...), and race the agent that is" \
+      "already running. Start the unit instead, not this script."
+    return 0
+  fi
 
   if ! resolve_card_address; then
     loud "The agent was NOT started: no address to advertise could be resolved." \

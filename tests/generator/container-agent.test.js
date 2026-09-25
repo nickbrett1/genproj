@@ -408,6 +408,75 @@ describe("container-agent: the goose the script starts", () => {
   });
 });
 
+describe("container-agent: refusing a host-process deployment", () => {
+  // A host that runs the agent as a host process (a launchd job, a DSM boot
+  // script) authors env and config.yaml by hand, in shapes this script never
+  // emits. `start` must recognise that and step back, or it rewrites both files
+  // and races the agent the unit is already running. The markers are the two
+  // shapes a generated file cannot have: shell `export` lines, and a top-level
+  // `executor:`/`tracing:` in the config.
+  const startWith = async ({ env, config } = {}) => {
+    const dir = mkdtempSync(join(tmpdir(), "agent-dev-guard-"));
+    const bin = join(dir, "bin");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(bin, "doppler"), dopplerStub({}), { mode: 0o755 });
+
+    const script = byPath(await withAgent(), "scripts/agent-dev.sh");
+    const scriptPath = join(dir, "agent-dev.sh");
+    writeFileSync(scriptPath, script.content);
+
+    const home = join(dir, "home");
+    const configDir = join(home, ".config", "a2a-goose");
+    mkdirSync(configDir, { recursive: true });
+    if (env !== undefined) {
+      writeFileSync(join(configDir, "env"), env, { mode: 0o600 });
+    }
+    if (config !== undefined) {
+      writeFileSync(join(configDir, "config.yaml"), config, { mode: 0o600 });
+    }
+
+    const driver = join(dir, "run.sh");
+    writeFileSync(
+      driver,
+      [
+        "set -uo pipefail",
+        "unset ENV_FILE A2A_GOOSE_CONFIG CONFIG_FILE",
+        `source ${scriptPath} 2>/dev/null`,
+        "cmd_start",
+        `printf 'rc=%s\\n' "$?"`,
+      ].join("\n"),
+    );
+
+    const result = spawnSync("bash", [driver], {
+      encoding: "utf8",
+      env: { ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}` },
+    });
+    return { stdout: result.stdout, stderr: result.stderr };
+  };
+
+  it("refuses a deployment it did not write, from either marker", async () => {
+    const byEnv = await startWith({
+      env: "export A2A_GOOSE_BEARER_TOKEN=abc\nexport LITELLM_CUSTOM_HEADERS='{}'\n",
+    });
+    expect(byEnv.stderr).toContain("is maintained by hand");
+
+    const byConfig = await startWith({
+      config: "executor:\n  kind: host\ntracing:\n  on: false\n",
+    });
+    expect(byConfig.stderr).toContain("is maintained by hand");
+  });
+
+  it("still starts from the files it wrote itself", async () => {
+    // The guard has to be inert for the deployment it does own, or every
+    // generated project's agent stops starting.
+    const { stderr } = await startWith({
+      env: "A2A_GOOSE_BEARER_TOKEN=abc\nGOOSE_DISABLE_KEYRING=1\n",
+      config: 'server:\n  bind: "0.0.0.0:10001"\nhub:\n  enabled: true\n',
+    });
+    expect(stderr).not.toContain("is maintained by hand");
+  });
+});
+
 describe("container-agent: the agent config", () => {
   // The LiteLLM base URL is deployment-specific, so the rendered script reads
   // it from Doppler rather than taking it from a genproj setting.
