@@ -267,7 +267,7 @@ describe("container-agent: the goose the script starts", () => {
     LITELLM_API_KEY: "sk-litellm",
   };
 
-  const writeEnvFile = async (keys, env = {}) => {
+  const writeEnvFile = async (keys, env = {}, { seed } = {}) => {
     const dir = mkdtempSync(join(tmpdir(), "agent-dev-env-"));
     const bin = join(dir, "bin");
     mkdirSync(bin, { recursive: true });
@@ -292,6 +292,11 @@ describe("container-agent: the goose the script starts", () => {
     );
     const home = join(dir, "home");
     mkdirSync(home, { recursive: true });
+    const envFile = join(home, ".config", "a2a-goose", "env");
+    if (seed !== undefined) {
+      mkdirSync(join(home, ".config", "a2a-goose"), { recursive: true });
+      writeFileSync(envFile, seed, { mode: 0o600 });
+    }
     const result = spawnSync("bash", [driver], {
       encoding: "utf8",
       env: {
@@ -301,7 +306,6 @@ describe("container-agent: the goose the script starts", () => {
         ...env,
       },
     });
-    const envFile = join(home, ".config", "a2a-goose", "env");
     const contents = existsSync(envFile) ? readFileSync(envFile, "utf8") : "";
     return {
       contents,
@@ -309,6 +313,25 @@ describe("container-agent: the goose the script starts", () => {
       mode: existsSync(envFile) ? statSync(envFile).mode & 0o777 : null,
     };
   };
+
+  it("keeps a working env when Doppler returns nothing", async () => {
+    // A revoked token or an outage must not overwrite a working env file with a
+    // stub. GOOSE_DISABLE_KEYRING is a constant this script always appends, so
+    // it must not be what makes an empty fetch look like a successful one -
+    // that is the difference between keeping the file and clobbering it.
+    const working =
+      "A2A_GOOSE_BEARER_TOKEN=bearer-xyz\nGOOSE_DISABLE_KEYRING=1\n";
+    const { contents, stderr, mode } = await writeEnvFile(
+      {},
+      {},
+      {
+        seed: working,
+      },
+    );
+    expect(contents).toBe(working);
+    expect(mode).toBe(0o600);
+    expect(stderr).toContain("Doppler returned no secrets");
+  });
 
   it("writes goose's provider settings beside the agent's own secrets", async () => {
     const { contents, mode } = await writeEnvFile(SECRETS);
