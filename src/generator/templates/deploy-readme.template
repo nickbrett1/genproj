@@ -72,7 +72,7 @@ enable the `homepage` Docker provider) to show a health widget for the service.
 
 ## 6. Networking notes
 
-- Network mode is `{{networkMode}}`.
+- Network mode is `{{networkMode}}`.{{externalNetworksDocs}}
 - If your container needs fixed UDP ports or multicast (e.g. LAN protocols like
   Govee), set `networkMode: host` in the genproj configuration — bridge mode
   cannot pass multicast and fixed low ports reliably.

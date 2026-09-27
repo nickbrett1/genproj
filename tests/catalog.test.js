@@ -131,6 +131,20 @@ describe("catalog metadata", () => {
     );
   });
 
+  it("declares the external networks a docker-container can join", () => {
+    // Spec 018: an array of named pre-existing Docker networks, default empty
+    // so the emitted compose stays byte-identical for projects that do not use
+    // it. Naming/shape is part of the public descriptor a UI renders.
+    const dockerContainer = getCapabilityById("docker-container");
+    const externalNetworks =
+      dockerContainer.configurationSchema.properties.externalNetworks;
+    expect(externalNetworks).toMatchObject({
+      type: "array",
+      items: { type: "string" },
+      default: [],
+    });
+  });
+
   it("requires doppler, so the release token never comes from the fleet env", () => {
     // The release step resolves GITHUB_RELEASE_TOKEN through Doppler. Without
     // the capability it would fall back to a GH_TOKEN in the agent's

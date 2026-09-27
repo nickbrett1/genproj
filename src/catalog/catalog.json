@@ -1121,6 +1121,14 @@
             "enum": ["bridge", "host"],
             "default": "bridge"
           },
+          "externalNetworks": {
+            "type": "array",
+            "description": "Named Docker networks to attach the service to, created and managed outside this compose file. Emits a service-level networks list plus a top-level `networks:` block with `external: true`, so a generated container can reach sibling containers by name on a pre-existing network (e.g. MCPHub's ai_proxy). Order is preserved (attachment order is meaningful to Docker). Empty by default: no networks key is emitted. Rejected when networkMode is host (Compose forbids network_mode + networks together). See deploy/README.md \"Networking notes\".",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          },
           "exposePort": {
             "type": "integer",
             "minimum": 1,

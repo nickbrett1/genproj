@@ -1690,6 +1690,50 @@ RUN cargo build --release`;
   const portsConfig =
     networkMode === "host" ? "" : `    ports:\n      - "${publishPort}"`;
 
+  // Named external Docker networks (memo 018, e.g. MCPHub's `ai_proxy`): a
+  // generated container reaches sibling containers by name on a network it did
+  // not create. `external: true` tells Compose not to create the network — it
+  // must already exist on the host. Declared order is preserved (attachment
+  // order is meaningful to Docker: default route / DNS resolution). Empty by
+  // default, and emitted only in bridge mode: Compose rejects a service with
+  // both `network_mode:` and `networks:`. The host-mode combination is also
+  // rejected loudly at generation time by `validateDockerNetworks`; suppressing
+  // it here as well keeps a path that skips the guards (an unauthenticated
+  // preview does not run them) from emitting an invalid compose file.
+  const externalNetworks =
+    networkMode === "host"
+      ? []
+      : (Array.isArray(config.externalNetworks) ? config.externalNetworks : [])
+          .filter((name) => typeof name === "string" && name.trim() !== "")
+          .map((name) => name.trim());
+  // The service-level attachment and the top-level `external: true` declaration
+  // travel together, so a compose file can never reference an undeclared
+  // network. Empty when no external network is configured (byte-identical
+  // emission — the placeholder renders to "").
+  const composeNetworks =
+    externalNetworks.length > 0
+      ? `    networks:\n` +
+        externalNetworks.map((name) => `      - ${name}`).join("\n") +
+        `\nnetworks:\n` +
+        externalNetworks
+          .map((name) => `  ${name}:\n    external: true`)
+          .join("\n")
+      : "";
+  // deploy/README.md "Networking notes" bullet. Starts with a newline and is
+  // appended to the end of the "Network mode" bullet, so with no external
+  // networks the README is byte-identical to before this feature (memo 018).
+  const externalNetworksDocs =
+    externalNetworks.length > 0
+      ? "\n- External networks: this service joins " +
+        externalNetworks.map((name) => `\`${name}\``).join(", ") +
+        ", created and managed outside this compose file (genproj emits " +
+        "`networks: { <name>: { external: true } }`). Sibling containers reach " +
+        "it by container name on that network." +
+        "\n- `docker-compose.yml` is generated: a `networks` block added by " +
+        "hand is overwritten on regeneration. Declare external networks with " +
+        "the `externalNetworks` configuration instead."
+      : "";
+
   // 3.3: dataMounts config -> compose volumes (read-only by default).
   const dataMounts = Array.isArray(config.dataMounts) ? config.dataMounts : [];
   const volumesConfig =
@@ -1787,6 +1831,8 @@ ${composeEnvVars}`
     networkMode,
     networkModeLine,
     portsConfig,
+    composeNetworks,
+    externalNetworksDocs,
     volumesConfig,
     composeEnvVars,
     composeEnvironment,

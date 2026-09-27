@@ -25,6 +25,11 @@
         "enum": ["bridge", "host"],
         "default": "bridge"
       },
+      "externalNetworks": {
+        "type": "array",
+        "items": { "type": "string" },
+        "default": []
+      },
       "exposePort": {
         "type": "integer",
         "minimum": 1,

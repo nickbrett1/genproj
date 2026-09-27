@@ -116,6 +116,7 @@ import {
   servingHarnessSpec,
 } from "./capability-template-utils.js";
 import {
+  validateDockerNetworks,
   validateFetchLaunch,
   validatePrimaryLanguage,
   validateReleaseTargets,
@@ -3338,6 +3339,7 @@ export async function generateAllFiles(context) {
   validateReleaseTargets(context);
   validateFetchLaunch(context);
   validateRequiredAny(context);
+  validateDockerNetworks(context);
 
   const templateEngine = new TemplateEngine();
   await templateEngine.initialize();

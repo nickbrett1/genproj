@@ -218,3 +218,45 @@ export function validateFetchLaunch(context) {
     );
   }
 }
+
+/**
+ * `docker-container.externalNetworks` cannot be combined with host networking.
+ *
+ * `docker compose` rejects a service that sets both `network_mode:` and
+ * `networks:` ("cannot use network_mode with networks"). The two are
+ * alternatives, not additions: host mode puts the container on the host's own
+ * stack and gives no name resolution on a bridge network such as MCPHub's
+ * `ai_proxy`.
+ *
+ * Silently dropping one of them would leave a project that says it joins an
+ * external network while the generated compose quietly does not - the same
+ * "looks fine and is silently wrong" failure the other guards here refuse. So
+ * the combination is rejected, with both ways out named.
+ *
+ * @param {Object} context - Generation context (capabilities, configuration)
+ * @throws {ValidationError} When host mode is declared with external networks
+ */
+export function validateDockerNetworks(context) {
+  const capabilities = context?.capabilities || [];
+  if (!capabilities.includes("docker-container")) return;
+
+  const config = context?.configuration?.["docker-container"] || {};
+  const networkMode = config.networkMode || "bridge";
+  const externalNetworks = Array.isArray(config.externalNetworks)
+    ? config.externalNetworks.filter(
+        (name) => typeof name === "string" && name.trim() !== "",
+      )
+    : [];
+
+  if (networkMode === "host" && externalNetworks.length > 0) {
+    throw new ValidationError(
+      `This project sets networkMode "host" and also declares ` +
+        `externalNetworks (${externalNetworks.join(", ")}). Docker Compose ` +
+        `forbids combining network_mode with networks, and host mode has no ` +
+        `name resolution on a bridge network, so the two cannot both apply. ` +
+        `Keep the external networks and use networkMode "bridge", or drop ` +
+        `externalNetworks if the service genuinely needs host networking.`,
+      "externalNetworks",
+    );
+  }
+}
