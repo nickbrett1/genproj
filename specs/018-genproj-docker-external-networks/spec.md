@@ -16,10 +16,19 @@ history rewrite.
   required status check `buildkite/genproj` (the pushing identity has bypass
   rights). Branch protection was **not** disabled and no admin override was
   passed.
-- Buildkite build **196** (`main`, `873c084`): **passed**. Both steps ran:
-  `:hammer: Build and test (node)` (`build`) = passed, and
+- Buildkite build **196** (`main`, `873c084`, the merge): **passed**. Both
+  steps ran: `:hammer: Build and test (node)` (`build`) = passed, and
   `:rocket: Deploy (production)` (`deploy`) = passed (exit 0, `npx wrangler
 deploy`), so the capability is **live** on the Worker.
+- This status text was then committed to `main` as `719e2ff` (doc-only) — the
+  final `main` head — triggering build **197** on `main`/`719e2ff`: also
+  **passed**, `build` and `deploy` both green.
+- **Live verification** against the deployed Worker (`POST /v1/preview`, a
+  `docker-container` + `devcontainer-python` project): with
+  `externalNetworks: ["ai_proxy"]` the emitted `docker-compose.yml` contains the
+  service-level `networks: [ai_proxy]` plus the top-level `networks:` block with
+  `external: true`; with the field absent the compose is **byte-identical**
+  (1146 bytes) to the pre-feature baseline.
 
 The branch `feat/docker-container-external-networks` is also pushed at
 `873c084`. (Original note: implemented 2026-09-27; no PR was used — this
