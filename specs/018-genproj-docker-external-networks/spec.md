@@ -1,13 +1,30 @@
 # 018 — docker-container can attach to named external Docker networks
 
-**Status:** implemented (2026-09-27). Branch
-`feat/docker-container-external-networks` **pushed** to
-`origin`. No PR opened: this container has no `gh`, no
-GitHub token in the environment or in Doppler (`genproj`/`dev` holds only
-Buildkite secrets), and the available GitHub MCP exposes no create-PR action —
-so `git push` over SSH is as far as it goes. Open the PR from the branch:
+**Status: MERGED to `main` (2026-09-27).** Merged into `main` and pushed as a
+**fast-forward** — no merge commit was created on `main`; no force-push and no
+history rewrite.
 
-<https://github.com/nickbrett1/genproj/pull/new/feat/docker-container-external-networks>
+- Pre-merge branch head: `f8f6b1b` (the head verified externally, build 194).
+- `main` had **moved** since the branch was cut (branch base `5e49ec2`;
+  `origin/main` had advanced to `c059e8b`, a dependabot dep-bump merge). Per the
+  merge instruction the branch was **not merged while behind**: `origin/main`
+  was merged _into the branch_ (merge commit `873c084`, clean — only
+  `package.json` / `package-lock.json`) and the full suite was re-run green
+  (819 passed / 60 files; lint 0 errors) before the merge to `main`.
+- Merged `main` head: **`873c084817585b69944d3959c93aa76c4043d599`**.
+- Push to the protected `main` succeeded; origin reported it _bypassed_ the
+  required status check `buildkite/genproj` (the pushing identity has bypass
+  rights). Branch protection was **not** disabled and no admin override was
+  passed.
+- Buildkite build **196** (`main`, `873c084`): **passed**. Both steps ran:
+  `:hammer: Build and test (node)` (`build`) = passed, and
+  `:rocket: Deploy (production)` (`deploy`) = passed (exit 0, `npx wrangler
+deploy`), so the capability is **live** on the Worker.
+
+The branch `feat/docker-container-external-networks` is also pushed at
+`873c084`. (Original note: implemented 2026-09-27; no PR was used — this
+container has no `gh` and no GitHub token, so `git push` over SSH was the
+mechanism.)
 
 **Tests:** `npx vitest run --coverage` — 819 passed / 60 files (includes 15 new
 in `tests/generator/docker-external-networks.test.js` and 1 new pin in
