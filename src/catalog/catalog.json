@@ -476,13 +476,12 @@
           },
           "protocolVersion": {
             "type": "string",
-            "enum": ["1.0", "0.3"],
+            "enum": ["1.0"],
             "enumLabels": {
-              "1.0": "A2A 1.0 (protobuf-JSON)",
-              "0.3": "A2A 0.3 (kind-discriminated)"
+              "1.0": "A2A 1.0 (protobuf-JSON)"
             },
             "default": "1.0",
-            "description": "The A2A wire format LiteLLM serves for this agent on its proxied card. Always pin it: unpinned, LiteLLM infers the version from each client request while the proxied card defaults to 1.0, so card and response can disagree. Only \"0.3\" and \"1.0\" are accepted by the gateway."
+            "description": "The A2A wire format this agent's card advertises. Pinned to 1.0: it is the current protocol and the version LiteLLM's proxied card defaults to anyway, and stating it explicitly is what keeps the card and the responses in agreement - unpinned, the gateway infers a version from each client request while the card advertises 1.0. LiteLLM also accepts 0.3, which existed only for callers that cannot speak 1.0; with no such caller here the choice is collapsed to one value."
           },
           "registerAgent": {
             "type": "boolean",

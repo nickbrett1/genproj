@@ -36,8 +36,10 @@ network.
 
 `protocolVersion` is pinned to `{{protocolVersion}}` and sent at registration.
 LiteLLM serves that wire format on the proxied card and converts upstream
-responses to match. **Every caller must speak it.** Only `"1.0"` and `"0.3"` are
-accepted; anything else is HTTP 400 at registration.
+responses to match. **Every caller must speak it.** This project pins `1.0`, the
+current protocol. LiteLLM also accepts the legacy `"0.3"` (anything else is
+HTTP 400 at registration), but `0.3` exists only for callers that cannot speak
+`1.0`, and there are none here — so the choice is collapsed to the one value.
 
 ## Reachability and ports
 
