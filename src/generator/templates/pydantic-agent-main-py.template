@@ -5,8 +5,7 @@ Run it with:
     uvicorn agent.main:app --host 0.0.0.0 --port {{listenPort}}
 
 The A2A app, agent card and JSON-RPC transport come from FastA2A; this module
-wires a Pydantic AI agent into it. Startup self-registration with the LiteLLM
-gateway lives in agent/register.py.
+wires a Pydantic AI agent into it.{{agentRegisterModuleDoc}}
 
 Bind 0.0.0.0, not 127.0.0.1: the caller is the LiteLLM proxy reaching this
 container across the network, so a loopback bind is unreachable.
@@ -79,7 +78,7 @@ async def healthz(_: Request) -> JSONResponse:
 
 
 async def _register() -> None:
-    """Register this agent's card with the LiteLLM gateway, once, at startup."""
+    """{{agentRegisterDoc}}"""
 {{agentRegisterBody}}
 
 

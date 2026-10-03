@@ -1,5 +1,8 @@
 // src/generator/capability-templates.js
-import { resolveProjectLanguage } from "./capability-template-utils.js";
+import {
+  resolveAgentRegistration,
+  resolveProjectLanguage,
+} from "./capability-template-utils.js";
 
 /**
  * Generator-internal template wiring, one entry per capability.
@@ -457,6 +460,10 @@ export const capabilityTemplates = {
       id: "agent-register",
       filePath: "agent/register.py",
       templateId: "pydantic-agent-register-py",
+      // Emitted only when the agent actually self-registers: without a gateway
+      // address there is nothing to register with, and a dead register.py is
+      // code that looks wired up while dialing a host that does not exist.
+      when: (context) => resolveAgentRegistration(context).enabled,
     },
     {
       id: "agent-headers",

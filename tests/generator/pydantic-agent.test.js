@@ -36,6 +36,7 @@ function context(overrides = {}) {
       "pydantic-agent": {
         model: "gpt-4o-mini",
         description: "Prices data requests.",
+        litellmBaseUrl: "http://litellm.nas:4000",
       },
       ...overrides.configuration,
     },
@@ -132,21 +133,59 @@ describe("pydantic-agent generation", () => {
     expect(mainWithout).not.toContain("toolsets=");
   });
 
-  it("stubs registration when registerAgent is false, keeping the code", async () => {
+  it("emits no registration when registerAgent is false, even with a gateway", async () => {
     const files = await generateAllFiles(
       context({
         configuration: {
           "pydantic-agent": {
             model: "m",
             description: "d",
+            litellmBaseUrl: "http://litellm.nas:4000",
             registerAgent: false,
           },
         },
       }),
     );
+    expect(files.map((f) => f.filePath)).not.toContain("agent/register.py");
     const main = files.find((f) => f.filePath === "agent/main.py").content;
     expect(main).not.toContain("register_with_litellm(");
     expect(main).toMatch(/registerAgent is false/);
+  });
+
+  it("emits no registration when no gateway is specified", async () => {
+    const files = await generateAllFiles(
+      context({
+        configuration: {
+          "pydantic-agent": { model: "m", description: "d" },
+        },
+      }),
+    );
+    const paths = files.map((f) => f.filePath);
+    expect(paths).not.toContain("agent/register.py");
+
+    const main = files.find((f) => f.filePath === "agent/main.py").content;
+    expect(main).not.toContain("from agent.register import");
+    expect(main).not.toContain("register_with_litellm(");
+
+    // The gateway address is not invented: the code reads it from the
+    // environment and says so.
+    const model = files.find((f) => f.filePath === "agent/model.py").content;
+    expect(model).toContain('os.environ.get("LITELLM_BASE_URL")');
+    expect(model).toContain("LITELLM_BASE_URL is not set");
+
+    // The README drops the runbook and the register.py row, and says why.
+    const readme = files.find((f) => f.filePath === "agent/README.md").content;
+    expect(readme).not.toContain("| `agent/register.py`");
+    expect(readme).not.toContain("Mint the registration credential");
+    expect(readme).toContain("does **not** self-register");
+  });
+
+  it("bakes the gateway address as a fallback (overridable by env) when specified", async () => {
+    const files = await generateAllFiles(context());
+    const model = files.find((f) => f.filePath === "agent/model.py").content;
+    expect(model).toContain(
+      'os.environ.get("LITELLM_BASE_URL", "http://litellm.nas:4000")',
+    );
   });
 
   it("declares the A2A runtime dependencies in pyproject.toml", async () => {

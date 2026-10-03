@@ -853,6 +853,42 @@ export const resolveLanguage = resolveProjectLanguage;
  * @param {Object} context - Generation context (capabilities, configuration)
  * @returns {number|null} The agent's listen port, or null
  */
+/**
+ * Whether the generated A2A agent registers itself with a gateway, and where.
+ *
+ * Registration needs a gateway address, and genproj cannot know it: the real
+ * address (a Tailscale name, an IP, a Compose service name) is a property of the
+ * deployment, not of the repository. So `litellmBaseUrl` is optional and empty
+ * by default, and **registration is generated only when it is set** - with no
+ * gateway named there is nothing to register with, and emitting code that dials
+ * a guessed host is exactly the silent misconfiguration to avoid. The consumer
+ * (`agent/register.py` and its call site) is emitted on the same condition, so
+ * the file, the import and the call cannot disagree.
+ *
+ * `registerAgent: false` is a second, explicit opt-out; registration requires
+ * BOTH a URL and the flag.
+ *
+ * @param {Object} context - Generation context (capabilities, configuration)
+ * @returns {{enabled: boolean, baseUrl: string, keyEnv: string}} The decision
+ */
+export function resolveAgentRegistration(context) {
+  const capability = getCatalogCapability("pydantic-agent");
+  const config = applyDefaults(
+    capability,
+    context?.configuration?.["pydantic-agent"] || {},
+  );
+  const baseUrl =
+    typeof config.litellmBaseUrl === "string"
+      ? config.litellmBaseUrl.trim()
+      : "";
+  const keyEnv = config.registrationKeyEnv || "LITELLM_REGISTRATION_KEY";
+  return {
+    enabled: baseUrl !== "" && config.registerAgent !== false,
+    baseUrl,
+    keyEnv,
+  };
+}
+
 export function resolveAgentListenPort(context) {
   if (!(context?.capabilities || []).includes("pydantic-agent")) return null;
   const capability = getCatalogCapability("pydantic-agent");
@@ -3688,13 +3724,23 @@ function getPydanticAgentTemplateData(context) {
 
   const listenPort = resolveAgentListenPort(context) ?? 9999;
   const protocolVersion = config.protocolVersion || "1.0";
-  const registrationKeyEnv =
-    config.registrationKeyEnv || "LITELLM_REGISTRATION_KEY";
   const model = typeof config.model === "string" ? config.model.trim() : "";
-  const litellmBaseUrl = config.litellmBaseUrl || "http://litellm:4000";
   const maxOutputRetries = Number.isInteger(config.maxOutputRetries)
     ? config.maxOutputRetries
     : 0;
+
+  // Registration (and therefore the gateway address that makes it possible) is
+  // resolved in one place, so the data generator, the template wiring and the
+  // guards cannot disagree. See `resolveAgentRegistration`.
+  const registration = resolveAgentRegistration(context);
+  const litellmBaseUrl = registration.baseUrl;
+  const registrationKeyEnv = registration.keyEnv;
+  // The gateway is optional: when it is not named, `LITELLM_BASE_URL` has no
+  // in-code default (a guessed one is a silent misconfiguration) and must come
+  // from the environment. `model.py` raises a clear error if it is missing.
+  const litellmBaseUrlFallback = litellmBaseUrl
+    ? `, ${JSON.stringify(litellmBaseUrl)}`
+    : "";
 
   // The card's skills. One skill, derived from the card, is the honest default:
   // the generator cannot know the domain, and a placeholder that pretends to is
@@ -3737,14 +3783,15 @@ function getPydanticAgentTemplateData(context) {
     : "";
   const agentToolsetsArg = hasTools ? "toolsets=AGENT_TOOLSETS," : "";
 
-  // Startup self-registration. Off by a config flag, but the code is still
-  // emitted (only the call is stubbed) so turning it on is a one-line change
-  // - and the runbook in the README still applies.
-  const registerAgent = config.registerAgent !== false;
-  const agentRegisterImport = registerAgent
+  // Startup self-registration: emitted only when a gateway is named AND the
+  // flag is on (`resolveAgentRegistration`). With no gateway the import, the
+  // call and `agent/register.py` itself are all absent - there is nothing to
+  // register with, and dead registration code is how a project looks wired up
+  // while dialing a host that does not exist.
+  const agentRegisterImport = registration.enabled
     ? "from agent.register import register_with_litellm\n"
     : "";
-  const agentRegisterBody = registerAgent
+  const agentRegisterBody = registration.enabled
     ? [
         "    await register_with_litellm(",
         "        agent_name=AGENT_NAME,",
@@ -3754,7 +3801,54 @@ function getPydanticAgentTemplateData(context) {
         "        skills=AGENT_SKILLS,",
         "    )",
       ].join("\n")
-    : "    # registerAgent is false: register this agent with LiteLLM by hand.\n    return";
+    : registration.baseUrl === ""
+      ? "    # No LiteLLM gateway was specified at generation time, so this agent\n" +
+        "    # does not register itself. Set litellmBaseUrl and regenerate to add\n" +
+        "    # registration, or register this card with the gateway by hand.\n" +
+        "    return"
+      : "    # registerAgent is false: register this agent with LiteLLM by hand.\n    return";
+
+  // The registration runbook and the registration-key env block only apply when
+  // registration was generated; a project without a gateway is told why it has
+  // none instead of being handed a runbook for machinery it does not have.
+  const agentRegisterEnvBlock = registration.enabled
+    ? [
+        "# A key bound to a proxy_admin USER (not the master key, and not a key minted",
+        "# with user_role on /key/generate - that field is silently ignored). It is a",
+        "# control-plane secret: rotate it independently of the gateway.",
+        `${registrationKeyEnv}=`,
+      ].join("\n")
+    : [
+        "# Self-registration is off (no litellmBaseUrl was given at generation time),",
+        "# so no registration key is read. To enable it, set litellmBaseUrl and regenerate.",
+      ].join("\n");
+  // The register.py row is appended by ending the previous table row with this
+  // placeholder: a conditional row cannot be an empty line (a blank line ends a
+  // Markdown table), so the value carries its own leading newline.
+  const agentRegisterFileRow = registration.enabled
+    ? "\n| `agent/register.py`      | startup self-registration (idempotent, fail-open)                |"
+    : "";
+  const agentRegisterModuleDoc = registration.enabled
+    ? " Startup self-registration with the LiteLLM\n" +
+      "gateway lives in agent/register.py."
+    : " Startup self-registration was not generated (no\n" +
+      "LiteLLM gateway was specified at generation time).";
+  const agentRegisterDoc = registration.enabled
+    ? "Register this agent's card with the LiteLLM gateway, once, at startup."
+    : "Registration was not generated for this project.";
+  const agentRegisterIntro = registration.enabled
+    ? "It registers itself with the LiteLLM gateway on startup."
+    : "It does **not** self-register: no LiteLLM gateway was specified at\n" +
+      "generation time.";
+  const agentRegisterRunbook = registration.enabled
+    ? getPydanticAgentRegisterRunbook(registrationKeyEnv)
+    : "## Registration\n\n" +
+      "This agent does **not** register itself. No `litellmBaseUrl` was given when\n" +
+      "the project was generated, so there is no gateway for it to register with and\n" +
+      "no registration code was emitted.\n\n" +
+      "Set `pydantic-agent.litellmBaseUrl` and regenerate to generate startup\n" +
+      "self-registration (and this runbook), or register the card with your gateway\n" +
+      "by hand.\n";
 
   return {
     agentName,
@@ -3772,9 +3866,69 @@ function getPydanticAgentTemplateData(context) {
     agentToolsetsImport,
     agentToolsetsSetup,
     agentToolsetsArg,
+    litellmBaseUrlFallback,
     agentRegisterImport,
     agentRegisterBody,
+    agentRegisterEnvBlock,
+    agentRegisterModuleDoc,
+    agentRegisterDoc,
+    agentRegisterFileRow,
+    agentRegisterIntro,
+    agentRegisterRunbook,
   };
+}
+
+/**
+ * The README's registration runbook: minting the proxy_admin-user key, and the
+ * startup registration behaviour. Emitted only when registration was generated
+ * (`resolveAgentRegistration`), so a project without a gateway is not handed a
+ * runbook for machinery it does not have.
+ *
+ * The key environment variable is interpolated here rather than left as a
+ * `{{...}}` token: the template engine substitutes in a single pass and does not
+ * re-scan substituted values, so a token inside this block would render raw.
+ *
+ * @param {string} keyEnv - The env var holding the registration key
+ * @returns {string} Markdown for the README's registration sections
+ */
+function getPydanticAgentRegisterRunbook(keyEnv) {
+  return `## Mint the registration credential (the one step genproj cannot do)
+
+Self-registration uses a key bound to a **\`proxy_admin\` user**, not the master
+key. No master key is needed in the container, and the credential is revocable
+independently of the gateway.
+
+\`\`\`bash
+# 1. Create a dedicated proxy_admin user.
+curl -sS -X POST "$LITELLM_BASE_URL/user/new" \\
+  -H "Authorization: Bearer $LITELLM_MASTER_KEY" -H "Content-Type: application/json" \\
+  -d '{"user_email": "agent-registrar@example.com", "user_role": "proxy_admin"}'
+
+# 2. Mint a key for that user (use the user_id the call above returned).
+curl -sS -X POST "$LITELLM_BASE_URL/key/generate" \\
+  -H "Authorization: Bearer $LITELLM_MASTER_KEY" -H "Content-Type: application/json" \\
+  -d '{"user_id": "<the user_id from step 1>"}'
+\`\`\`
+
+Put the resulting key in Doppler as \`${keyEnv}\` and the runtime
+virtual key as \`LITELLM_API_KEY\`.
+
+> **Do not** mint the key with \`"user_role": "proxy_admin"\` on \`/key/generate\`.
+> The route returns 200 and **silently ignores the field**; the key is an
+> \`internal_user\`, and \`POST /v1/agents\` then returns **403**.
+
+## Registration behaviour
+
+On startup the agent \`GET\`s \`/v1/agents\`, then \`PUT\`s the existing record by id
+or \`POST\`s a new one. Registration is **idempotent by name** and **fails open**:
+if the gateway is unreachable the agent logs it and keeps serving; the next
+restart re-registers. The container owns its card, so a changed description or
+skill ships with the image.
+
+**One card field the container cannot own: access groups.** \`agent_access_groups\`
+is dashboard-only — the API accepts the field and silently drops it. Group-based
+agent permissions remain a manual dashboard step per agent.
+`;
 }
 
 function getDependabotTemplateData(context) {

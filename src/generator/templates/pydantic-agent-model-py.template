@@ -18,9 +18,13 @@ from pydantic_ai.providers.openai import OpenAIProvider
 
 from agent.headers import HeaderForwardingClient
 
-# The gateway this agent both calls for models and registers with. One value,
-# two uses, so they cannot diverge.
-LITELLM_BASE_URL = os.environ.get("LITELLM_BASE_URL", "{{litellmBaseUrl}}")
+# The gateway this agent calls for models (and registers with, when
+# registration is generated). One value, two uses, so they cannot diverge.
+#
+# There is no in-code default when no gateway was named at generation time:
+# guessing an address is how a service looks wired up while dialing a host that
+# does not exist. Supply it in the environment instead.
+LITELLM_BASE_URL = os.environ.get("LITELLM_BASE_URL"{{litellmBaseUrlFallback}})
 # A virtual key scoped to invoking this agent and calling the models it uses.
 LITELLM_API_KEY = os.environ.get("LITELLM_API_KEY", "")
 # The model alias as the gateway knows it.
@@ -34,6 +38,12 @@ def build_model() -> OpenAIChatModel:
     that arrived on the A2A request, so calls back to the gateway are grouped
     into the right trace and attributed to this agent.
     """
+    if not LITELLM_BASE_URL:
+        raise RuntimeError(
+            "LITELLM_BASE_URL is not set. This agent makes its model calls "
+            "through the LiteLLM gateway, so the gateway's address must be in "
+            "the environment (e.g. injected from Doppler)."
+        )
     provider = OpenAIProvider(
         base_url=LITELLM_BASE_URL,
         api_key=LITELLM_API_KEY,
