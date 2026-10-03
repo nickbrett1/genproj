@@ -427,6 +427,58 @@ export const capabilityTemplates = {
       isExecutable: true,
     },
   ],
+  // A working A2A agent: a Pydantic AI agent served by FastA2A that registers
+  // itself with the LiteLLM gateway. `agent/` and `prompts/` are app-owned
+  // (see genproj-overwrite.js): the generated files are a shell the owner
+  // extends, and regeneration must not clobber that - especially
+  // prompts/instructions.md, which is human-owned after the first generation.
+  "pydantic-agent": [
+    {
+      id: "agent-main",
+      filePath: "agent/main.py",
+      templateId: "pydantic-agent-main-py",
+    },
+    {
+      id: "agent-model",
+      filePath: "agent/model.py",
+      templateId: "pydantic-agent-model-py",
+    },
+    {
+      id: "agent-contract",
+      filePath: "agent/contract.py",
+      templateId: "pydantic-agent-contract-py",
+    },
+    {
+      id: "agent-card",
+      filePath: "agent/card.py",
+      templateId: "pydantic-agent-card-py",
+    },
+    {
+      id: "agent-register",
+      filePath: "agent/register.py",
+      templateId: "pydantic-agent-register-py",
+    },
+    {
+      id: "agent-headers",
+      filePath: "agent/headers.py",
+      templateId: "pydantic-agent-headers-py",
+    },
+    {
+      id: "agent-instructions",
+      filePath: "prompts/instructions.md",
+      templateId: "pydantic-agent-instructions-md",
+    },
+    {
+      id: "agent-env-example",
+      filePath: "agent/.env.example",
+      templateId: "pydantic-agent-env-example",
+    },
+    {
+      id: "agent-readme",
+      filePath: "agent/README.md",
+      templateId: "pydantic-agent-readme",
+    },
+  ],
 };
 
 export default capabilityTemplates;

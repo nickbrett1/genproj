@@ -9,9 +9,15 @@
  * and the preview generator) run them before emitting anything.
  */
 
-import { findUnsatisfiedRequiresAny } from "../catalog/index.js";
+import {
+  findUnsatisfiedRequiresAny,
+  getCapabilityById,
+} from "../catalog/index.js";
 import { ValidationError } from "./genproj-errors.js";
-import { resolveProjectLanguage } from "./capability-template-utils.js";
+import {
+  resolveAgentListenPort,
+  resolveProjectLanguage,
+} from "./capability-template-utils.js";
 import { TARGET_LABELS } from "./target-labels.js";
 
 /**
@@ -36,11 +42,17 @@ export function validateRequiredAny(context) {
 
   const { capability, anyOf } = unsatisfied[0];
   const alternatives = anyOf.join(" or ");
+  // The wording is per-capability: `requiresAnyLabel` says what KIND of thing
+  // is missing (a CI capability, a deployment capability, ...). Hardcoding "a
+  // CI capability" made any non-CI requirement read as a nonsense CI error.
+  const label =
+    getCapabilityById(capability)?.requiresAnyLabel ||
+    "one of these capabilities";
   throw new ValidationError(
-    `This project selects ${capability}, which requires a CI capability: ` +
-      `select ${alternatives}. ${capability} contributes a step to whichever ` +
-      `CI provider is selected; with none selected it would generate but run ` +
-      `nowhere.`,
+    `This project selects ${capability}, which requires ${label}: ` +
+      `select ${alternatives}. ${capability} contributes to whichever of ` +
+      `these is selected; with none selected it would generate but not be ` +
+      `usable.`,
     capability,
   );
 }
@@ -215,6 +227,146 @@ export function validateFetchLaunch(context) {
         "github-release.targets to the platforms this project ships, for " +
         'example ["aarch64-apple-darwin", "x86_64-unknown-linux-musl"].',
       "targets",
+    );
+  }
+}
+
+/**
+ * The container-side port of a compose port binding.
+ *
+ * `publishPort` is a compose string in one of the three accepted forms -
+ * `"3000:3000"`, `"127.0.0.1:3000:3000"`, `"0.0.0.0:8772:8772"` - and the
+ * container-side port is always the last colon-separated segment. Returns null
+ * when the string is not a parseable binding, so the caller can decide whether
+ * that is "no binding" or "already rejected elsewhere".
+ *
+ * @param {string} publishPort - Compose port binding
+ * @returns {number|null} The container port, or null
+ */
+function parseContainerPort(publishPort) {
+  if (typeof publishPort !== "string" || !publishPort.includes(":"))
+    return null;
+  const segment = publishPort.slice(publishPort.lastIndexOf(":") + 1).trim();
+  const port = Number(segment);
+  return Number.isInteger(port) && port > 0 ? port : null;
+}
+
+/**
+ * A generated A2A agent listens on `pydantic-agent.listenPort`, but the
+ * container it ships in is described by `docker-container`, and the two ports
+ * come from different capabilities with no data channel between them. If they
+ * disagree the container publishes a port nothing is listening on - a silent,
+ * unreachable mismatch (the process starts, the healthcheck fails, the card URL
+ * is wrong).
+ *
+ * The generator closes the gap two ways: `resolveAgentListenPort` makes the
+ * container default to the agent's port when the user has not overridden it,
+ * and this guard rejects the case it cannot fix - an explicit override that
+ * disagrees. Both are needed: a resolver alone is silently defeated by any
+ * explicit `publishPort`, and a guard alone would reject the (correct) default.
+ *
+ * @param {Object} context - Generation context (capabilities, configuration)
+ * @throws {ValidationError} When the agent and container ports disagree
+ */
+export function validateAgentPorts(context) {
+  const capabilities = context?.capabilities || [];
+  if (!capabilities.includes("pydantic-agent")) return;
+  // Without a deployment capability there is no container port to disagree
+  // with; `requiresAny` already refuses that project, with a clearer message.
+  if (!capabilities.includes("docker-container")) return;
+
+  const listenPort = resolveAgentListenPort(context);
+  if (listenPort === null) return;
+
+  const config = context?.configuration?.["docker-container"] || {};
+  const exposePort = config.exposePort ?? listenPort;
+  const publishContainerPort = parseContainerPort(config.publishPort);
+
+  const conflict =
+    exposePort !== listenPort
+      ? `exposePort is ${exposePort}`
+      : publishContainerPort !== null && publishContainerPort !== listenPort
+        ? `publishPort "${config.publishPort}" maps the container port ${publishContainerPort}`
+        : null;
+  if (conflict === null) return;
+
+  throw new ValidationError(
+    `This project's pydantic-agent listens on port ${listenPort}, but its ` +
+      `docker-container ${conflict}. The container would publish a port the ` +
+      `agent is not listening on, so nothing could reach it. Either set ` +
+      `docker-container.exposePort/publishPort to ${listenPort}, or change ` +
+      `pydantic-agent.listenPort to the container port.`,
+    "listenPort",
+  );
+}
+
+/**
+ * The facts a generated A2A agent cannot invent, refused at generation time
+ * rather than ship as a broken service:
+ *
+ * 1. **A model.** `model` is the id as the *gateway* knows it; there is no
+ *    sensible default (the gateway's alias list is not knowable here), and an
+ *    empty model would generate an agent that registers and then fails every
+ *    turn.
+ * 2. **A description.** It is the text LiteLLM's agent registry matches a task
+ *    against, so an empty one generates an agent no router can find. Only the
+ *    owner knows the domain, so there is no honest default.
+ * 3. **A name that does not collide.** `container-agent` is locked and always
+ *    registers `<repo>-dev`, so a product agent named `<repo>-dev` collides:
+ *    LiteLLM resolves a colliding name to the existing record and the product
+ *    agent silently never appears. The default (the repo name) is already
+ *    correct; this refuses the one override that is not.
+ *
+ * @param {Object} context - Generation context (capabilities, configuration)
+ * @throws {ValidationError} When the model or description is absent, or the
+ * name collides
+ */
+export function validatePydanticAgent(context) {
+  const capabilities = context?.capabilities || [];
+  if (!capabilities.includes("pydantic-agent")) return;
+
+  const config = context?.configuration?.["pydantic-agent"] || {};
+  const model = typeof config.model === "string" ? config.model.trim() : "";
+  if (model === "") {
+    throw new ValidationError(
+      "This project selects pydantic-agent but declares no model. Set " +
+        "pydantic-agent.model to the model id the LiteLLM gateway knows " +
+        "(its alias, not a provider prefix) - it is a gateway alias so the " +
+        "decision layer can change it without regenerating the project.",
+      "model",
+    );
+  }
+
+  // The description is load-bearing, not cosmetic: LiteLLM's agent registry
+  // matches a task against the card's name, description and skills by semantic
+  // similarity, so an empty one is a router that cannot find this agent. There
+  // is no honest default (only the owner knows the domain), which is why it is
+  // required for the same reason the model is.
+  const description =
+    typeof config.description === "string" ? config.description.trim() : "";
+  if (description === "") {
+    throw new ValidationError(
+      "This project selects pydantic-agent but declares no description. Set " +
+        "pydantic-agent.description to a one-line description of the agent's " +
+        "domain - LiteLLM's agent registry matches tasks against it, so an " +
+        "empty description is an agent a router cannot find.",
+      "description",
+    );
+  }
+
+  const projectName = context?.projectName || context?.name || "";
+  const agentName =
+    typeof config.agentName === "string" && config.agentName.trim() !== ""
+      ? config.agentName.trim()
+      : projectName;
+  if (agentName.endsWith("-dev")) {
+    throw new ValidationError(
+      `This project names its pydantic-agent "${agentName}", but ` +
+        `container-agent already registers "${projectName}-dev" in every ` +
+        "devcontainer, and LiteLLM resolves a colliding name to the existing " +
+        "record - so the product agent would silently never appear. Use a " +
+        `name without the "-dev" suffix (the repository name is the default).`,
+      "agentName",
     );
   }
 }

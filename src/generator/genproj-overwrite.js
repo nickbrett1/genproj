@@ -30,6 +30,15 @@ const APP_OWNED_PATH_PREFIXES = [
   // not from src/. lib/ is where the on-device importer looks, so it is the
   // firmware analogue of src/ and must never be clobbered by a scaffold.
   "lib/",
+  // The pydantic-agent shell is app code the owner is told to replace: the
+  // output type + Validator (contract.py), the card's skills (card.py) and the
+  // domain instructions (prompts/). On divergence they must not be clobbered -
+  // the same "regeneration never overwrites" rule github-release's
+  // release-artifacts.sh and the micropython entry points already follow. The
+  // agent's infra files (main.py, model.py, headers.py, register.py) are only
+  // kept when they diverge; an unedited one still takes fresh template content.
+  "agent/",
+  "prompts/",
 ];
 
 // Root-level firmware entry points emitted by the micropython scaffold. They

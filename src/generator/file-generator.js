@@ -90,6 +90,20 @@ const devcontainerServeDocumentsCjs =
 const scriptsFindBoardSh = templateFiles["scripts-find-board-sh.template"];
 const devcontainerPostCreateMicropythonSh =
   templateFiles["devcontainer-post-create-micropython-sh.template"];
+const pydanticAgentMainPy = templateFiles["pydantic-agent-main-py.template"];
+const pydanticAgentModelPy = templateFiles["pydantic-agent-model-py.template"];
+const pydanticAgentContractPy =
+  templateFiles["pydantic-agent-contract-py.template"];
+const pydanticAgentCardPy = templateFiles["pydantic-agent-card-py.template"];
+const pydanticAgentRegisterPy =
+  templateFiles["pydantic-agent-register-py.template"];
+const pydanticAgentHeadersPy =
+  templateFiles["pydantic-agent-headers-py.template"];
+const pydanticAgentInstructionsMd =
+  templateFiles["pydantic-agent-instructions-md.template"];
+const pydanticAgentEnvExample =
+  templateFiles["pydantic-agent-env-example.template"];
+const pydanticAgentReadme = templateFiles["pydantic-agent-readme.template"];
 // webapp/src/lib/utils/file-generator.js
 
 import { capabilities } from "../catalog/index.js";
@@ -116,9 +130,11 @@ import {
   servingHarnessSpec,
 } from "./capability-template-utils.js";
 import {
+  validateAgentPorts,
   validateDockerNetworks,
   validateFetchLaunch,
   validatePrimaryLanguage,
+  validatePydanticAgent,
   validateReleaseTargets,
   validateRequiredAny,
 } from "./project-validation.js";
@@ -971,6 +987,15 @@ const templateImports = {
   "scripts-find-board-sh": scriptsFindBoardSh,
   "devcontainer-post-create-micropython-sh":
     devcontainerPostCreateMicropythonSh,
+  "pydantic-agent-main-py": pydanticAgentMainPy,
+  "pydantic-agent-model-py": pydanticAgentModelPy,
+  "pydantic-agent-contract-py": pydanticAgentContractPy,
+  "pydantic-agent-card-py": pydanticAgentCardPy,
+  "pydantic-agent-register-py": pydanticAgentRegisterPy,
+  "pydantic-agent-headers-py": pydanticAgentHeadersPy,
+  "pydantic-agent-instructions-md": pydanticAgentInstructionsMd,
+  "pydantic-agent-env-example": pydanticAgentEnvExample,
+  "pydantic-agent-readme": pydanticAgentReadme,
 };
 
 export class TemplateEngine {
@@ -1939,6 +1964,18 @@ export function generatePyProjectToml(context) {
   const deps = [...pythonDependencies];
   if (hasDagster) {
     deps.push("dagster", "dagster-webserver");
+  }
+  // The A2A agent is a Python service in this same image: `agent/` is served by
+  // uvicorn and talks to Pydantic AI and FastA2A. The extra on fasta2a pulls the
+  // Pydantic AI bridge (`agent_to_a2a` / `AgentWorker`); pydantic-ai (the full
+  // metapackage) carries the `mcp` and `openai` extras the generated agent
+  // imports. Declared here so the container's `pip install .` installs them.
+  if (context.capabilities.includes("pydantic-agent")) {
+    deps.push(
+      "pydantic-ai>=2.40",
+      "fasta2a[pydantic-ai]>=2.0",
+      "uvicorn>=0.30",
+    );
   }
   const dependencies =
     deps.length > 0
@@ -3340,6 +3377,8 @@ export async function generateAllFiles(context) {
   validateFetchLaunch(context);
   validateRequiredAny(context);
   validateDockerNetworks(context);
+  validatePydanticAgent(context);
+  validateAgentPorts(context);
 
   const templateEngine = new TemplateEngine();
   await templateEngine.initialize();

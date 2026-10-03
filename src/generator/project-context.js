@@ -145,8 +145,14 @@ export function buildProjectContext(payload, userId, authTokens, env = {}) {
   const unsatisfied = findUnsatisfiedRequiresAny(capabilities);
   if (unsatisfied.length > 0) {
     const { capability, anyOf } = unsatisfied[0];
+    // The label names what kind of thing is missing ("a CI capability",
+    // "a deployment capability") so the refusal says what the alternatives are
+    // for; without it the message is a bare list of ids.
+    const label =
+      getCapabilityById(capability)?.requiresAnyLabel ||
+      "one of these capabilities";
     throw new Error(
-      `${capability} requires a CI capability: select ${anyOf.join(" or ")}.`,
+      `${capability} requires ${label}: select ${anyOf.join(" or ")}.`,
     );
   }
 

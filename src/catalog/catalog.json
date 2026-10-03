@@ -419,6 +419,108 @@
       "website": "https://dagster.io/"
     },
     {
+      "id": "pydantic-agent",
+      "name": "Pydantic AI Agent (A2A)",
+      "description": "Generates a Pydantic AI agent served as an A2A server and self-registered with the LiteLLM gateway on startup. The agent is a service behind the gateway's A2A card; deploy it with docker-container.",
+      "category": "frameworks",
+      "icon": "robot",
+      "iconColor": "purple",
+      "selectedByDefault": false,
+      "provides": [],
+      "dependencies": ["devcontainer-python", "doppler"],
+      "requiresAny": ["docker-container"],
+      "requiresAnyLabel": "a deployment capability",
+      "conflicts": [],
+      "requiresAuth": [],
+      "authServices": [],
+      "externalServices": [],
+      "configurationSchema": {
+        "type": "object",
+        "properties": {
+          "litellmBaseUrl": {
+            "type": "string",
+            "default": "http://litellm:4000",
+            "description": "The LiteLLM gateway. Used for BOTH the agent's outbound model calls and its startup self-registration, so the two can never diverge."
+          },
+          "model": {
+            "type": "string",
+            "description": "The model id AS THE GATEWAY KNOWS IT (an alias), not a provider prefix. Free text on purpose: the gateway's model list is not knowable at generation time, and the Jev decision layer must be able to change the model without regenerating the project."
+          },
+          "agentName": {
+            "type": "string",
+            "default": "",
+            "description": "The A2A agent name LiteLLM registers. Defaults to the repository name. Must NOT end in \"-dev\": container-agent already registers <repo>-dev, and LiteLLM resolves a colliding name to the existing record."
+          },
+          "description": {
+            "type": "string",
+            "default": "",
+            "description": "The agent card description. Not cosmetic - it is the text LiteLLM's registry semantic search matches against, so describe the agent's domain honestly or a router cannot find it."
+          },
+          "instructions": {
+            "type": "string",
+            "default": "",
+            "description": "Seed for prompts/instructions.md only. Written once on first generation; the file is human-owned and regeneration never overwrites it. Keep it short - the runtime contract carries the constraint, not the prompt."
+          },
+          "toolUrls": {
+            "type": "array",
+            "items": { "type": "string" },
+            "default": [],
+            "description": "MCP server URLs the agent may call, e.g. [\"http://nas:8781/mcp/data\"]. Each becomes a Pydantic AI MCPToolset."
+          },
+          "listenPort": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535,
+            "default": 9999,
+            "description": "The port the A2A server binds. Auto-wired into docker-container's exposed/published port by the generator, and a mismatch with the container-side port is a hard generation error."
+          },
+          "protocolVersion": {
+            "type": "string",
+            "enum": ["1.0", "0.3"],
+            "enumLabels": {
+              "1.0": "A2A 1.0 (protobuf-JSON)",
+              "0.3": "A2A 0.3 (kind-discriminated)"
+            },
+            "default": "1.0",
+            "description": "The A2A wire format LiteLLM serves for this agent on its proxied card. Always pin it: unpinned, LiteLLM infers the version from each client request while the proxied card defaults to 1.0, so card and response can disagree. Only \"0.3\" and \"1.0\" are accepted by the gateway."
+          },
+          "registerAgent": {
+            "type": "boolean",
+            "default": true,
+            "description": "Emit the startup self-registration with LiteLLM. When false the code and README runbook are still generated, but the server does not register itself and must be registered by hand."
+          },
+          "registrationKeyEnv": {
+            "type": "string",
+            "default": "LITELLM_REGISTRATION_KEY",
+            "description": "Name of the environment variable holding the key used to register the agent. It MUST be a key bound to a proxy_admin USER (not a key minted with user_role on /key/generate, which is silently ignored), and it is a control-plane secret: inject it from Doppler, never bake it into the image."
+          },
+          "maxOutputRetries": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 3,
+            "description": "The bound on the output-validation repair loop. It MUST exist as a parameter: an unbounded repair loop against a paid API is how you re-purchase data by accident. Exhaustion fails the run loudly rather than being swallowed."
+          }
+        }
+      },
+      "vscodeExtensions": [],
+      "benefits": [
+        "A working Pydantic AI agent exposed over A2A without hand-wiring the card or the JSON-RPC server",
+        "Registers itself with the LiteLLM gateway on startup, idempotently and fail-open",
+        "The container owns its own card, so a changed description ships with the image instead of drifting in a UI",
+        "Forwards LiteLLM trace and spend headers on its own model calls, so tracing and cost attribution actually work",
+        "Model wiring lives in one Python file, so the Jev decision layer can change the model without regenerating the project"
+      ],
+      "links": [
+        { "label": "Pydantic AI", "url": "https://ai.pydantic.dev/" },
+        { "label": "FastA2A", "url": "https://github.com/pydantic/fasta2a" },
+        {
+          "label": "LiteLLM A2A gateway",
+          "url": "https://docs.litellm.ai/docs/a2a"
+        }
+      ],
+      "website": "https://ai.pydantic.dev/"
+    },
+    {
       "id": "devcontainer-python",
       "name": "Python DevContainer",
       "description": "Sets up a VS Code DevContainer with Python environment.",
@@ -815,6 +917,7 @@
       "provides": [],
       "dependencies": [],
       "requiresAny": ["circleci", "buildkite"],
+      "requiresAnyLabel": "a CI capability",
       "conflicts": [],
       "requiresAuth": [],
       "authServices": ["gitguardian"],

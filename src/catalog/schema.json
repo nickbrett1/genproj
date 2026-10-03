@@ -170,6 +170,10 @@
           "items": { "type": "string" },
           "description": "Capability IDs of which at least one must also be selected. Unlike `dependencies` (a conjunction), this is the disjunctive form: a capability that needs *some* CI provider declares requiresAny: [\"circleci\", \"buildkite\"] rather than picking one. Generation fails when none of the listed capabilities is selected."
         },
+        "requiresAnyLabel": {
+          "type": "string",
+          "description": "Human name for what `requiresAny` is for, used verbatim in the generation error (e.g. \"a CI capability\", \"a deployment capability\"). Without it the message can only name the alternatives, which reads as a bare list; with it the refusal says what kind of thing is missing. Keep the article in the value (\"a CI capability\", not \"CI capability\")."
+        },
         "conflicts": {
           "type": "array",
           "items": { "type": "string" },

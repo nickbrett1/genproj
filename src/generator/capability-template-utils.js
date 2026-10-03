@@ -837,6 +837,34 @@ export function resolveProjectLanguage(context) {
 export const resolveLanguage = resolveProjectLanguage;
 
 /**
+ * The port a generated A2A agent listens on, when `pydantic-agent` is selected.
+ *
+ * There is no cross-capability value channel in genproj: `docker-container`
+ * cannot read `pydantic-agent`'s configuration, and ports have no
+ * representation in the capability graph at all (`provides.value` is a static
+ * string in the catalog and cannot carry a per-project value). So the coupling
+ * is done by hand, the same way `resolveProjectLanguage` couples the language
+ * to `docker-container` - one ID-keyed function that both the generator and the
+ * port guard read, so they cannot disagree.
+ *
+ * Returns `null` when the capability is not selected, so callers can tell
+ * "no agent" from "an agent on port N".
+ *
+ * @param {Object} context - Generation context (capabilities, configuration)
+ * @returns {number|null} The agent's listen port, or null
+ */
+export function resolveAgentListenPort(context) {
+  if (!(context?.capabilities || []).includes("pydantic-agent")) return null;
+  const capability = getCatalogCapability("pydantic-agent");
+  const config = applyDefaults(
+    capability,
+    context.configuration?.["pydantic-agent"] || {},
+  );
+  const port = Number(config.listenPort);
+  return Number.isInteger(port) && port > 0 ? port : null;
+}
+
+/**
  * Resolves the directory the Svelte app is scaffolded into.
  *
  * The frontend does not always own the repository. When node is the primary
@@ -1363,7 +1391,13 @@ function getDockerContainerTemplateData(context) {
   const isPython = language === "python";
   const isNode = language === "node";
   const networkMode = config.networkMode || "bridge";
-  const exposePort = config.exposePort ?? 3000;
+  // A generated pydantic-agent listens on `pydantic-agent.listenPort`, and the
+  // container must expose/publish THAT port, not the docker-container default.
+  // The default is applied here (not by pinning exposePort in the catalog) so an
+  // explicit `docker-container.exposePort` still wins and is caught by
+  // `validateAgentPorts` if it disagrees. See `resolveAgentListenPort`.
+  const agentListenPort = resolveAgentListenPort(context);
+  const exposePort = config.exposePort ?? agentListenPort ?? 3000;
   const watchtower = config.watchtower !== false;
   const homepage = config.homepage !== false;
   // Build platforms for the CircleCI docker-publish job. Default to x86_64
@@ -1495,7 +1529,13 @@ RUN npm run build
   // is what lets the smoke gate apply by default: the promise and the server
   // are emitted together. A non-node project WITHOUT a frontend still declares
   // nothing - its placeholder binary makes no promise.
-  if (!healthcheckSetting && isNode) {
+  // A generated pydantic-agent serves /healthz (see the generated agent/main.py),
+  // so declare an http healthcheck by default - the promise and the server are
+  // emitted together. An explicit docker-container.healthcheck still wins.
+  if (!healthcheckSetting && agentListenPort !== null) {
+    healthcheckSetting = "http:/healthz";
+    healthcheckPath = "/healthz";
+  } else if (!healthcheckSetting && isNode) {
     healthcheckSetting = "http:/health";
     healthcheckPath = "/health";
   } else if (!healthcheckSetting && harness) {
@@ -1660,8 +1700,26 @@ RUN cargo build --release`;
   if (Array.isArray(config.entrypoint) && config.entrypoint.length > 0) {
     dockerEntrypoint = `ENTRYPOINT ${JSON.stringify(config.entrypoint)}`;
   }
-  if (Array.isArray(config.command) && config.command.length > 0) {
-    dockerCommand = `CMD ${JSON.stringify(config.command)}`;
+  // A pydantic-agent is served by uvicorn, not by `python -m <pkg>`. Default
+  // the container command to the A2A server when the capability is selected (an
+  // explicit docker-container.command still wins).
+  const agentCommand =
+    agentListenPort !== null
+      ? [
+          "uvicorn",
+          "agent.main:app",
+          "--host",
+          "0.0.0.0",
+          "--port",
+          String(agentListenPort),
+        ]
+      : null;
+  const effectiveCommand =
+    Array.isArray(config.command) && config.command.length > 0
+      ? config.command
+      : agentCommand;
+  if (Array.isArray(effectiveCommand) && effectiveCommand.length > 0) {
+    dockerCommand = `CMD ${JSON.stringify(effectiveCommand)}`;
   } else if (!dockerEntrypoint) {
     if (isPython) dockerCommand = `CMD ["python", "-m", "${pkgName}"]`;
     else if (isNode) dockerCommand = 'CMD ["node", "build/index.js"]';
@@ -3555,6 +3613,170 @@ function getContainerAgentTemplateData(context) {
   };
 }
 
+/**
+ * A Python source literal for a JSON-ish value.
+ *
+ * The pydantic-agent templates are Python, and some of their substitutions are
+ * data (the card description, the skill list) rather than prose. Emitting them
+ * as JSON is not enough - JSON is not Python (`true`/`false`/`null` differ, and
+ * a bare `{"a": 1}` dict is valid Python but a list-of-objects formatted as JSON
+ * reads badly) - so values are rendered as Python literals here. Strings use
+ * JSON quoting, which is a valid subset of Python string quoting for the
+ * characters that can appear here.
+ *
+ * @param {*} value - A string, number, boolean, array or plain object
+ * @returns {string} Python source for the value
+ */
+function toPythonLiteral(value) {
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "number" || typeof value === "boolean")
+    return String(value);
+  if (value === null || value === undefined) return "None";
+  if (Array.isArray(value))
+    return `[${value.map((entry) => toPythonLiteral(entry)).join(", ")}]`;
+  if (typeof value === "object") {
+    return `{${Object.entries(value)
+      .map(
+        ([key, entry]) => `${JSON.stringify(key)}: ${toPythonLiteral(entry)}`,
+      )
+      .join(", ")}}`;
+  }
+  return "None";
+}
+
+/**
+ * Template data for the `pydantic-agent` capability: the A2A server, the model
+ * wiring, the card's skills and the registration/runbook text.
+ *
+ * The coupling that matters is the port: `listenPort` is threaded into the
+ * generated `main.py`, the `.env.example` and the README here, and into
+ * `docker-container`'s exposed/published port by `resolveAgentListenPort` - all
+ * from one config value, so the doc, the code and the container cannot drift.
+ * `validateAgentPorts` refuses the one case this cannot fix (an explicit
+ * container port that disagrees).
+ *
+ * @param {Object} context - Generation context (projectName, configuration)
+ * @returns {Object} Placeholder values for the pydantic-agent templates
+ */
+function getPydanticAgentTemplateData(context) {
+  const projectName = context.projectName || context.name || "my-project";
+  const capability = getCatalogCapability("pydantic-agent");
+  const config = applyDefaults(
+    capability,
+    context.configuration?.["pydantic-agent"] || {},
+  );
+
+  const declaredName =
+    typeof config.agentName === "string" ? config.agentName.trim() : "";
+  const agentName = declaredName || projectName;
+
+  // The description is not cosmetic: LiteLLM's agent registry matches a task
+  // against the card's name, description and skills by semantic similarity.
+  // `validatePydanticAgent` requires it on the generate path; the fallback here
+  // only covers the preview path (which does not run the guards) so a preview
+  // never renders an empty string.
+  const declaredDescription =
+    typeof config.description === "string" ? config.description.trim() : "";
+  const description = declaredDescription || `The ${projectName} A2A agent.`;
+
+  const declaredInstructions =
+    typeof config.instructions === "string" ? config.instructions.trim() : "";
+  const instructions =
+    declaredInstructions ||
+    `You are ${agentName}. Answer requests in the ${projectName} domain and ` +
+      `return the structured result the runtime asks for.`;
+
+  const listenPort = resolveAgentListenPort(context) ?? 9999;
+  const protocolVersion = config.protocolVersion || "1.0";
+  const registrationKeyEnv =
+    config.registrationKeyEnv || "LITELLM_REGISTRATION_KEY";
+  const model = typeof config.model === "string" ? config.model.trim() : "";
+  const litellmBaseUrl = config.litellmBaseUrl || "http://litellm:4000";
+  const maxOutputRetries = Number.isInteger(config.maxOutputRetries)
+    ? config.maxOutputRetries
+    : 0;
+
+  // The card's skills. One skill, derived from the card, is the honest default:
+  // the generator cannot know the domain, and a placeholder that pretends to is
+  // worse than a thin one the reader is told to replace.
+  const skills = [
+    {
+      id: "answer",
+      name: agentName,
+      description,
+      tags: [projectName, "a2a"],
+      input_modes: ["application/json"],
+      output_modes: ["application/json"],
+      examples: [`Ask ${agentName} a question in its domain.`],
+    },
+  ];
+  const agentSkillsLiteral = skills
+    .map((skill) => {
+      const fields = Object.entries(skill).map(
+        ([key, value]) => `        ${key}=${toPythonLiteral(value)},`,
+      );
+      return `    Skill(\n${fields.join("\n")}\n    ),`;
+    })
+    .join("\n");
+  const agentSkillsBody = `[\n${agentSkillsLiteral}\n]`;
+
+  // MCP toolsets: each configured URL becomes one MCPToolset on the agent. The
+  // import is emitted only when there is at least one URL, so a project with no
+  // tools does not import a module it does not use.
+  const toolUrls = Array.isArray(config.toolUrls)
+    ? config.toolUrls.filter((url) => typeof url === "string" && url.trim())
+    : [];
+  const hasTools = toolUrls.length > 0;
+  const agentToolsetsImport = hasTools
+    ? "from pydantic_ai.mcp import MCPToolset\n"
+    : "";
+  const agentToolsetsSetup = hasTools
+    ? `AGENT_TOOLSETS = [\n${toolUrls
+        .map((url) => `    MCPToolset(${JSON.stringify(url.trim())}),`)
+        .join("\n")}\n]\n\n`
+    : "";
+  const agentToolsetsArg = hasTools ? "toolsets=AGENT_TOOLSETS," : "";
+
+  // Startup self-registration. Off by a config flag, but the code is still
+  // emitted (only the call is stubbed) so turning it on is a one-line change
+  // - and the runbook in the README still applies.
+  const registerAgent = config.registerAgent !== false;
+  const agentRegisterImport = registerAgent
+    ? "from agent.register import register_with_litellm\n"
+    : "";
+  const agentRegisterBody = registerAgent
+    ? [
+        "    await register_with_litellm(",
+        "        agent_name=AGENT_NAME,",
+        "        card_url=CARD_URL,",
+        "        protocol_version=PROTOCOL_VERSION,",
+        "        description=AGENT_DESCRIPTION,",
+        "        skills=AGENT_SKILLS,",
+        "    )",
+      ].join("\n")
+    : "    # registerAgent is false: register this agent with LiteLLM by hand.\n    return";
+
+  return {
+    agentName,
+    // Plain prose for the Markdown templates; a Python literal for main.py.
+    agentDescription: description,
+    agentDescriptionLiteral: toPythonLiteral(description),
+    agentInstructionsLiteral: toPythonLiteral(instructions),
+    agentSkillsLiteral: agentSkillsBody,
+    listenPort,
+    protocolVersion,
+    maxOutputRetries,
+    model,
+    litellmBaseUrl,
+    registrationKeyEnv,
+    agentToolsetsImport,
+    agentToolsetsSetup,
+    agentToolsetsArg,
+    agentRegisterImport,
+    agentRegisterBody,
+  };
+}
+
 function getDependabotTemplateData(context) {
   const config = context.configuration?.dependabot || {};
   const interval = config.updateSchedule || "weekly";
@@ -3651,6 +3873,7 @@ export function getCapabilityTemplateData(capabilityId, context) {
         micropythonPackages: packages.join(" "),
       };
     },
+    "pydantic-agent": getPydanticAgentTemplateData,
     "docker-container": getDockerContainerTemplateData,
     doppler: (ctx) => {
       const target = resolveDopplerTarget(ctx);
