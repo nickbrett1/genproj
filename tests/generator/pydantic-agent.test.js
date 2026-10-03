@@ -367,3 +367,103 @@ describe("pydantic-agent form hints (visibleWhen)", () => {
     });
   });
 });
+
+describe("pydantic-agent registration robustness (registry.rs parity)", () => {
+  // The generated `agent/register.py` used to trust `GET /v1/agents` as if it
+  // were authoritative. It is not: the listing is filtered by the calling key's
+  // owner, so a row this agent owns can be invisible to it. The failure is a
+  // permanent duplicate-name refusal at every restart, logged as if the gateway
+  // were at fault. These tests pin the four behaviours ported from a2a-goose's
+  // `src/registry.rs`, plus the tolerant listing shape, so the regression
+  // cannot return silently.
+  let register;
+
+  beforeEach(async () => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const files = await generateAllFiles(context());
+    register = files.find((f) => f.filePath === "agent/register.py").content;
+  });
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it("keeps the proxy_admin user-key credential and the fail-open posture", () => {
+    // Constraints: the credential choice (and its rationale) and "a gateway
+    // outage must never stop the agent serving" are deliberate and stay.
+    expect(register).toContain("proxy_admin` USER");
+    expect(register).toContain("NOT the");
+    expect(register).toContain("master key");
+    expect(register).toContain("fail open; will retry on restart");
+    // The card is unchanged: the protocolVersion pin travels in the payload.
+    expect(register).toContain('"protocolVersion": protocol_version');
+  });
+
+  it("falls back to the by-id read, which is not filtered by owner", () => {
+    expect(register).toContain("_agent_id_by_remembered_id");
+    expect(register).toContain('f"{LITELLM_BASE_URL}/v1/agents/{remembered}"');
+    expect(register).toContain("if response.status_code == 404:");
+    // A row that now names a different agent is never adopted.
+    expect(register).toContain("not adopting it");
+    expect(register).toContain("_find_by_name(response, agent_name)");
+  });
+
+  it("remembers the assigned id between runs, tolerantly", () => {
+    expect(register).toContain("AGENT_STATE_DIR");
+    expect(register).toContain("REMEMBERED_ID_FILENAME");
+    expect(register).toContain("_remembered_id_path");
+    // Write (atomic) and read are both present.
+    expect(register).toContain("_remember_agent_id");
+    expect(register).toContain("temporary.write_text");
+    expect(register).toContain("temporary.replace(path)");
+    expect(register).toContain("_remembered_agent_id");
+    expect(register).toContain("read_text");
+    // An unwritable or unconfigured path must not fail a registration.
+    expect(register).toMatch(
+      /except Exception as exc:[\s\S]*registration still succeeded/,
+    );
+  });
+
+  it("reclaims a taken name instead of failing, keyed on the body not the status", () => {
+    expect(register).toContain("_is_duplicate_name");
+    // The live proxy answers 500 with Prisma's message; the documented shape is
+    // 400 "already exists". The body string is the honest key.
+    expect(register).toContain('"Unique constraint failed"');
+    expect(register).toContain('"already exists"');
+    // On refusal: re-look-up, then rewrite in place.
+    expect(register).toMatch(
+      /if _is_duplicate_name\(response\):[\s\S]*_find_agent_id\(client, headers, agent_name\)[\s\S]*await _update\(client, headers, agent_id, payload\)/,
+    );
+  });
+
+  it("reports a name it cannot resolve honestly, not as a proxy fault", () => {
+    expect(register).toContain("_name_taken_message");
+    expect(register).toContain("IS registered and addressable by");
+    expect(register).toContain("listing-filter problem");
+    expect(register).toContain("not a proxy fault");
+    // It must not collapse into the generic fail-open line.
+    expect(register).toMatch(
+      /print\(_name_taken_message\(agent_name, response\.text\), flush=True\)/,
+    );
+  });
+
+  it("treats a listing that is not an array as 'not listed'", () => {
+    // `{}` or an HTML error page must not raise and stop a host registering.
+    expect(register).toMatch(
+      /if not isinstance\(listed, list\):\s*\n\s*return None/,
+    );
+    expect(register).toContain("except ValueError:");
+  });
+
+  it("documents the state path's durability and the listing filter in the README", async () => {
+    const files = await generateAllFiles(context());
+    const readme = files.find((f) => f.filePath === "agent/README.md").content;
+    const env = files.find((f) => f.filePath === "agent/.env.example").content;
+
+    expect(readme).toContain("filtered by the");
+    expect(readme).toContain("AGENT_STATE_DIR");
+    expect(readme).toContain("not** filtered");
+    expect(env).toContain("AGENT_STATE_DIR=");
+    // The "do not reimplement the gateway's controls" instruction is untouched.
+    expect(readme).toContain("Do not reimplement these in the agent");
+  });
+});
