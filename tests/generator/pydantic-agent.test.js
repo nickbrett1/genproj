@@ -21,6 +21,7 @@ import {
 } from "../../src/generator/capability-template-utils.js";
 import { isAppOwnedPath } from "../../src/generator/genproj-overwrite.js";
 import { ValidationError } from "../../src/generator/genproj-errors.js";
+import { getCapabilityById } from "../../src/catalog/index.js";
 
 const BASE_CAPABILITIES = [
   "devcontainer-python",
@@ -343,5 +344,26 @@ describe("pydantic-agent overwrite policy", () => {
     expect(isAppOwnedPath("agent/contract.py")).toBe(true);
     expect(isAppOwnedPath("agent/card.py")).toBe(true);
     expect(isAppOwnedPath("prompts/instructions.md")).toBe(true);
+  });
+});
+
+describe("pydantic-agent form hints (visibleWhen)", () => {
+  // The form is schema-driven and has no conditional vocabulary of its own, so
+  // the registration controls' relevance lives here. Without it the form offers
+  // `registerAgent` (on by default) with no gateway to register with, and the
+  // key that only registration reads, in every project.
+  const properties =
+    getCapabilityById("pydantic-agent").configurationSchema.properties;
+
+  it("shows registerAgent only once a gateway address is given", () => {
+    expect(properties.registerAgent.visibleWhen).toEqual({
+      litellmBaseUrl: { not: [""] },
+    });
+  });
+
+  it("shows the registration key only while self-registration is on", () => {
+    expect(properties.registrationKeyEnv.visibleWhen).toEqual({
+      registerAgent: [true],
+    });
   });
 });

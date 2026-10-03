@@ -481,12 +481,18 @@
           "registerAgent": {
             "type": "boolean",
             "default": true,
+            "visibleWhen": {
+              "litellmBaseUrl": { "not": [""] }
+            },
             "description": "Register the agent with the gateway on startup. Requires litellmBaseUrl: with no gateway specified there is nothing to register with, so registration code is not generated. When false the code and README runbook are still generated, but the server does not register itself and must be registered by hand."
           },
           "registrationKeyEnv": {
             "type": "string",
             "default": "LITELLM_REGISTRATION_KEY",
-            "description": "Name of the environment variable holding the key used to register the agent. It MUST be a key bound to a proxy_admin USER (not a key minted with user_role on /key/generate, which is silently ignored), and it is a control-plane secret: inject it from Doppler, never bake it into the image."
+            "visibleWhen": {
+              "registerAgent": [true]
+            },
+            "description": "Name of the environment variable holding the key used to register the agent. Only read when the agent registers itself, so it is shown only while registerAgent is on. It MUST be a key bound to a proxy_admin USER (not a key minted with user_role on /key/generate, which is silently ignored), and it is a control-plane secret: inject it from Doppler, never bake it into the image."
           },
           "maxOutputRetries": {
             "type": "integer",
