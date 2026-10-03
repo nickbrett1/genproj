@@ -446,11 +446,6 @@
             "type": "string",
             "description": "The model id AS THE GATEWAY KNOWS IT (an alias), not a provider prefix. Free text on purpose: the gateway's model list is not knowable at generation time, and the Jev decision layer must be able to change the model without regenerating the project."
           },
-          "agentName": {
-            "type": "string",
-            "default": "",
-            "description": "The A2A agent name LiteLLM registers. Defaults to the repository name. Must NOT end in \"-dev\": container-agent already registers <repo>-dev, and LiteLLM resolves a colliding name to the existing record."
-          },
           "description": {
             "type": "string",
             "default": "",

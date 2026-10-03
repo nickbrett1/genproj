@@ -8,8 +8,9 @@
  *      data generator agree);
  *   2. it wires the A2A listen port into the container's exposed/published port
  *      and REFUSES a disagreement (the resolver + guard from the memo's §7.2);
- *   3. it refuses the two facts it cannot invent - a missing model, and the
- *      `<repo>-dev` name that collides with container-agent.
+ *   3. it refuses the facts it cannot invent - a missing model or description -
+ *      and derives the registered agent name from the repository name rather
+ *      than accepting one that could collide with container-agent's `<repo>-dev`.
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -282,7 +283,7 @@ describe("pydantic-agent port guard (§7.2)", () => {
   });
 });
 
-describe("pydantic-agent guards (missing model, name collision)", () => {
+describe("pydantic-agent guards (missing model or description)", () => {
   it("refuses a project with no model", async () => {
     await expect(
       generateAllFiles(context({ configuration: { "pydantic-agent": {} } })),
@@ -297,20 +298,33 @@ describe("pydantic-agent guards (missing model, name collision)", () => {
     ).rejects.toThrow(/declares no description/);
   });
 
-  it("refuses an agent name ending in -dev (collides with container-agent)", async () => {
-    await expect(
-      generateAllFiles(
-        context({
-          configuration: {
-            "pydantic-agent": {
-              model: "m",
-              description: "d",
-              agentName: "price-gate-dev",
-            },
+  it("derives the registered agent name from the repository name", async () => {
+    const files = await generateAllFiles(context());
+    const main = files.find((f) => f.filePath === "agent/main.py").content;
+
+    expect(main).toContain('AGENT_NAME = "price-gate"');
+  });
+
+  it("ignores an agentName in the configuration (the name is derived)", async () => {
+    // The property is gone from the schema, but a client may still send it; a
+    // value that is not honoured must not silently become the registered name,
+    // or the one collision worth preventing (`<repo>-dev`) would come back
+    // through the side door.
+    const files = await generateAllFiles(
+      context({
+        configuration: {
+          "pydantic-agent": {
+            model: "m",
+            description: "d",
+            agentName: "price-gate-dev",
           },
-        }),
-      ),
-    ).rejects.toThrow(/already registers "price-gate-dev"/);
+        },
+      }),
+    );
+    const main = files.find((f) => f.filePath === "agent/main.py").content;
+
+    expect(main).toContain('AGENT_NAME = "price-gate"');
+    expect(main).not.toContain("price-gate-dev");
   });
 
   it("refuses the project when no deployment capability is selected", async () => {

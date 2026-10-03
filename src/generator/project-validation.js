@@ -311,15 +311,14 @@ export function validateAgentPorts(context) {
  * 2. **A description.** It is the text LiteLLM's agent registry matches a task
  *    against, so an empty one generates an agent no router can find. Only the
  *    owner knows the domain, so there is no honest default.
- * 3. **A name that does not collide.** `container-agent` is locked and always
- *    registers `<repo>-dev`, so a product agent named `<repo>-dev` collides:
- *    LiteLLM resolves a colliding name to the existing record and the product
- *    agent silently never appears. The default (the repo name) is already
- *    correct; this refuses the one override that is not.
+ *
+ * The agent's *name* is not checked here: it is derived from the repository
+ * name and cannot be set to anything else, so the one collision worth guarding
+ * (`<repo>-dev`, which `container-agent` already registers) is impossible by
+ * construction rather than by a rule that has to be kept in step.
  *
  * @param {Object} context - Generation context (capabilities, configuration)
- * @throws {ValidationError} When the model or description is absent, or the
- * name collides
+ * @throws {ValidationError} When the model or description is absent
  */
 export function validatePydanticAgent(context) {
   const capabilities = context?.capabilities || [];
@@ -351,22 +350,6 @@ export function validatePydanticAgent(context) {
         "domain - LiteLLM's agent registry matches tasks against it, so an " +
         "empty description is an agent a router cannot find.",
       "description",
-    );
-  }
-
-  const projectName = context?.projectName || context?.name || "";
-  const agentName =
-    typeof config.agentName === "string" && config.agentName.trim() !== ""
-      ? config.agentName.trim()
-      : projectName;
-  if (agentName.endsWith("-dev")) {
-    throw new ValidationError(
-      `This project names its pydantic-agent "${agentName}", but ` +
-        `container-agent already registers "${projectName}-dev" in every ` +
-        "devcontainer, and LiteLLM resolves a colliding name to the existing " +
-        "record - so the product agent would silently never appear. Use a " +
-        `name without the "-dev" suffix (the repository name is the default).`,
-      "agentName",
     );
   }
 }

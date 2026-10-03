@@ -3702,9 +3702,13 @@ function getPydanticAgentTemplateData(context) {
     context.configuration?.["pydantic-agent"] || {},
   );
 
-  const declaredName =
-    typeof config.agentName === "string" ? config.agentName.trim() : "";
-  const agentName = declaredName || projectName;
+  // The registered name is the repository name, full stop. It is a key in
+  // LiteLLM's gateway-global registry, so it is not a free label - but it is
+  // not a choice either: one repo is one product agent (the same contract
+  // container-agent keeps, where `<repo>-dev` is derived rather than offered).
+  // A name that could be set to anything is a name that could collide, so this
+  // is derived and there is no override to get wrong.
+  const agentName = projectName;
 
   // The description is not cosmetic: LiteLLM's agent registry matches a task
   // against the card's name, description and skills by semantic similarity.
