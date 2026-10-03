@@ -3826,9 +3826,10 @@ function getPydanticAgentTemplateData(context) {
         "# so a listing filtered by the key's owner cannot make a registered agent",
         "# look absent. Defaults to ~/.local/state/pydantic-agent/<agent-name>/ when",
         "# unset. That default is in the image layer: it survives a restart of the",
-        "# same container but not a rebuild/recreate. Mount a state volume (see",
-        "# docker-container.dataMounts) and point this at it to keep the id across",
-        "# redeploys. An unwritable path is tolerated: registration still succeeds.",
+        "# same container but not a rebuild/recreate. Mount a writable host directory",
+        "# (docker-container.dataMounts with readOnly: false - dataMounts are",
+        "# read-only by default) and point this at it to keep the id across redeploys.",
+        "# An unwritable path is tolerated: registration still succeeds.",
         "AGENT_STATE_DIR=",
       ].join("\n")
     : [
@@ -3953,9 +3954,10 @@ listing-filter problem, not a gateway outage.
 
 \`AGENT_STATE_DIR\` defaults to a path in the image layer, so the remembered id
 survives a restart of the same container but not a rebuild/recreate. To keep it
-across redeploys, mount a state directory with \`docker-container.dataMounts\` and
-point \`AGENT_STATE_DIR\` at it. An unwritable path is tolerated: registration
-still succeeds, only the fallback is weakened.
+across redeploys, mount a **writable** host directory with
+\`docker-container.dataMounts\` (\`readOnly: false\` — dataMounts default to
+read-only) and point \`AGENT_STATE_DIR\` at it. An unwritable path is tolerated:
+registration still succeeds, only the fallback is weakened.
 
 **One card field the container cannot own: access groups.** \`agent_access_groups\`
 is dashboard-only — the API accepts the field and silently drops it. Group-based

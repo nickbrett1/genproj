@@ -93,9 +93,10 @@ the deployment's volumes, not of the repository.
   best-effort convenience by default, exactly as it is in the reference for a
   host whose state dir is not persisted.
 - To keep the id across redeploys — the case the fallback exists for — mount a
-  host directory with `docker-container.dataMounts` and point `AGENT_STATE_DIR`
-  at it. This is documented in the generated `agent/README.md` and
-  `agent/.env.example`.
+  **writable** host directory with `docker-container.dataMounts`
+  (`readOnly: false`; dataMounts default to read-only) and point
+  `AGENT_STATE_DIR` at it. This is documented in the generated `agent/README.md`
+  and `agent/.env.example`.
 - An unwritable path (read-only mount, missing volume, no `HOME`) is tolerated:
   registration still succeeds and only the fallback is weakened.
 

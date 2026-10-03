@@ -38,7 +38,8 @@ because a missing file costs the fallback, not a registration that otherwise
 worked. The default path lives in the container's image layer, so it survives a
 restart of the same container but not a rebuild/recreate (e.g. Watchtower
 pulling a new image). To keep it across redeploys - the case the fallback exists
-for - mount a host directory with `docker-container.dataMounts` and point
+for - mount a writable host directory with `docker-container.dataMounts`
+(`readOnly: false`, since dataMounts are read-only by default) and point
 `AGENT_STATE_DIR` at it.
 
 A `POST` refusal whose body says the name is taken is treated as proof the
