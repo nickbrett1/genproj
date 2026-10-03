@@ -3821,6 +3821,15 @@ function getPydanticAgentTemplateData(context) {
         "# with user_role on /key/generate - that field is silently ignored). It is a",
         "# control-plane secret: rotate it independently of the gateway.",
         `${registrationKeyEnv}=`,
+        "",
+        "# Where the gateway id assigned to this agent is remembered between runs,",
+        "# so a listing filtered by the key's owner cannot make a registered agent",
+        "# look absent. Defaults to ~/.local/state/pydantic-agent/<agent-name>/ when",
+        "# unset. That default is in the image layer: it survives a restart of the",
+        "# same container but not a rebuild/recreate. Mount a state volume (see",
+        "# docker-container.dataMounts) and point this at it to keep the id across",
+        "# redeploys. An unwritable path is tolerated: registration still succeeds.",
+        "AGENT_STATE_DIR=",
       ].join("\n")
     : [
         "# Self-registration is off (no litellmBaseUrl was given at generation time),",
@@ -3928,6 +3937,25 @@ or \`POST\`s a new one. Registration is **idempotent by name** and **fails open*
 if the gateway is unreachable the agent logs it and keeps serving; the next
 restart re-registers. The container owns its card, so a changed description or
 skill ships with the image.
+
+The listing is **not authoritative**: \`GET /v1/agents\` is filtered by the
+calling key's owner, so the \`proxy_admin\` user key this agent registers with can
+omit a row that exists (an older build's row carries no owner stamp and
+disappears the same way). The agent therefore also remembers the id the gateway
+assigned it, at \`$AGENT_STATE_DIR/registry-agent-id\`
+(\`~/.local/state/pydantic-agent/<agent-name>/\` when unset), and falls back to
+\`GET /v1/agents/{id}\` — which is **not** filtered — when the listing comes up
+empty. If a \`POST\` is refused because the name is taken, the agent re-looks-up
+the entry and rewrites it in place. If it still cannot see the entry, it says so
+distinctly rather than reporting a proxy fault: the agent is registered and
+addressable by id, and this key simply cannot see or manage its own entry — a
+listing-filter problem, not a gateway outage.
+
+\`AGENT_STATE_DIR\` defaults to a path in the image layer, so the remembered id
+survives a restart of the same container but not a rebuild/recreate. To keep it
+across redeploys, mount a state directory with \`docker-container.dataMounts\` and
+point \`AGENT_STATE_DIR\` at it. An unwritable path is tolerated: registration
+still succeeds, only the fallback is weakened.
 
 **One card field the container cannot own: access groups.** \`agent_access_groups\`
 is dashboard-only — the API accepts the field and silently drops it. Group-based
