@@ -55,14 +55,16 @@ describe("primary language (D8): declared, not inferred", () => {
     const devcontainerJson = JSON.parse(
       byPath(generated, ".devcontainer/devcontainer.json").content,
     );
-    // The base is python: its feature is present and rust's remoteUser is not
-    // (additional devcontainers merge features/extensions only). The `name`
-    // field is now the project name, not the language, so it can no longer be
-    // used as the language signal.
+    // The base is python: its feature is present (rust's is not).
+    // Additional devcontainers merge features/extensions only, so rust's
+    // remoteUser cannot leak in. The python base now emits an explicit
+    // remoteUser (vscode), matching its image, rather than leaving it
+    // implicit. The `name` field is the project name, not the language, so it
+    // can no longer be used as the language signal.
     expect(
       devcontainerJson.features["ghcr.io/devcontainers/features/python:1"],
     ).toEqual({ version: "3.12" });
-    expect(devcontainerJson.remoteUser).toBeUndefined();
+    expect(devcontainerJson.remoteUser).toBe("vscode");
   });
 
   it("lets a declared language win even when its devcontainer is absent", async () => {
@@ -117,5 +119,77 @@ describe("primary language (D8): declared, not inferred", () => {
     expect(python.sonarLanguageSettings).toBe(
       "sonar.python.coverage.reportPaths=coverage.xml\nsonar.python.version=3.12",
     );
+  });
+});
+
+describe("mount home follows the devcontainer's actual user", () => {
+  const devcontainerJsonFor = async (context) => {
+    const generated = await files(context);
+    return JSON.parse(
+      byPath(generated, ".devcontainer/devcontainer.json").content,
+    );
+  };
+
+  it("mounts to /home/node for a node project", async () => {
+    const json = await devcontainerJsonFor({
+      projectName: "gaggle",
+      capabilities: ["devcontainer-node", "doppler", "coding-agents"],
+      configuration: {},
+    });
+    expect(json.remoteUser).toBe("node");
+    for (const mount of json.mounts) {
+      if (mount.includes("/.ssh") || mount.includes("/.doppler")) {
+        expect(mount).toContain("target=/home/node/");
+      }
+    }
+    expect(json.mounts.some((m) => m.includes("target=/home/vscode/"))).toBe(
+      false,
+    );
+  });
+
+  it("mounts to /home/vscode when a python image also selects devcontainer-node (devdash regression)", async () => {
+    // The python image runs as `vscode` even though the node capability (and
+    // its node feature) is selected: the mount home must follow the image's
+    // user, not the bare presence of devcontainer-node. Getting this wrong put
+    // the host ~/.ssh under /home/node, where the running user never read it,
+    // so `git push` had no key.
+    const json = await devcontainerJsonFor({
+      projectName: "devdash",
+      capabilities: [
+        "devcontainer-python",
+        "devcontainer-node",
+        "doppler",
+        "coding-agents",
+      ],
+      configuration: { language: "python" },
+    });
+    expect(json.remoteUser).toBe("vscode");
+    expect(
+      json.features["ghcr.io/devcontainers/features/common-utils:2"].username,
+    ).toBe("vscode");
+    for (const mount of json.mounts) {
+      if (mount.includes("/.ssh") || mount.includes("/.doppler")) {
+        expect(mount).toContain("target=/home/vscode/");
+      }
+    }
+    expect(json.mounts.some((m) => m.includes("target=/home/node/"))).toBe(
+      false,
+    );
+  });
+
+  it("mounts to /home/vscode for java and rust projects", async () => {
+    for (const language of ["java", "rust"]) {
+      const json = await devcontainerJsonFor({
+        projectName: "quartz-anvil",
+        capabilities: [`devcontainer-${language}`, "doppler"],
+        configuration: {},
+      });
+      expect(json.remoteUser).toBe("vscode");
+      expect(
+        json.mounts
+          .find((m) => m.includes("/.ssh"))
+          .includes("target=/home/vscode/.ssh"),
+      ).toBe(true);
+    }
   });
 });

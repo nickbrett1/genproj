@@ -113,6 +113,7 @@ import {
   resolveProjectLanguage,
   cargoPackageName,
   primaryDevcontainerCapabilityId,
+  devcontainerUser,
   resolveDopplerTarget,
   toPythonPackageName,
   toDistributionName,
@@ -1238,11 +1239,18 @@ function addExtensionsFromCapabilities(allExtensions, capabilityIds) {
  * volumes only when those capabilities are selected, and the kitchen-sink
  * forwardPorts are dropped (docsify adds its own below).
  * @param {Object} context - Generation context
- * @returns {{devcontainerMounts: string, devcontainerForwardPorts: string}} Template data
+ * @returns {{devcontainerUser: string, devcontainerMounts: string, devcontainerForwardPorts: string}} Template data
  */
 export function getDevcontainerJsonExtras(context) {
-  const isNode = context.capabilities.includes("devcontainer-node");
-  const home = isNode ? "/home/node" : "/home/vscode";
+  // The mount home follows the user the rendered devcontainer actually runs
+  // as -- the same value the base devcontainer-*-json.template emits as
+  // remoteUser/username via {{devcontainerUser}} -- NOT the bare presence of
+  // the devcontainer-node capability. A python image that also selects
+  // devcontainer-node (for its node feature) runs as `vscode`, so its mounts
+  // must target /home/vscode; keying off isNode put them under /home/node and
+  // the running user never read them.
+  const user = devcontainerUser(context);
+  const home = `/home/${user}`;
   const projectName = context.projectName || context.name || "my-project";
 
   const mounts = [
@@ -1304,6 +1312,7 @@ export function getDevcontainerJsonExtras(context) {
   }
 
   return {
+    devcontainerUser: user,
     devcontainerMounts: mounts.map((m) => `"${m}"`).join(",\n    "),
     devcontainerForwardPorts: JSON.stringify(forwardPorts),
   };
