@@ -13,6 +13,26 @@ LITELLM_API_KEY=
 
 {{agentRegisterEnvBlock}}
 
+{{agentStateEnvBlock}}
+
+# The roost fleet hub (see agent/README.md). OPTIONAL, and with NO default: the
+# address is not guessable, so with it unset the client is not built at all and
+# the agent behaves exactly as before. Set it to make this agent visible in
+# roost's fleet view and its History panel.
+ROOST_HUB_URL=
+
+# The id this agent presents to roost. Blank derives it from the agent name; if
+# the hub enforces tokens this MUST match the id its token map keys on.
+ROOST_AGENT_ID=
+
+# OPTIONAL escape hatch: `ROOST_ENABLED=false` keeps the URL but never dials.
+ROOST_ENABLED=true
+
+# A NAME, not a value: the variable holding the bearer token (default
+# ROOST_AGENT_TOKEN). Only needed if the hub sets ROOST_AGENT_TOKENS.
+ROOST_TOKEN_ENV=ROOST_AGENT_TOKEN
+ROOST_AGENT_TOKEN=
+
 # The address the card advertises to the LiteLLM proxy, when the container
 # cannot infer a reachable one. Must be reachable FROM the proxy's host.
 # A2A_CARD_URL=http://<host>:{{listenPort}}

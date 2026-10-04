@@ -15,9 +15,13 @@ agent served over the [A2A protocol](https://a2a-protocol.org/) by the official
 | `agent/contract.py`      | the output type and the Validator layer                          |
 | `agent/card.py`          | the card's skills (plain dicts, served and registered)           |
 | `agent/headers.py`       | forwarding of the `X-LiteLLM-*` context headers                  |{{agentRegisterFileRow}}
+| `agent/history.py`       | durable session history read from the A2A task store             |
+| `agent/roost.py`         | the roost fleet client (reconnecting WebSocket, fail-open)       |
 | `prompts/instructions.md`| the agent's instructions — **human-owned, never overwritten**    |
 | `agent/.env.example`     | the environment the container reads                              |
 | `tests/test_a2a_wire.py` | the wire-honesty regression test (card dialect == endpoint)      |
+| `tests/test_roost.py`    | the roost wire + capability-honesty regression test              |
+| `tests/test_history.py`  | durable history over a real SQLite store, end to end             |
 
 `agent/` and `prompts/` are app-owned: a regeneration with `overwrite: true`
 will not clobber your edits. Resolve a path to `overwrite` if you *do* want the
@@ -33,6 +37,32 @@ Bind `0.0.0.0`, not loopback: the LiteLLM proxy reaches this container over the
 network.
 
 {{agentRegisterRunbook}}
+## Fleet visibility and session history (roost)
+
+[roost](https://github.com/nickbrett1/roost) is the fleet's mission-control hub.
+When `ROOST_HUB_URL` is set, `agent/roost.py` dials *out* to it and holds one
+long-lived WebSocket open at `/agent/ws`; with no `ROOST_HUB_URL` the client is
+not built at all and the agent behaves exactly as before. `hello` advertises
+`capabilities: ["activity", "status", "sessions"]` and
+`kind: "pydantic-agent"`.
+
+It answers the `history.*` family (`history.sessions`, `history.session`,
+`history.messages`, `history.search`), `sessions.list`, and `status.get`. That
+history is **not a second store**: the A2A server already groups turns by
+`contextId` (a session) and keeps each turn's messages in `task.history`. The
+default `InMemoryTaskStore` discards that on restart, so `agent/history.py`
+persists it in SQLite at `$AGENT_STATE_DIR/a2a_tasks.db` (the same writable mount
+the remembered gateway id uses). A startup retention sweep keeps the newest ~200
+sessions and nothing older than 30 days; `status.get.sessions.retained` reports
+what is actually present.
+
+The `sessions` token is deliberately the same one the `a2a-goose` agents
+advertise, so roost's existing History UI logic covers this agent too. A method
+no advertised capability promises is answered `ok: false` with an explicit
+error, never an invented body, and a history-store problem is fail-open:
+`tests/test_roost.py` asserts every advertised capability is actually answered,
+and `tests/test_history.py` drives a real loopback WebSocket and SQLite store.
+
 ## Protocol version and wire honesty
 
 The server is built on `a2a-sdk` — **the same SDK, and the same pinned version,

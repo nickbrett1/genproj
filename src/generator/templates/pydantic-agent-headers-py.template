@@ -29,14 +29,14 @@ import contextvars
 
 import httpx
 
-_headers: contextvars.ContextVar[dict[str, str]] = contextvars.ContextVar(
-    "litellm_headers", default={}
+_headers: contextvars.ContextVar[dict[str, str] | None] = contextvars.ContextVar(
+    "litellm_headers", default=None
 )
 
 
 def current_litellm_headers() -> dict[str, str]:
     """The LiteLLM context headers for the turn being run, if any."""
-    return _headers.get()
+    return _headers.get() or {}
 
 
 def bind_litellm_headers(headers: dict[str, str]) -> None:

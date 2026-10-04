@@ -105,6 +105,16 @@ const pydanticAgentEnvExample =
   templateFiles["pydantic-agent-env-example.template"];
 const pydanticAgentReadme = templateFiles["pydantic-agent-readme.template"];
 const pydanticAgentTestsPy = templateFiles["pydantic-agent-tests-py.template"];
+const pydanticAgentRoostPy = templateFiles["pydantic-agent-roost-py.template"];
+const pydanticAgentRoostTestsPy =
+  templateFiles["pydantic-agent-roost-tests-py.template"];
+const pydanticAgentHistoryPy =
+  templateFiles["pydantic-agent-history-py.template"];
+const pydanticAgentHistoryTestsPy =
+  templateFiles["pydantic-agent-history-tests-py.template"];
+const pydanticAgentTestsConftestPy =
+  templateFiles["pydantic-agent-tests-conftest-py.template"];
+
 // webapp/src/lib/utils/file-generator.js
 
 import { capabilities } from "../catalog/index.js";
@@ -999,6 +1009,11 @@ const templateImports = {
   "pydantic-agent-env-example": pydanticAgentEnvExample,
   "pydantic-agent-readme": pydanticAgentReadme,
   "pydantic-agent-tests-py": pydanticAgentTestsPy,
+  "pydantic-agent-roost-py": pydanticAgentRoostPy,
+  "pydantic-agent-roost-tests-py": pydanticAgentRoostTestsPy,
+  "pydantic-agent-history-py": pydanticAgentHistoryPy,
+  "pydantic-agent-history-tests-py": pydanticAgentHistoryTestsPy,
+  "pydantic-agent-tests-conftest-py": pydanticAgentTestsConftestPy,
 };
 
 export class TemplateEngine {
@@ -1985,11 +2000,21 @@ export function generatePyProjectToml(context) {
   // remove. `pydantic-ai` (the full metapackage) carries the `mcp` and `openai`
   // extras the generated agent imports. Declared here so the container's
   // `pip install .` installs them.
-  if (context.capabilities.includes("pydantic-agent")) {
+  const hasPydanticAgent = context.capabilities.includes("pydantic-agent");
+  if (hasPydanticAgent) {
     deps.push(
       "pydantic-ai>=2.40",
-      "a2a-sdk[http-server]==1.1.0",
+      // `[http-server]` is the Starlette/sse-starlette transport; `[sqlite]` is
+      // SQLAlchemy + aiosqlite for the persistent `DatabaseTaskStore` that makes
+      // the transcript (and therefore history) durable across restarts. One
+      // pin, so the client and server SDK versions cannot skew.
+      "a2a-sdk[http-server,sqlite]==1.1.0",
       "uvicorn>=0.30",
+      // The roost fleet client (agent/roost.py) speaks roost protocol v1 over a
+      // long-lived outbound WebSocket. Declared explicitly rather than relying
+      // on it transitively. `>=14` is the first version whose client takes the
+      // `additional_headers` kwarg the client uses.
+      "websockets>=14",
     );
   }
   const dependencies =
@@ -1998,6 +2023,37 @@ export function generatePyProjectToml(context) {
         deps.map((d) => `    "${String(d).replace(/"/g, '\\"')}"`).join(",\n") +
         "\n]"
       : "[]";
+
+  // `agent/` is the code the image runs. When a pydantic-agent is generated it
+  // must be linted too, or the most protocol-sensitive module in the repo (the
+  // roost client) sits in the one directory `ruff check src tests` never sees.
+  // `agent` is also first-party for import sorting, since it lives beside
+  // `src/` rather than under it.
+  const ruffSrc = hasPydanticAgent
+    ? '["src", "tests", "agent"]'
+    : '["src", "tests"]';
+  const ruffIsort = hasPydanticAgent
+    ? `\n[tool.ruff.lint.isort]\nknown-first-party = ["agent", "${pkgName}"]\n`
+    : "";
+
+  // The pydantic-agent's runnable code lives in the top-level `agent/` package
+  // (the image runs `uvicorn agent.main:app`), not under src/. Listing it
+  // explicitly means `pip install -e .` / `python -m build` packages the code
+  // that actually runs, AND makes `agent` importable in the test suite without a
+  // sys.path shim (which ruff's E402 would otherwise flag). A project without the
+  // capability keeps the plain src-layout finder.
+  const setuptoolsPackages = hasPydanticAgent
+    ? `[tool.setuptools]
+# BOTH packages ship: the generated ${pkgName} stub under src/, and agent/ - the
+# code the image runs. Packaging agent also makes it importable in tests, so the
+# suite needs no sys.path shim.
+packages = ["${pkgName}", "agent"]
+
+[tool.setuptools.package-dir]
+${pkgName} = "src/${pkgName}"
+agent = "agent"`
+    : `[tool.setuptools.packages.find]
+where = ["src"]`;
 
   const pyproject = `[project]
 name = "${distName}"
@@ -2017,14 +2073,13 @@ dev = [
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools.packages.find]
-where = ["src"]
+${setuptoolsPackages}
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
 [tool.ruff]
-src = ["src", "tests"]
+src = ${ruffSrc}
 # Pin the language level. Without it ruff infers target-version from
 # requires-python, and target-gated rules (e.g. UP017 "use datetime.UTC") then
 # switch on or off depending on how the config resolved.
@@ -2038,7 +2093,7 @@ target-version = "py311"
 # is deterministic and local lint agrees with CI. Update \`select\` (or add
 # \`ignore\`) deliberately when you want a different rule set.
 select = ["E4", "E7", "E9", "F", "B", "I", "UP"]
-`;
+${ruffIsort}`;
 
   const initPy = `"""${projectName} package."""
 

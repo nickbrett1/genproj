@@ -1,0 +1,17 @@
+"""Test configuration for the generated agent's suite.
+
+`agent.main` builds its model object at import time, and constructing the
+OpenAI-compatible client requires *an* api key (a placeholder is enough - these
+tests never call the gateway). Setting it here means every test module can
+import `agent.main` without repeating the setup, so the suite is hermetic in CI
+(where no gateway secret exists) and on a laptop alike.
+
+`agent` is packaged by pyproject.toml, so it imports without a sys.path shim.
+"""
+
+from __future__ import annotations
+
+import os
+
+os.environ.setdefault("LITELLM_API_KEY", "test-key-not-a-secret")
+os.environ.setdefault("LITELLM_BASE_URL", "http://localhost:4000")

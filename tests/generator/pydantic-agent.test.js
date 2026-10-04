@@ -67,9 +67,15 @@ describe("pydantic-agent generation", () => {
       "agent/card.py",
       "agent/register.py",
       "agent/headers.py",
+      "agent/history.py",
+      "agent/roost.py",
       "agent/.env.example",
       "agent/README.md",
       "prompts/instructions.md",
+      "tests/test_a2a_wire.py",
+      "tests/test_history.py",
+      "tests/test_roost.py",
+      "tests/conftest.py",
     ]) {
       expect(paths).toContain(path);
     }
@@ -77,7 +83,8 @@ describe("pydantic-agent generation", () => {
     for (const file of files) {
       if (
         file.filePath.startsWith("agent/") ||
-        file.filePath === "prompts/instructions.md"
+        file.filePath === "prompts/instructions.md" ||
+        file.filePath.startsWith("tests/")
       ) {
         expect(file.content).not.toMatch(/\{\{[^}]+\}\}/);
       }
@@ -197,9 +204,16 @@ describe("pydantic-agent generation", () => {
     ).content;
     expect(pyproject).toContain('"pydantic-ai');
     // Pinned to the exact SDK version the LiteLLM gateway's A2A client uses:
-    // matching the client is what removes the client/server wire skew.
-    expect(pyproject).toContain('"a2a-sdk[http-server]==1.1.0"');
+    // matching the client is what removes the client/server wire skew. The
+    // `sqlite` extra pulls SQLAlchemy + aiosqlite for the durable task store.
+    expect(pyproject).toContain('"a2a-sdk[http-server,sqlite]==1.1.0"');
     expect(pyproject).toContain('"uvicorn');
+    // The roost fleet client speaks roost protocol v1 over a WebSocket.
+    expect(pyproject).toContain('"websockets>=14"');
+    // `agent/` ships in the image AND is importable in tests, so the suite needs
+    // no sys.path shim.
+    expect(pyproject).toContain('"agent"');
+    expect(pyproject).toContain("[tool.setuptools.package-dir]");
     // FastA2A is the library whose card lied about its dialect; it must be gone.
     expect(pyproject).not.toContain("fasta2a");
   });
@@ -538,5 +552,122 @@ describe("pydantic-agent registration robustness (registry.rs parity)", () => {
     expect(env).toContain("AGENT_STATE_DIR=");
     // The "do not reimplement the gateway's controls" instruction is untouched.
     expect(readme).toContain("Do not reimplement these in the agent");
+  });
+});
+
+describe("pydantic-agent roost session history", () => {
+  // The capability previously generated NO roost client at all, so an agent
+  // appeared in the fleet (or not) with no way to answer a History panel. This
+  // block pins the whole surface: the client, the durable store it reads, the
+  // wiring, and the two regression tests that keep "advertised" == "answered".
+  beforeEach(() => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  const read = (files, path) => files.find((f) => f.filePath === path).content;
+
+  it("emits a roost client that advertises activity, status and sessions", async () => {
+    const files = await generateAllFiles(context());
+    const roost = read(files, "agent/roost.py");
+
+    expect(roost).toContain(
+      'CAPABILITIES = ["activity", "status", "sessions"]',
+    );
+    // The capability -> method table is what the "advertised == answered"
+    // regression test checks against the dispatch table.
+    expect(roost).toContain("CAPABILITY_METHODS");
+    expect(roost).toContain("_REQUEST_HANDLERS");
+    // The whole history family, plus the lighter sessions.list.
+    for (const method of [
+      '"sessions.list"',
+      '"history.sessions"',
+      '"history.session"',
+      '"history.messages"',
+      '"history.search"',
+      '"status.get"',
+    ]) {
+      expect(roost).toContain(method);
+    }
+    // No hub address is invented; the client is fail-open and reconnecting.
+    expect(roost).toContain("ROOST_HUB_URL");
+    expect(roost).toContain("backoff");
+  });
+
+  it("reads transcript history from the A2A task store, persisted in SQLite", async () => {
+    const files = await generateAllFiles(context());
+    const history = read(files, "agent/history.py");
+
+    expect(history).toContain("class TaskHistory");
+    expect(history).toContain("build_task_store");
+    expect(history).toContain("DatabaseTaskStore");
+    expect(history).toContain("a2a_tasks.db");
+    expect(history).toContain("AGENT_STATE_DIR");
+    // Retention is bounded and swept on startup: 200 sessions / 30 days.
+    expect(history).toContain("DEFAULT_MAX_SESSIONS = 200");
+    expect(history).toContain("DEFAULT_MAX_AGE_DAYS = 30");
+    expect(history).toContain("retention_sweep");
+    // The response shapes the roost UI reads, field by field.
+    expect(history).toContain('"sessionId"');
+    expect(history).toContain('"messageCount"');
+    expect(history).toContain('"nextCursor"');
+  });
+
+  it("wires the durable store and TaskHistory into the A2A app", async () => {
+    const files = await generateAllFiles(context());
+    const main = read(files, "agent/main.py");
+
+    expect(main).toContain(
+      "from agent.history import TaskHistory, build_task_store",
+    );
+    expect(main).toContain("TaskHistory(store)");
+    expect(main).toContain("InMemoryTaskStore");
+    // Fail-open: a store that cannot be built still serves, in memory.
+    expect(main).toContain("if store is None:");
+    // Retention is swept on startup, fail-open.
+    expect(main).toMatch(/retention_sweep\(\)/);
+    // End-to-end turns must land in the store: the Task is enqueued before any
+    // status update, the fix that makes a turn readable as history.
+    expect(main).toContain("new_task_from_user_message");
+    expect(main).toContain("await event_queue.enqueue_event(initial_task)");
+    // The primary response envelope is unchanged.
+    expect(main).toContain("output_type=PromptedOutput(AgentResult)");
+  });
+
+  it("emits the capability-honesty and history regression tests plus a conftest", async () => {
+    const files = await generateAllFiles(context());
+    const roostTest = read(files, "tests/test_roost.py");
+    const historyTest = read(files, "tests/test_history.py");
+    const conftest = read(files, "tests/conftest.py");
+
+    // The regression the task asked for: advertised == answered, over the real
+    // dispatch table.
+    expect(roostTest).toContain(
+      "test_every_advertised_capability_is_actually_answered",
+    );
+    expect(roostTest).toContain("CAPABILITY_METHODS");
+    expect(roostTest).toContain("_REQUEST_HANDLERS");
+
+    // History is driven over a real SQLite store and a real loopback WebSocket.
+    expect(historyTest).toContain("DatabaseTaskStore");
+    expect(historyTest).toContain("websockets");
+    expect(historyTest).toContain(
+      "test_a_turn_through_the_app_is_readable_as_history",
+    );
+
+    expect(conftest).toContain("LITELLM_BASE_URL");
+  });
+
+  it("documents roost and the session-history store in the env example and README", async () => {
+    const files = await generateAllFiles(context());
+    const env = read(files, "agent/.env.example");
+    const readme = read(files, "agent/README.md");
+
+    expect(env).toContain("ROOST_HUB_URL=");
+    expect(env).toContain("AGENT_STATE_DIR=");
+    expect(readme).toContain("agent/roost.py");
+    expect(readme).toContain("agent/history.py");
+    expect(readme).toContain("a2a_tasks.db");
   });
 });

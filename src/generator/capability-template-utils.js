@@ -3868,6 +3868,21 @@ function getPydanticAgentTemplateData(context) {
         "# Self-registration is off (no litellmBaseUrl was given at generation time),",
         "# so no registration key is read. To enable it, set litellmBaseUrl and regenerate.",
       ].join("\n");
+
+  // The durable task store (agent/history.py) lives at
+  // `$AGENT_STATE_DIR/a2a_tasks.db` - the same mount the remembered gateway id
+  // uses. When registration is on, that block above already declares
+  // AGENT_STATE_DIR and explains the durability trade-off; when it is off,
+  // declare the variable here so the task-store path is still configurable.
+  const agentStateEnvBlock = [
+    "# The SQLite task store that makes session HISTORY durable lives at",
+    "# $AGENT_STATE_DIR/a2a_tasks.db. It is the agent's own A2A conversation",
+    "# state (contextId = a session, task.history = the transcript), read back by",
+    "# roost's History panel. With AGENT_STATE_DIR unset it lands in the image",
+    "# layer and history is lost on a rebuild/recreate.",
+    ...(registration.enabled ? [] : ["AGENT_STATE_DIR="]),
+  ].join("\n");
+
   // The register.py row is appended by ending the previous table row with this
   // placeholder: a conditional row cannot be an empty line (a blank line ends a
   // Markdown table), so the value carries its own leading newline.
@@ -3916,6 +3931,7 @@ function getPydanticAgentTemplateData(context) {
     agentRegisterImport,
     agentRegisterBody,
     agentRegisterEnvBlock,
+    agentStateEnvBlock,
     agentRegisterModuleDoc,
     agentRegisterDoc,
     agentRegisterFileRow,

@@ -19,27 +19,10 @@ Run with `pytest` (the generated project's CI already does).
 
 from __future__ import annotations
 
-import os
-import sys
-from pathlib import Path
-
-# The generated `agent/` package lives at the repository root (uvicorn imports
-# it from there), but `tests/` is not a package, so make the root importable
-# regardless of how pytest was invoked.
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-# Importing agent.main builds the model object; it makes no network call, but
-# the gateway address must be configured. Point it somewhere syntactically valid.
-os.environ.setdefault("LITELLM_BASE_URL", "http://localhost:4000")
-
-# Import agent.main first: it pulls in a2a.server.routes, which imports the
-# v0.3 adapter. Importing the adapter ahead of that trips a circular import.
-from agent import main
-
 from a2a.server.request_handlers.response_helpers import agent_card_to_dict
 from a2a.server.routes.jsonrpc_dispatcher import JsonRpcDispatcher
+
+from agent import main
 
 
 def _served_jsonrpc_interface() -> dict:
