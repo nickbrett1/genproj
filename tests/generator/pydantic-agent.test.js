@@ -18,6 +18,7 @@ import { generateAllFiles } from "../../src/generator/file-generator.js";
 import {
   resolveAgentListenPort,
   getCapabilityTemplateData,
+  ruffCheckCommand,
 } from "../../src/generator/capability-template-utils.js";
 import { isAppOwnedPath } from "../../src/generator/genproj-overwrite.js";
 import { ValidationError } from "../../src/generator/genproj-errors.js";
@@ -669,5 +670,15 @@ describe("pydantic-agent roost session history", () => {
     expect(readme).toContain("agent/roost.py");
     expect(readme).toContain("agent/history.py");
     expect(readme).toContain("a2a_tasks.db");
+  });
+
+  it("lints the top-level agent/ package, not just src/ and tests/", () => {
+    // The agent's runnable code lives in `agent/`; `ruff check src tests` would
+    // never see agent/roost.py or agent/history.py. The lint scope is widened
+    // whenever the capability is present, and left alone otherwise.
+    expect(ruffCheckCommand(context())).toBe("ruff check agent src tests");
+    expect(ruffCheckCommand({ capabilities: ["devcontainer-python"] })).toBe(
+      "ruff check src tests",
+    );
   });
 });

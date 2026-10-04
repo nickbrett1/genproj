@@ -2457,7 +2457,7 @@ ${listedCapabilities
 3. Run the checks:
 
    \`\`\`bash
-   ruff check src tests
+   ${ruffCheckCommand(context)}
    pytest -v
    \`\`\`
 `;
