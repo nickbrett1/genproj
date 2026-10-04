@@ -430,10 +430,11 @@ export const capabilityTemplates = {
       isExecutable: true,
     },
   ],
-  // A working A2A agent: a Pydantic AI agent served by FastA2A that registers
-  // itself with the LiteLLM gateway. `agent/` and `prompts/` are app-owned
-  // (see genproj-overwrite.js): the generated files are a shell the owner
-  // extends, and regeneration must not clobber that - especially
+  // A working A2A agent: a Pydantic AI agent served by the official A2A SDK
+  // (`a2a-sdk`, pinned to the version the LiteLLM gateway's client uses) that
+  // registers itself with the LiteLLM gateway. `agent/` and `prompts/` are
+  // app-owned (see genproj-overwrite.js): the generated files are a shell the
+  // owner extends, and regeneration must not clobber that - especially
   // prompts/instructions.md, which is human-owned after the first generation.
   "pydantic-agent": [
     {
@@ -484,6 +485,11 @@ export const capabilityTemplates = {
       id: "agent-readme",
       filePath: "agent/README.md",
       templateId: "pydantic-agent-readme",
+    },
+    {
+      id: "agent-wire-test",
+      filePath: "tests/test_a2a_wire.py",
+      templateId: "pydantic-agent-tests-py",
     },
   ],
 };

@@ -4,8 +4,16 @@ Run it with:
 
     uvicorn agent.main:app --host 0.0.0.0 --port {{listenPort}}
 
-The A2A app, agent card and JSON-RPC transport come from FastA2A; this module
-wires a Pydantic AI agent into it.{{agentRegisterModuleDoc}}
+The A2A app, agent card and JSON-RPC transport come from the official A2A
+Python SDK (`a2a-sdk`); this module wires a Pydantic AI agent into it as an
+`AgentExecutor`. The served card's advertised JSON-RPC dialect and the dialect
+the endpoint actually accepts both come from `SUPPORTED_DIALECTS` / `PROTOCOL_VERSION`
+below, so the card can never claim a dialect this server rejects - the defect
+that made every FastA2A-generated agent undialable.
+
+Serve with the same SDK the caller uses: the LiteLLM gateway invokes this agent
+with an `a2a-sdk` client, so using `a2a-sdk`'s server removes the client/server
+skew by construction instead of papering over it.{{agentRegisterModuleDoc}}
 
 Bind 0.0.0.0, not 127.0.0.1: the caller is the LiteLLM proxy reaching this
 container across the network, so a loopback bind is unreachable.
@@ -16,18 +24,30 @@ from __future__ import annotations
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import AsyncIterator
 
-from fasta2a import FastA2A, InMemoryBroker, InMemoryStorage
-from fasta2a.pydantic_ai import worker_lifespan
-from pydantic_ai import Agent
-from starlette.middleware import Middleware
+from a2a.helpers import new_text_message, new_text_part
+from a2a.server.agent_execution import AgentExecutor, RequestContext
+from a2a.server.events import EventQueue
+from a2a.server.request_handlers import DefaultRequestHandler
+from a2a.server.routes import create_agent_card_routes, create_jsonrpc_routes
+from a2a.server.tasks import InMemoryTaskStore, TaskUpdater
+from a2a.types.a2a_pb2 import (
+    AgentCapabilities,
+    AgentCard,
+    AgentInterface,
+    AgentSkill,
+)
+from a2a.utils.constants import TransportProtocol
+from pydantic_ai import Agent, ModelSettings, PromptedOutput
+from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from agent.card import AGENT_SKILLS
 from agent.contract import AgentResult, validate_agent_result
-from agent.headers import HeaderForwardingWorker, LiteLLMHeaderMiddleware
+from agent.headers import bind_litellm_headers
 from agent.model import build_model
 {{agentToolsetsImport}}{{agentRegisterImport}}
 PACKAGE_ROOT = Path(__file__).resolve().parent
@@ -35,7 +55,25 @@ INSTRUCTIONS_PATH = PACKAGE_ROOT.parent / "prompts" / "instructions.md"
 
 AGENT_NAME = "{{agentName}}"
 AGENT_DESCRIPTION = {{agentDescriptionLiteral}}
+AGENT_VERSION = "0.1.0"
+
+# The A2A dialect this server speaks. The served card advertises exactly this,
+# and nothing else, so the card is a statement about the wire - not a wish.
 PROTOCOL_VERSION = "{{protocolVersion}}"
+
+# The JSON-RPC method each dialect uses to send a message. A version is only
+# advertised on the card if it appears here; a version in here is one the
+# endpoint really accepts (verified by tests/test_a2a_wire.py).
+SEND_METHOD_BY_DIALECT: dict[str, str] = {
+    "1.0": "SendMessage",
+    "0.3": "message/send",
+}
+# The dialects this endpoint is configured to accept. `a2a-sdk`'s v1.0 handler is
+# always on; the legacy 0.3 dialect rides on its backward-compat adapter, which
+# is enabled below only when "0.3" is in this set. Advertising a version whose
+# adapter is off is exactly the lie this scaffold exists to prevent.
+SUPPORTED_DIALECTS: frozenset[str] = frozenset({PROTOCOL_VERSION})
+
 # The URL the card advertises - the address the LiteLLM proxy dials. It must be
 # reachable from the proxy's host, so it is an address, not a loopback name.
 CARD_URL = os.environ.get("A2A_CARD_URL", "http://0.0.0.0:{{listenPort}}")
@@ -52,10 +90,43 @@ def _load_instructions() -> str:
     return {{agentInstructionsLiteral}}
 
 
+def build_agent_card() -> AgentCard:
+    """The card this server publishes, built from the one protocol version.
+
+    `supported_interfaces` is the field the LiteLLM gateway reads to choose a
+    transport, so its `protocol_version` must equal `PROTOCOL_VERSION` - a value
+    this same module is configured to serve.
+    """
+    return AgentCard(
+        name=AGENT_NAME,
+        description=AGENT_DESCRIPTION,
+        version=AGENT_VERSION,
+        supported_interfaces=[
+            AgentInterface(
+                url=CARD_URL,
+                protocol_binding=TransportProtocol.JSONRPC.value,
+                protocol_version=PROTOCOL_VERSION,
+            )
+        ],
+        capabilities=AgentCapabilities(streaming=True),
+        default_input_modes=["application/json"],
+        default_output_modes=["application/json"],
+        skills=[AgentSkill(**skill) for skill in AGENT_SKILLS],
+    )
+
+
 {{agentToolsetsSetup}}agent = Agent(
     build_model(),
     instructions=_load_instructions(),
-    output_type=AgentResult,
+    # PromptedOutput, not the default ToolOutput and not NativeOutput: on a
+    # thinking model (e.g. deepseek-v4-flash) forced tool_choice is rejected
+    # ("Thinking mode does not support this tool_choice") and json_schema
+    # response_format is unavailable ("This response_format type is unavailable
+    # now"). PromptedOutput asks for the schema in the prompt and works there.
+    output_type=PromptedOutput(AgentResult),
+    # Reasoning tokens bill against max_tokens, so a small cap truncates the
+    # answer before it is emitted. 4096 leaves room for the reasoning.
+    model_settings=ModelSettings(max_tokens=4096),
     retries={"output": {{maxOutputRetries}}},
     {{agentToolsetsArg}}
 )
@@ -63,13 +134,71 @@ def _load_instructions() -> str:
 # ModelRetry with real error text, up to `retries["output"]` times.
 agent.output_validator(validate_agent_result)
 
-# The worker is built at import time so the lifespan can hand the SAME instance
-# to FastA2A and to worker_lifespan. HeaderForwardingWorker is the Pydantic AI
-# worker with the LiteLLM context headers put back in scope for the task (see
-# agent/headers.py) - the plain AgentWorker would lose them.
-storage = InMemoryStorage()
-broker = InMemoryBroker()
-worker = HeaderForwardingWorker(agent=agent, broker=broker, storage=storage)
+
+class PydanticAIAgentExecutor(AgentExecutor):
+    """Runs the Pydantic AI agent and reports the result as an A2A task.
+
+    One request is one turn. The turn's output is attached as an artifact (and
+    echoed on the completion status message), so a caller gets the structured
+    answer whichever envelope it reads.
+    """
+
+    def __init__(self, agent: Agent) -> None:
+        self._agent = agent
+
+    async def execute(
+        self, context: RequestContext, event_queue: EventQueue
+    ) -> None:
+        assert context.task_id is not None
+        assert context.context_id is not None
+        task_id = context.task_id
+        context_id = context.context_id
+        updater = TaskUpdater(event_queue, task_id, context_id)
+        # The A2A SDK carries the request's HTTP headers into the call context;
+        # agent/headers.py forwards the X-LiteLLM-* ones onto this turn's model
+        # calls so traces group and spend is attributed.
+        bind_litellm_headers(context.call_context.state.get("headers", {}))
+        await updater.submit()
+        try:
+            result = await self._agent.run(context.get_user_input())
+        except Exception as exc:
+            # Report the failure as the task's terminal state instead of
+            # letting the framework turn it into an opaque 500.
+            await updater.failed(
+                new_text_message(
+                    f"The agent failed: {exc}",
+                    task_id=task_id,
+                    context_id=context_id,
+                )
+            )
+            return
+        text = result.output.model_dump_json(indent=2)
+        await updater.add_artifact([new_text_part(text)], name="result")
+        await updater.complete(
+            new_text_message(text, task_id=task_id, context_id=context_id)
+        )
+
+    async def cancel(
+        self, context: RequestContext, event_queue: EventQueue
+    ) -> None:
+        assert context.task_id is not None
+        assert context.context_id is not None
+        updater = TaskUpdater(event_queue, context.task_id, context.context_id)
+        await updater.cancel()
+
+
+def _build_request_handler() -> DefaultRequestHandler:
+    """The SDK request handler, wired to this agent and card.
+
+    `enable_v0_3_compat` is derived from `SUPPORTED_DIALECTS` rather than
+    hard-coded, so enabling the legacy dialect is a one-line change that keeps
+    the card and the endpoint in step.
+    """
+    return DefaultRequestHandler(
+        agent_executor=PydanticAIAgentExecutor(agent),
+        task_store=InMemoryTaskStore(),
+        agent_card=build_agent_card(),
+    )
 
 
 async def healthz(_: Request) -> JSONResponse:
@@ -83,25 +212,24 @@ async def _register() -> None:
 
 
 @asynccontextmanager
-async def _lifespan(app: FastA2A):
-    """Run the worker for the app's lifetime, and register once it is up."""
-    async with worker_lifespan(app, worker=worker, agent=agent):
-        await _register()
-        yield
+async def _lifespan(app: Starlette) -> AsyncIterator[None]:
+    """Register with the gateway once the server is up, then serve."""
+    await _register()
+    yield
 
 
-def create_app() -> FastA2A:
-    return FastA2A(
-        storage=storage,
-        broker=broker,
-        name=AGENT_NAME,
-        url=CARD_URL,
-        description=AGENT_DESCRIPTION,
-        skills=AGENT_SKILLS,
-        routes=[Route("/healthz", healthz)],
-        middleware=[Middleware(LiteLLMHeaderMiddleware)],
-        lifespan=_lifespan,
-    )
+def create_app() -> Starlette:
+    handler = _build_request_handler()
+    routes = [
+        *create_agent_card_routes(build_agent_card()),
+        *create_jsonrpc_routes(
+            handler,
+            rpc_url="/",
+            enable_v0_3_compat="0.3" in SUPPORTED_DIALECTS,
+        ),
+        Route("/healthz", healthz, methods=["GET"]),
+    ]
+    return Starlette(routes=routes, lifespan=_lifespan)
 
 
 app = create_app()
