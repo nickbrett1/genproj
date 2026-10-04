@@ -2010,6 +2010,19 @@ testpaths = ["tests"]
 
 [tool.ruff]
 src = ["src", "tests"]
+# Pin the language level. Without it ruff infers target-version from
+# requires-python, and target-gated rules (e.g. UP017 "use datetime.UTC") then
+# switch on or off depending on how the config resolved.
+target-version = "py311"
+
+[tool.ruff.lint]
+# Pin the enforced rule set. Without an explicit select the enabled set is
+# whatever ruff's built-in default is for the resolved target version, which
+# also drifts between ruff releases - so the same source could pass locally
+# and fail in CI (or vice versa). Written down here so \`ruff check src tests\`
+# is deterministic and local lint agrees with CI. Update \`select\` (or add
+# \`ignore\`) deliberately when you want a different rule set.
+select = ["E4", "E7", "E9", "F", "B", "I", "UP"]
 `;
 
   const initPy = `"""${projectName} package."""
