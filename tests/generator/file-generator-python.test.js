@@ -31,7 +31,7 @@ const NAS_PORT_MCP_CONFIG = {
     healthcheck: "http:/healthz",
     entrypoint: ["/usr/local/bin/entrypoint.sh"],
     envVars: ["MCP_PORT=3001"],
-    pythonDependencies: ["mcp>=1.2.0", "mcpo>=0.1.0", "httpx>=0.27.0"],
+    pythonDependencies: ["mcp>=1.2.0", "mcpo>=0.0.20", "httpx>=0.27.0"],
   },
 };
 
@@ -284,12 +284,27 @@ describe("Python scaffold (memo §2.3, §2.5, §2.4)", () => {
     expect(content).toContain('"ruff>=0.4"');
     // Round-2 fix 2: pythonDependencies config lands in [project] dependencies.
     expect(content).toMatch(
-      /dependencies = \[\n {4}"mcp>=1\.2\.0",\n {4}"mcpo>=0\.1\.0",\n {4}"httpx>=0\.27\.0"\n\]/,
+      /dependencies = \[\n {4}"mcp>=1\.2\.0",\n {4}"mcpo>=0\.0\.20",\n {4}"httpx>=0\.27\.0"\n\]/,
     );
     expect(content).toContain("[tool.setuptools.packages.find]");
     expect(content).toContain('where = ["src"]');
     expect(content).toContain('testpaths = ["tests"]');
     expect(content).not.toContain("python_files");
+  });
+
+  it("pins target-version and an explicit select so the ruff rule set is deterministic", async () => {
+    // Defect: without target-version ruff infers it from requires-python and
+    // target-gated rules (UP017) switch on based on how the config resolved;
+    // without select the enabled set also drifts between ruff releases. Both
+    // must be written down so local lint agrees with CI lint.
+    const { files } = await generateNasPortMcp();
+    const pyproject = files.find((f) => f.filePath === "pyproject.toml");
+    const content = pyproject.content;
+    expect(content).toContain("[tool.ruff]");
+    expect(content).toMatch(/^target-version = "py311"$/m);
+    expect(content).toMatch(/^select = \[/m);
+    // requires-python is the other half of the pin; the two must agree.
+    expect(content).toContain('requires-python = ">=3.11"');
   });
 
   it("keeps [project] dependencies empty when pythonDependencies is not configured", async () => {

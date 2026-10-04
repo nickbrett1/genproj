@@ -11,6 +11,7 @@
     "pretest": "npm run build:templates",
     "test": "vitest --coverage",
     "test:once": "npx vitest run --changed",
+    "test:e2e:python": "node scripts/verify-generated-python-e2e.mjs",
     "prebuild": "npm run build:templates",
     "build": "echo 'No build step required'",
     "deploy": "wrangler deploy",

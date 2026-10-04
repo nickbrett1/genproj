@@ -1,0 +1,65 @@
+name: Python generator e2e
+
+# Guard for the class of defect where a freshly generated Python project does
+# not survive its own first CI run: a dependency specifier that does not resolve
+# on PyPI, or a generated `[tool.ruff]` rule set that differs between the
+# machine and CI. The check generates a project and runs *that project's* exact
+# CI sequence against real PyPI - no mock can catch either defect.
+#
+# Deliberately not on every push: it hits the network and takes ~1-2 min. It
+# runs nightly (to catch, for example, a dependency being yanked from PyPI) and
+# on any change that can alter what genproj emits for a Python project.
+#
+# Why GitHub Actions and not the Buildkite pipeline: this repository's
+# `.buildkite/pipeline.yml` is generated from `buildkite-pipeline.template`
+# plus the selected capabilities, and Buildkite's `if_changed` is an
+# *agent-applied* attribute that only takes effect when the agent uploads the
+# pipeline - it does not apply to a statically configured pipeline. Actions'
+# native `schedule:` + `paths:` filters express "nightly, plus changes to
+# src/catalog/ or src/generator/" directly and durably.
+on:
+  schedule:
+    # 03:17 UTC nightly (off the hour to avoid the scheduler's peak).
+    - cron: "17 3 * * *"
+  push:
+    paths:
+      - "src/catalog/**"
+      - "src/generator/**"
+      - "scripts/verify-generated-python-e2e.mjs"
+      - "package.json"
+      - ".github/workflows/python-e2e.yml"
+  pull_request:
+    paths:
+      - "src/catalog/**"
+      - "src/generator/**"
+      - "scripts/verify-generated-python-e2e.mjs"
+      - "package.json"
+      - ".github/workflows/python-e2e.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: python-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: generated project passes its own CI
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # No `npm ci` on purpose: the e2e script's generator imports are all
+      # relative and `templates.generated.js` is committed, so it needs no
+      # node_modules (and `.npmrc` sets engine-strict, so an unpinned install
+      # would be a needless failure mode). If the generator ever gains a runtime
+      # dependency, this step fails loudly and an install belongs here.
+      #
+      # The runner's `python3` is >= 3.11, satisfying the generated project's
+      # `requires-python = ">=3.11"`.
+      - name: Run generated-Python e2e
+        run: npm run test:e2e:python

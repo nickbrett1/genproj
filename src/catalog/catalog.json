@@ -1295,7 +1295,7 @@
           },
           "pythonDependencies": {
             "type": "array",
-            "description": "Runtime Python dependencies (PEP 508 specifiers) emitted into [project] dependencies of the generated pyproject.toml, e.g. [\"mcp>=1.2.0\", \"mcpo>=0.1.0\", \"httpx>=0.27.0\"]. Empty by default; dev tools (pytest, ruff) live in the dev extra.",
+            "description": "Runtime Python dependencies (PEP 508 specifiers) emitted into [project] dependencies of the generated pyproject.toml, e.g. [\"mcp>=1.2.0\", \"mcpo>=0.0.20\", \"httpx>=0.27.0\"]. Specifiers must name versions that exist on PyPI: the generated CI's first command is `pip install -e \".[dev]\"`, so an unsatisfiable requirement fails the build before lint or tests run. Empty by default; dev tools (pytest, ruff) live in the dev extra.",
             "items": {
               "type": "string"
             },
