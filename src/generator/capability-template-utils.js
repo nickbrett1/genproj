@@ -1190,6 +1190,32 @@ export function primaryDevcontainerCapabilityId(context) {
 }
 
 /**
+ * The unix user the *base* devcontainer actually runs as — the login user VS
+ * Code attaches as (`remoteUser`) and the owner of the home the container's
+ * tooling reads.
+ *
+ * This is derived from the same primary language that selects the base
+ * `devcontainer-${language}-json.template` (and its `USER` line in the
+ * matching Dockerfile): the node image runs as `node`, every other image
+ * (python/java/rust) runs as `vscode`. It is the single source both the
+ * templates (`remoteUser` + common-utils `username`, via the
+ * `devcontainerUser` template variable) and `getDevcontainerJsonExtras` (the
+ * mount target home) read, so a mount can never target a home the container
+ * does not actually use — the mismatch that put devdash's `~/.ssh` under
+ * `/home/node` while its python image ran as `vscode`.
+ *
+ * Note this follows the *base* (primary-language) image, not the mere presence
+ * of the `devcontainer-node` capability: a python project that also selects
+ * `devcontainer-node` for its node feature still runs as `vscode`.
+ *
+ * @param {Object} context - Generation context
+ * @returns {"node"|"vscode"} The devcontainer's login user
+ */
+export function devcontainerUser(context) {
+  return resolveProjectLanguage(context) === "node" ? "node" : "vscode";
+}
+
+/**
  * Converts a project/repo name into a valid Python import package name.
  * e.g. "nas-port-mcp" -> "nas_port_mcp"
  * @param {string} projectName

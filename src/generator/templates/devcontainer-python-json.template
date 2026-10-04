@@ -3,13 +3,14 @@
   "runArgs": ["--name", "{{projectName}}-devcontainer", "--sysctl", "net.ipv6.conf.all.disable_ipv6=1", "--cap-add=NET_ADMIN", "--device=/dev/net/tun"],
   "build": { "dockerfile": "Dockerfile" },
   "workspaceFolder": "/workspaces/{{projectName}}",
+  "remoteUser": "{{devcontainerUser}}",
   "features": {
     "ghcr.io/devcontainers/features/common-utils:2": {
       "installZsh": true,
       "configureZshAsDefaultShell": true,
       "installOhMyZsh": true,
       "upgradePackages": true,
-      "username": "vscode"
+      "username": "{{devcontainerUser}}"
     },
     "ghcr.io/devcontainers-extra/features/apt-packages:1": {
       "packages": "socat"

@@ -12,14 +12,14 @@ const nodeJsonTemplateContent = `{
   "runArgs": ["--name", "{{projectName}}-devcontainer", "--sysctl", "net.ipv6.conf.all.disable_ipv6=1", "--cap-add=NET_ADMIN", "--device=/dev/net/tun"],
   "build": { "dockerfile": "Dockerfile" },
   "workspaceFolder": "/workspaces/{{projectName}}",
-  "remoteUser": "node",
+  "remoteUser": "{{devcontainerUser}}",
   "features": {
     "ghcr.io/devcontainers/features/common-utils:2": {
       "installZsh": true,
       "configureZshAsDefaultShell": true,
       "installOhMyZsh": true,
       "upgradePackages": true,
-      "username": "node"
+      "username": "{{devcontainerUser}}"
     },
     "ghcr.io/devcontainers-extra/features/apt-packages:1": {
       "packages": "socat"
