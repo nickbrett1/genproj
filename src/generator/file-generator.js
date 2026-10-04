@@ -104,6 +104,7 @@ const pydanticAgentInstructionsMd =
 const pydanticAgentEnvExample =
   templateFiles["pydantic-agent-env-example.template"];
 const pydanticAgentReadme = templateFiles["pydantic-agent-readme.template"];
+const pydanticAgentTestsPy = templateFiles["pydantic-agent-tests-py.template"];
 // webapp/src/lib/utils/file-generator.js
 
 import { capabilities } from "../catalog/index.js";
@@ -997,6 +998,7 @@ const templateImports = {
   "pydantic-agent-instructions-md": pydanticAgentInstructionsMd,
   "pydantic-agent-env-example": pydanticAgentEnvExample,
   "pydantic-agent-readme": pydanticAgentReadme,
+  "pydantic-agent-tests-py": pydanticAgentTestsPy,
 };
 
 export class TemplateEngine {
@@ -1975,14 +1977,18 @@ export function generatePyProjectToml(context) {
     deps.push("dagster", "dagster-webserver");
   }
   // The A2A agent is a Python service in this same image: `agent/` is served by
-  // uvicorn and talks to Pydantic AI and FastA2A. The extra on fasta2a pulls the
-  // Pydantic AI bridge (`agent_to_a2a` / `AgentWorker`); pydantic-ai (the full
-  // metapackage) carries the `mcp` and `openai` extras the generated agent
-  // imports. Declared here so the container's `pip install .` installs them.
+  // uvicorn on the official A2A SDK (`a2a-sdk`) server, and runs a Pydantic AI
+  // agent. `a2a-sdk[http-server]` pins the exact SDK version the LiteLLM
+  // gateway's A2A *client* uses (1.1.0) and pulls the Starlette/sse-starlette
+  // (plus httpx) transport; matching the client version is the point - a newer
+  // server SDK re-introduces the client/server skew this scaffold exists to
+  // remove. `pydantic-ai` (the full metapackage) carries the `mcp` and `openai`
+  // extras the generated agent imports. Declared here so the container's
+  // `pip install .` installs them.
   if (context.capabilities.includes("pydantic-agent")) {
     deps.push(
       "pydantic-ai>=2.40",
-      "fasta2a[pydantic-ai]>=2.0",
+      "a2a-sdk[http-server]==1.1.0",
       "uvicorn>=0.30",
     );
   }

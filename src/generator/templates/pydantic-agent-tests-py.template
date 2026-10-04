@@ -1,0 +1,112 @@
+"""Wire-honesty regression test for the generated A2A server (genproj).
+
+What this pins
+--------------
+A previous genproj scaffold served A2A through FastA2A 2.0.1, which advertised
+`supportedInterfaces[0].protocolVersion == "1.0"` on its agent card while its
+JSON-RPC endpoint only accepted the legacy 0.3 dialect (`message/send`). The
+LiteLLM gateway trusts the card to choose a transport, so it sent the 1.0 method
+`SendMessage`, which the server rejected before the agent ever ran - a green
+card, a green health check, and every turn a 500.
+
+The rule this test enforces, for any dialect the scaffold ships:
+
+    the JSONRPC interface the card advertises must be a dialect this server
+    actually accepts.
+
+Run with `pytest` (the generated project's CI already does).
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+
+# The generated `agent/` package lives at the repository root (uvicorn imports
+# it from there), but `tests/` is not a package, so make the root importable
+# regardless of how pytest was invoked.
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+# Importing agent.main builds the model object; it makes no network call, but
+# the gateway address must be configured. Point it somewhere syntactically valid.
+os.environ.setdefault("LITELLM_BASE_URL", "http://localhost:4000")
+
+# Import agent.main first: it pulls in a2a.server.routes, which imports the
+# v0.3 adapter. Importing the adapter ahead of that trips a circular import.
+from agent import main
+
+from a2a.server.request_handlers.response_helpers import agent_card_to_dict
+from a2a.server.routes.jsonrpc_dispatcher import JsonRpcDispatcher
+
+
+def _served_jsonrpc_interface() -> dict:
+    """The card exactly as the endpoint serialises it, reduced to its JSONRPC interface."""
+    served = agent_card_to_dict(main.build_agent_card())
+    jsonrpc = [
+        interface
+        for interface in served.get("supportedInterfaces", [])
+        if interface.get("protocolBinding") == "JSONRPC"
+    ]
+    assert jsonrpc, "the served card advertises no JSONRPC interface"
+    return jsonrpc[0]
+
+
+def test_served_card_advertises_a_dialect_this_server_accepts() -> None:
+    advertised = _served_jsonrpc_interface()["protocolVersion"]
+    assert advertised in main.SUPPORTED_DIALECTS, (
+        f"the served card advertises A2A {advertised!r}, but this server only "
+        f"accepts {sorted(main.SUPPORTED_DIALECTS)} - the card would lie about "
+        "the wire"
+    )
+
+
+def test_advertised_dialect_maps_to_a_method_the_endpoint_routes() -> None:
+    advertised = _served_jsonrpc_interface()["protocolVersion"]
+    method = main.SEND_METHOD_BY_DIALECT[advertised]
+    if advertised == "1.0":
+        assert method in JsonRpcDispatcher.METHOD_TO_MODEL
+    else:
+        # Advertising 0.3 is only truthful when the compat adapter is switched
+        # on - which create_app() derives from SUPPORTED_DIALECTS.
+        from a2a.compat.v0_3.jsonrpc_adapter import JSONRPC03Adapter
+
+        assert "0.3" in main.SUPPORTED_DIALECTS
+        assert method in JSONRPC03Adapter.METHOD_TO_MODEL
+
+
+def test_endpoint_routes_the_method_the_card_advertises() -> None:
+    """Dial the real endpoint with the advertised dialect's send method.
+
+    An un-routed method earns JSON-RPC -32601 "method not found". Sending a
+    deliberately malformed params object instead gets a *different* error
+    (-32602 invalid params), which proves the method was recognised and
+    dispatched - the exact thing that failed under FastA2A.
+    """
+    from starlette.testclient import TestClient
+
+    interface = _served_jsonrpc_interface()
+    method = main.SEND_METHOD_BY_DIALECT[interface["protocolVersion"]]
+
+    with TestClient(main.create_app(), raise_server_exceptions=False) as client:
+        response = client.post(
+            "/",
+            headers={"A2A-Version": interface["protocolVersion"]},
+            json={
+                "jsonrpc": "2.0",
+                "id": "wire-probe",
+                "method": method,
+                # Unknown fields fail params validation before the agent runs,
+                # so this test never needs a live model.
+                "params": {"__genproj_wire_probe__": True},
+            },
+        )
+        body = response.json()
+
+    code = (body.get("error") or {}).get("code")
+    assert code != -32601, (
+        f"the card advertises A2A {interface['protocolVersion']!r} (method "
+        f"{method!r}) but the endpoint does not route {method!r}: {body}"
+    )

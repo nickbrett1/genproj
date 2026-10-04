@@ -7,12 +7,16 @@ agent registry matches a task against the card's name, description and skills by
 semantic similarity, so a placeholder description is how a router fails to find
 the agent.
 
+The skills are plain dictionaries, not SDK objects, because they are used twice:
+`agent/main.py` builds the served `a2a.types.AgentCard` from them, and
+`agent/register.py` sends the same list to LiteLLM as JSON. A dict literal is
+both a valid `AgentSkill(**skill)` argument and JSON-serialisable, so the served
+card and the registered card cannot drift.
+
 The name, description and protocol version come from agent/main.py and the
 capability configuration; this file owns only the skills.
 """
 
 from __future__ import annotations
 
-from fasta2a import Skill
-
-AGENT_SKILLS: list[Skill] = {{agentSkillsLiteral}}
+AGENT_SKILLS: list[dict] = {{agentSkillsLiteral}}

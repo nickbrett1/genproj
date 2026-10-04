@@ -3775,6 +3775,11 @@ function getPydanticAgentTemplateData(context) {
   // The card's skills. One skill, derived from the card, is the honest default:
   // the generator cannot know the domain, and a placeholder that pretends to is
   // worse than a thin one the reader is told to replace.
+  //
+  // Emitted as plain Python dicts, not SDK constructors: the same list is used
+  // both to build the served `a2a.types.AgentCard` (via `AgentSkill(**skill)`)
+  // and to register the card with LiteLLM as JSON, so a dict literal - valid as
+  // both - is what keeps the served card and the registered card from drifting.
   const skills = [
     {
       id: "answer",
@@ -3789,9 +3794,10 @@ function getPydanticAgentTemplateData(context) {
   const agentSkillsLiteral = skills
     .map((skill) => {
       const fields = Object.entries(skill).map(
-        ([key, value]) => `        ${key}=${toPythonLiteral(value)},`,
+        ([key, value]) =>
+          `        ${JSON.stringify(key)}: ${toPythonLiteral(value)},`,
       );
-      return `    Skill(\n${fields.join("\n")}\n    ),`;
+      return `    {\n${fields.join("\n")}\n    },`;
     })
     .join("\n");
   const agentSkillsBody = `[\n${agentSkillsLiteral}\n]`;

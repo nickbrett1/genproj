@@ -196,16 +196,89 @@ describe("pydantic-agent generation", () => {
       (f) => f.filePath === "pyproject.toml",
     ).content;
     expect(pyproject).toContain('"pydantic-ai');
-    expect(pyproject).toContain('"fasta2a[pydantic-ai]');
+    // Pinned to the exact SDK version the LiteLLM gateway's A2A client uses:
+    // matching the client is what removes the client/server wire skew.
+    expect(pyproject).toContain('"a2a-sdk[http-server]==1.1.0"');
     expect(pyproject).toContain('"uvicorn');
+    // FastA2A is the library whose card lied about its dialect; it must be gone.
+    expect(pyproject).not.toContain("fasta2a");
   });
 
-  it("carries the skill list into the card as a Python literal", () => {
+  it("carries the skill list into the card as Python dicts", () => {
     const data = getCapabilityTemplateData("pydantic-agent", context());
-    expect(data.agentSkillsLiteral).toContain('id="answer"');
+    expect(data.agentSkillsLiteral).toContain('"id": "answer"');
     expect(data.agentSkillsLiteral).toContain(
-      'input_modes=["application/json"]',
+      '"input_modes": ["application/json"]',
     );
+  });
+});
+
+describe("pydantic-agent wire honesty (a2a-sdk server, honest card)", () => {
+  beforeEach(() => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it("serves A2A from the official a2a-sdk, not FastA2A", async () => {
+    const files = await generateAllFiles(context());
+    const main = files.find((f) => f.filePath === "agent/main.py").content;
+    expect(main).toContain(
+      "from a2a.server.request_handlers import DefaultRequestHandler",
+    );
+    expect(main).toContain("create_jsonrpc_routes");
+    expect(main).toContain("create_agent_card_routes");
+    expect(main).toContain("AgentExecutor");
+    // No FastA2A import: the explanatory docstring may name it, the code must not.
+    expect(main).not.toMatch(/^\s*(from|import)\s+fasta2a/m);
+  });
+
+  it("derives the advertised dialect from the dialect the endpoint accepts", async () => {
+    const files = await generateAllFiles(context());
+    const main = files.find((f) => f.filePath === "agent/main.py").content;
+    // The card's interface version and the accepted-dialect set share ONE value,
+    // so no change can make the card claim a dialect the endpoint rejects.
+    expect(main).toContain('PROTOCOL_VERSION = "1.0"');
+    expect(main).toContain(
+      "SUPPORTED_DIALECTS: frozenset[str] = frozenset({PROTOCOL_VERSION})",
+    );
+    expect(main).toContain("SEND_METHOD_BY_DIALECT");
+    expect(main).toContain("protocol_version=PROTOCOL_VERSION");
+    expect(main).toContain('enable_v0_3_compat="0.3" in SUPPORTED_DIALECTS');
+  });
+
+  it("preserves the output mode, validator loop and token cap", async () => {
+    const files = await generateAllFiles(context());
+    const main = files.find((f) => f.filePath === "agent/main.py").content;
+    // PromptedOutput, not the default ToolOutput and not NativeOutput: a
+    // thinking model rejects both (tool_choice / response_format unavailable).
+    expect(main).toContain("output_type=PromptedOutput(AgentResult)");
+    expect(main).not.toMatch(/output_type=ToolOutput/);
+    expect(main).not.toMatch(/output_type=NativeOutput/);
+    expect(main).toContain("model_settings=ModelSettings(max_tokens=4096)");
+    expect(main).toContain("agent.output_validator(validate_agent_result)");
+    expect(main).toContain('retries={"output": 3}');
+  });
+
+  it("emits the wire-honesty regression test into the scaffold's own suite", async () => {
+    const files = await generateAllFiles(context());
+    const test = files.find((f) => f.filePath === "tests/test_a2a_wire.py");
+    expect(test).toBeTruthy();
+    // It checks the SERVED card (serialised by the SDK), not the raw object.
+    expect(test.content).toContain("agent_card_to_dict");
+    expect(test.content).toContain("supportedInterfaces");
+    expect(test.content).toContain("SUPPORTED_DIALECTS");
+    expect(test.content).toContain("SEND_METHOD_BY_DIALECT");
+    // And it dials the endpoint to prove the advertised method is routed.
+    expect(test.content).toContain("TestClient");
+    expect(test.content).toContain("-32601");
+  });
+
+  it("emits skills as JSON-serialisable dicts so served and registered cards agree", async () => {
+    const files = await generateAllFiles(context());
+    const card = files.find((f) => f.filePath === "agent/card.py").content;
+    expect(card).toContain("AGENT_SKILLS: list[dict]");
+    expect(card).toContain('"id": "answer"');
   });
 });
 
