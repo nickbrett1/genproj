@@ -711,8 +711,10 @@ function _applyCloudflareConfig(
 
 /**
  * Language-aware lint step for CircleCI.
- * - Python: `ruff check .` for MicroPython firmware (root + `lib/`), otherwise
- *   `ruff check src tests`; ruff ships in the `[dev]` extra.
+ * - Python: `ruff check .` for MicroPython firmware (root + `lib/`); otherwise
+ *   `ruff check src tests`, widened to `ruff check agent src tests` when a
+ *   `pydantic-agent` is present so its top-level `agent/` package is linted.
+ *   ruff ships in the `[dev]` extra.
  * - Rust: `rustup component add rustfmt clippy`, then `cargo fmt --check` +
  *   `cargo clippy --all-targets -- -D warnings`, contributed by
  *   `code-quality-rust`. rustfmt and clippy are *components*, not part of the
@@ -1067,7 +1069,16 @@ export function isMicropython(context) {
  * @returns {string} The shell command that runs ruff
  */
 export function ruffCheckCommand(context) {
-  return isMicropython(context) ? "ruff check ." : "ruff check src tests";
+  if (isMicropython(context)) return "ruff check .";
+  // The pydantic-agent's runnable code lives in the top-level `agent/` package
+  // (the image runs `uvicorn agent.main:app`), not under `src/`. `ruff check src
+  // tests` would leave the most protocol-sensitive module in the repo - the
+  // roost client in `agent/roost.py` - in the one directory CI never sees, so
+  // lint it explicitly. Projects without the capability keep the plain scope.
+  if ((context?.capabilities || []).includes("pydantic-agent")) {
+    return "ruff check agent src tests";
+  }
+  return "ruff check src tests";
 }
 
 /**
@@ -3868,6 +3879,21 @@ function getPydanticAgentTemplateData(context) {
         "# Self-registration is off (no litellmBaseUrl was given at generation time),",
         "# so no registration key is read. To enable it, set litellmBaseUrl and regenerate.",
       ].join("\n");
+
+  // The durable task store (agent/history.py) lives at
+  // `$AGENT_STATE_DIR/a2a_tasks.db` - the same mount the remembered gateway id
+  // uses. When registration is on, that block above already declares
+  // AGENT_STATE_DIR and explains the durability trade-off; when it is off,
+  // declare the variable here so the task-store path is still configurable.
+  const agentStateEnvBlock = [
+    "# The SQLite task store that makes session HISTORY durable lives at",
+    "# $AGENT_STATE_DIR/a2a_tasks.db. It is the agent's own A2A conversation",
+    "# state (contextId = a session, task.history = the transcript), read back by",
+    "# roost's History panel. With AGENT_STATE_DIR unset it lands in the image",
+    "# layer and history is lost on a rebuild/recreate.",
+    ...(registration.enabled ? [] : ["AGENT_STATE_DIR="]),
+  ].join("\n");
+
   // The register.py row is appended by ending the previous table row with this
   // placeholder: a conditional row cannot be an empty line (a blank line ends a
   // Markdown table), so the value carries its own leading newline.
@@ -3916,6 +3942,7 @@ function getPydanticAgentTemplateData(context) {
     agentRegisterImport,
     agentRegisterBody,
     agentRegisterEnvBlock,
+    agentStateEnvBlock,
     agentRegisterModuleDoc,
     agentRegisterDoc,
     agentRegisterFileRow,

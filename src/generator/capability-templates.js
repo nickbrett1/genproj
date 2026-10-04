@@ -472,6 +472,16 @@ export const capabilityTemplates = {
       templateId: "pydantic-agent-headers-py",
     },
     {
+      id: "agent-history",
+      filePath: "agent/history.py",
+      templateId: "pydantic-agent-history-py",
+    },
+    {
+      id: "agent-roost",
+      filePath: "agent/roost.py",
+      templateId: "pydantic-agent-roost-py",
+    },
+    {
       id: "agent-instructions",
       filePath: "prompts/instructions.md",
       templateId: "pydantic-agent-instructions-md",
@@ -490,6 +500,21 @@ export const capabilityTemplates = {
       id: "agent-wire-test",
       filePath: "tests/test_a2a_wire.py",
       templateId: "pydantic-agent-tests-py",
+    },
+    {
+      id: "agent-tests-conftest",
+      filePath: "tests/conftest.py",
+      templateId: "pydantic-agent-tests-conftest-py",
+    },
+    {
+      id: "agent-roost-test",
+      filePath: "tests/test_roost.py",
+      templateId: "pydantic-agent-roost-tests-py",
+    },
+    {
+      id: "agent-history-test",
+      filePath: "tests/test_history.py",
+      templateId: "pydantic-agent-history-tests-py",
     },
   ],
 };
