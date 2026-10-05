@@ -749,6 +749,19 @@ describe("pydantic-agent registration-reachability probe", () => {
     expect(probe).toContain("GET /v1/agents");
     expect(probe).toContain("DEFAULT_BASE_URL");
 
+    // Scoping (data-sourcing-agent PR #10): a deploy gates on its own agent
+    // with `--agent NAME` (repeatable), so an unrelated agent's outage cannot
+    // fail this one's release — while a name that is not registered at all
+    // still fails it.
+    expect(probe).toContain('"--agent"');
+    expect(probe).toContain("only: Sequence[str] | None = None");
+    expect(probe).toContain("only=args.agent");
+    expect(test).toContain("test_probe_only_probes_the_named_agents");
+    expect(test).toContain("test_main_scopes_to_the_named_agent");
+    expect(test).toContain(
+      "test_main_fails_when_the_named_agent_is_not_registered",
+    );
+
     // Agent-agnostic: it reads the registry and dials every advertised URL, so
     // it must not be hard-wired to this agent's name or port.
     expect(probe).not.toContain("price-gate");
