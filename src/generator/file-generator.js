@@ -108,6 +108,9 @@ const pydanticAgentTestsPy = templateFiles["pydantic-agent-tests-py.template"];
 const pydanticAgentRoostPy = templateFiles["pydantic-agent-roost-py.template"];
 const pydanticAgentRoostTestsPy =
   templateFiles["pydantic-agent-roost-tests-py.template"];
+const pydanticAgentProbePy = templateFiles["pydantic-agent-probe-py.template"];
+const pydanticAgentProbeTestsPy =
+  templateFiles["pydantic-agent-probe-tests-py.template"];
 const pydanticAgentHistoryPy =
   templateFiles["pydantic-agent-history-py.template"];
 const pydanticAgentHistoryTestsPy =
@@ -1010,6 +1013,8 @@ const templateImports = {
   "pydantic-agent-readme": pydanticAgentReadme,
   "pydantic-agent-tests-py": pydanticAgentTestsPy,
   "pydantic-agent-roost-py": pydanticAgentRoostPy,
+  "pydantic-agent-probe-py": pydanticAgentProbePy,
+  "pydantic-agent-probe-tests-py": pydanticAgentProbeTestsPy,
   "pydantic-agent-roost-tests-py": pydanticAgentRoostTestsPy,
   "pydantic-agent-history-py": pydanticAgentHistoryPy,
   "pydantic-agent-history-tests-py": pydanticAgentHistoryTestsPy,

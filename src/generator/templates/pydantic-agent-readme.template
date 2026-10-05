@@ -17,11 +17,13 @@ agent served over the [A2A protocol](https://a2a-protocol.org/) by the official
 | `agent/headers.py`       | forwarding of the `X-LiteLLM-*` context headers                  |{{agentRegisterFileRow}}
 | `agent/history.py`       | durable session history read from the A2A task store             |
 | `agent/roost.py`         | the roost fleet client (reconnecting WebSocket, fail-open)       |
+| `agent/probe.py`         | registration-vs-reachability probe (dials each registered card)  |
 | `prompts/instructions.md`| the agent's instructions — **human-owned, never overwritten**    |
 | `agent/.env.example`     | the environment the container reads                              |
 | `tests/test_a2a_wire.py` | the wire-honesty regression test (card dialect == endpoint)      |
 | `tests/test_roost.py`    | the roost wire + capability-honesty regression test              |
 | `tests/test_history.py`  | durable history over a real SQLite store, end to end             |
+| `tests/test_probe.py`    | the probe's classification, driven by an `httpx.MockTransport`   |
 
 `agent/` and `prompts/` are app-owned: a regeneration with `overwrite: true`
 will not clobber your edits. Resolve a path to `overwrite` if you *do* want the
@@ -112,6 +114,31 @@ the guard, the same class of check container-agent applies via
 If the gateway and this container share a Docker network, prefer
 `docker-container.externalNetworks` and drop the published port entirely: the
 proxy can then reach the agent by container name.
+
+## Prove the registration is reachable (the probe)
+
+The startup guard is a *syntax* check on the card URL; it cannot see a name that
+resolves here and not from the proxy's host, nor whether the card that answers is
+the one that was registered. `agent/probe.py` closes that gap: it reads the
+LiteLLM registry (`GET /v1/agents`, with `LITELLM_MASTER_KEY`, falling back to
+`LITELLM_API_KEY`), then **dials every advertised card URL from wherever it
+runs** and compares the served card against the registration. Each agent is
+classified `OK` / `MISMATCH` / `UNREACHABLE` / `UNDIALABLE` (loopback, wildcard
+or empty).
+
+Run it **from a container that shares the caller's network** — the agent's own
+container is the representative vantage, because the LiteLLM proxy reaches the
+fleet over the same network:
+
+```bash
+docker compose run --rm app python -m agent.probe
+```
+
+It exits **non-zero** if any agent is undialable, unreachable, or serving a card
+that disagrees with its registration, so it can gate a deploy. It is
+agent-agnostic (it probes the whole registry, not just this agent) and needs only
+`httpx` + the standard library. `tests/test_probe.py` pins the classification
+through an `httpx.MockTransport`, so the suite never touches the network.
 
 ## Prefer the gateway's own controls
 

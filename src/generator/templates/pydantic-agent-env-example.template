@@ -11,6 +11,11 @@ LITELLM_BASE_URL={{litellmBaseUrl}}
 # A virtual key scoped to invoking this agent and calling the models it uses.
 LITELLM_API_KEY=
 
+# OPTIONAL, for the registration-reachability probe (agent/probe.py): the master
+# key sees the whole fleet in GET /v1/agents, while a virtual key sees only its
+# owner's agents. Without it the probe falls back to LITELLM_API_KEY.
+LITELLM_MASTER_KEY=
+
 {{agentRegisterEnvBlock}}
 
 {{agentStateEnvBlock}}
