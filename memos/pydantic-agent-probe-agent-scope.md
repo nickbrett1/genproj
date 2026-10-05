@@ -24,7 +24,7 @@ Pre-scoping SHA (what PR #70 shipped): probe a1f5fdde…, tests 224f7703….
 - [x] Branched `feat/pydantic-agent-probe-agent-scope` off `origin/main` (06892cf)
 - [x] Step 1: copied both reference files byte-for-byte, rebuilt
       templates.generated.js, extended generator test
-- [ ] Step 2: deploy-readme deploy-gate paragraph
+- [x] Step 2: deploy-readme deploy-gate paragraph (rebuilt generated.js)
 - [ ] vitest run + prettier
 - [ ] PR
 
