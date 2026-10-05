@@ -63,6 +63,7 @@ const scriptsSetupWranglerConfigSh =
 const scriptsSyncDopplerSecretsSh =
   templateFiles["scripts-sync-doppler-secrets-sh.template"];
 const scriptsAgentDevSh = templateFiles["scripts-agent-dev.sh.template"];
+const scriptsDeployGateSh = templateFiles["scripts-deploy-gate.sh.template"];
 const eslintConfigJs = templateFiles["eslint-config-js.template"];
 const gitignoreTemplate = templateFiles["gitignore.template"];
 const dependabotConfig = templateFiles["dependabot.yml.template"];
@@ -979,6 +980,7 @@ const templateImports = {
   "scripts-setup-wrangler-config-sh": scriptsSetupWranglerConfigSh,
   "scripts-sync-doppler-secrets-sh": scriptsSyncDopplerSecretsSh,
   "scripts-agent-dev-sh": scriptsAgentDevSh,
+  "scripts-deploy-gate-sh": scriptsDeployGateSh,
 
   gitignore: gitignoreTemplate,
   "dependabot-config": dependabotConfig,
