@@ -35,4 +35,12 @@ Wire `agent/probe.py` + `tests/test_probe.py` (agent-agnostic) into the
 
 - branch: feat/pydantic-agent-reachability-probe
 - step1 commit: 0c01aaa5889f4b27161e657303052a645b598070
-- PR: (pending)
+- PR: **#70** — https://github.com/nickbrett1/genproj/pull/70 (open, base main)
+
+## How the PR was created
+
+No PR-creation tool is registered in the goose toolset, and no `gh`/token is in
+the environment. MCPHub exposes the raw GitHub MCP server at
+`http://nas:8781/mcp/github`, whose tool list DOES include
+`github-create_pull_request` (the aggregated `dev` group hides it). The PR was
+opened with a direct `tools/call` to that endpoint.
