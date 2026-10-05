@@ -671,6 +671,17 @@ describe("Buildkite docker publish (roost build 16 regression)", () => {
     );
   });
 
+  it("stamps the published image with its own commit as a label", async () => {
+    // A deployed container must be traceable to the exact revision, so the
+    // image carries org.opencontainers.image.revision built from the commit
+    // this build published. The `$$` is Buildkite's escape for a literal `$`,
+    // so the shell doing the build expands the real BUILDKITE_COMMIT.
+    const { command } = await publishCommand();
+    expect(command).toContain(
+      "--label org.opencontainers.image.revision=$$BUILDKITE_COMMIT",
+    );
+  });
+
   it("skips the publish when the commit is already in the registry", async () => {
     const { command } = await publishCommand();
 

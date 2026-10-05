@@ -2055,6 +2055,7 @@ function _applyDockerContainerConfig(
             docker buildx build --builder "$$BUILDX_BUILDER_NAME" --platform ${buildPlatforms} \\
               --cache-from type=registry,ref=$CACHE_REF \\
               --cache-to type=registry,ref=$CACHE_REF,mode=max \\
+              --label org.opencontainers.image.revision=$CIRCLE_SHA1 \\
               -t $IMAGE:$CIRCLE_SHA1 -t $IMAGE:latest --push .
 `;
 
@@ -3377,6 +3378,7 @@ ${dockerCredentialCommands}
         docker buildx build --builder "$$BUILDX_BUILDER_NAME" --platform ${buildPlatforms} \\
           --cache-from type=registry,ref=$$CACHE_REF \\
           --cache-to type=registry,ref=$$CACHE_REF,mode=max \\
+          --label org.opencontainers.image.revision=$$BUILDKITE_COMMIT \\
           -t $$IMAGE:$$BUILDKITE_COMMIT -t $$IMAGE:latest --push .
 `);
   }
