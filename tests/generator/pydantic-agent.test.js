@@ -70,12 +70,14 @@ describe("pydantic-agent generation", () => {
       "agent/headers.py",
       "agent/history.py",
       "agent/roost.py",
+      "agent/probe.py",
       "agent/.env.example",
       "agent/README.md",
       "prompts/instructions.md",
       "tests/test_a2a_wire.py",
       "tests/test_history.py",
       "tests/test_roost.py",
+      "tests/test_probe.py",
       "tests/conftest.py",
     ]) {
       expect(paths).toContain(path);
@@ -721,5 +723,60 @@ describe("pydantic-agent card-URL guard (reachability from the proxy host)", () 
     // import the module under test.
     expect(conftest).not.toMatch(/A2A_CARD_URL".*127\.0\.0\.1/);
     expect(conftest).not.toMatch(/A2A_CARD_URL".*localhost/);
+  });
+});
+
+describe("pydantic-agent registration-reachability probe", () => {
+  const read = (files, path) => files.find((f) => f.filePath === path).content;
+
+  beforeEach(() => {
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("ships the probe and its tests, agent-agnostic and placeholder-free", async () => {
+    const files = await generateAllFiles(context());
+    const probe = read(files, "agent/probe.py");
+    const test = read(files, "tests/test_probe.py");
+
+    // The reference defect: a wildcard bind address that a caller dials to
+    // itself. The probe must name it, not merely trust the startup guard ran.
+    expect(probe).toContain("def undialable_reason");
+    expect(probe).toContain("GET /v1/agents");
+    expect(probe).toContain("DEFAULT_BASE_URL");
+
+    // Agent-agnostic: it reads the registry and dials every advertised URL, so
+    // it must not be hard-wired to this agent's name or port.
+    expect(probe).not.toContain("price-gate");
+    expect(test).not.toContain("price-gate");
+
+    for (const file of [probe, test]) {
+      expect(file).not.toMatch(/\{\{[^}]+\}\}/);
+    }
+  });
+
+  it("pins the classification through a transport, not the network", async () => {
+    const files = await generateAllFiles(context());
+    const test = read(files, "tests/test_probe.py");
+
+    expect(test).toContain("httpx.MockTransport");
+    expect(test).toContain('monkeypatch.setattr("agent.probe.probe"');
+    // The exit code is what gates a deploy, so it is pinned explicitly.
+    expect(test).toContain("asyncio.run(main([])) == 1");
+  });
+
+  it("documents running it from the caller's network and the non-zero exit", async () => {
+    const files = await generateAllFiles(context());
+    const readme = read(files, "agent/README.md");
+
+    expect(readme).toContain("agent/probe.py");
+    expect(readme).toContain(
+      "docker compose run --rm app python -m agent.probe",
+    );
+    expect(readme.toLowerCase()).toContain("non-zero");
   });
 });

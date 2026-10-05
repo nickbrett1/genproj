@@ -482,6 +482,16 @@ export const capabilityTemplates = {
       templateId: "pydantic-agent-roost-py",
     },
     {
+      // The registration-vs-reachability probe (agent/probe.py): reads the
+      // LiteLLM registry and dials every advertised card URL from wherever it
+      // runs, so a registration that is green but undialable is caught before a
+      // deploy rather than at the first failed invocation. Agent-agnostic, so
+      // it ships in every pydantic-agent project (see agent/README.md).
+      id: "agent-probe",
+      filePath: "agent/probe.py",
+      templateId: "pydantic-agent-probe-py",
+    },
+    {
       id: "agent-instructions",
       filePath: "prompts/instructions.md",
       templateId: "pydantic-agent-instructions-md",
@@ -515,6 +525,11 @@ export const capabilityTemplates = {
       id: "agent-history-test",
       filePath: "tests/test_history.py",
       templateId: "pydantic-agent-history-tests-py",
+    },
+    {
+      id: "agent-probe-test",
+      filePath: "tests/test_probe.py",
+      templateId: "pydantic-agent-probe-tests-py",
     },
   ],
 };
