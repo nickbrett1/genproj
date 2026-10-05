@@ -762,6 +762,15 @@ describe("pydantic-agent registration-reachability probe", () => {
       "test_main_fails_when_the_named_agent_is_not_registered",
     );
 
+    // Cold-registry resilience (data-sourcing-agent PR #11): the registry read
+    // gets its own generous timeout and one retry, because a proxy's first
+    // request after a restart can exceed the short per-card timeout. A deploy
+    // gate that flakes on a cold proxy would be worse than useless, so the
+    // retry is pinned here rather than left to chance.
+    expect(probe).toContain("_read_registry");
+    expect(probe).toContain("REGISTRY_TIMEOUT");
+    expect(test).toContain("test_probe_retries_a_cold_registry_read");
+
     // Agent-agnostic: it reads the registry and dials every advertised URL, so
     // it must not be hard-wired to this agent's name or port.
     expect(probe).not.toContain("price-gate");
