@@ -18,7 +18,7 @@ Wire `agent/probe.py` + `tests/test_probe.py` (agent-agnostic) into the
 - [x] Add files + README line + env-example master-key line
 - [x] Run generator tests (870 passed) + prettier (clean) + eslint (0 errors)
 - [x] Verified generated probe.py/test_probe.py byte-identical to reference
-- [ ] Branch/commit/PR
+- [x] Branch/commit/PR
 
 ## Files touched
 
@@ -33,6 +33,6 @@ Wire `agent/probe.py` + `tests/test_probe.py` (agent-agnostic) into the
 
 ## Branch / commit / PR
 
-- branch: (tbd)
-- commit: (tbd)
-- PR: (tbd)
+- branch: feat/pydantic-agent-reachability-probe
+- step1 commit: 0c01aaa5889f4b27161e657303052a645b598070
+- PR: (pending)
