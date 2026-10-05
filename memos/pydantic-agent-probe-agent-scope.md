@@ -25,11 +25,20 @@ Pre-scoping SHA (what PR #70 shipped): probe a1f5fdde…, tests 224f7703….
 - [x] Step 1: copied both reference files byte-for-byte, rebuilt
       templates.generated.js, extended generator test
 - [x] Step 2: deploy-readme deploy-gate paragraph (rebuilt generated.js)
-- [ ] vitest run + prettier
-- [ ] PR
+- [x] vitest run (870 passed) + prettier (clean) + eslint (0 errors)
+- [x] PR #71 opened (REST via MCPHub raw github MCP; no GITHUB_TOKEN in env)
 
 ## Branch / commit / PR
 
-- branch: feat/pydantic-agent-probe-agent-scope
-- step1 commit: (filled below)
-- PR: (filled below)
+- branch: feat/pydantic-agent-probe-agent-scope (off origin/main 06892cf)
+- step1 commit: 0e181b5 (sync probe to --agent scoping)
+- step2 commit: c5bbd9a (deploy gate doc)
+- PR: **#71** — https://github.com/nickbrett1/genproj/pull/71 (open, base main)
+
+## Note on PR creation
+
+`$GITHUB_TOKEN` is not present in the environment and the git remote is SSH,
+so the REST API could not be called with a token directly. As with PR #70, the
+PR was opened through MCPHub's raw GitHub MCP server
+(`http://nas:8781/mcp/github`, tool `create_pull_request`), which is authenticated
+server-side and needs no local token.
