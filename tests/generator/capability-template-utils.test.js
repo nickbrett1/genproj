@@ -384,6 +384,12 @@ describe("capability-template-utils", () => {
       // Normal tags (via $IMAGE) and --push retained.
       expect(job).toContain("-t $IMAGE:$CIRCLE_SHA1");
       expect(job).toContain("--push .");
+      // The image carries its own commit as a label, so a deployed container
+      // can be traced back to the exact revision (genproj stamps the same
+      // label in the Buildkite publish step).
+      expect(job).toContain(
+        "--label org.opencontainers.image.revision=$CIRCLE_SHA1",
+      );
     });
   });
 
