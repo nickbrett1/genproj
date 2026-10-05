@@ -35,7 +35,10 @@ Wire `agent/probe.py` + `tests/test_probe.py` (agent-agnostic) into the
 
 - branch: feat/pydantic-agent-reachability-probe
 - step1 commit: 0c01aaa5889f4b27161e657303052a645b598070
-- PR: **#70** — https://github.com/nickbrett1/genproj/pull/70 (open, base main)
+- PR: **#70** — https://github.com/nickbrett1/genproj/pull/70 (base main)
+- status: **MERGED** (squash) → main commit `6a6d9a277666759cda291c2cb402a84fc4a60921`
+- CI: **green** — "generated project passes its own CI" success; GitGuardian success;
+  dependabot skipped; `buildkite/genproj` Build #230 passed (47 s)
 
 ## How the PR was created
 
