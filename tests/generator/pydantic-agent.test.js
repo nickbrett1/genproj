@@ -682,3 +682,44 @@ describe("pydantic-agent roost session history", () => {
     );
   });
 });
+
+describe("pydantic-agent card-URL guard (reachability from the proxy host)", () => {
+  const read = (files, path) => files.find((f) => f.filePath === path).content;
+
+  it("refuses the loopback/wildcard card URL at startup, like container-agent", async () => {
+    const files = await generateAllFiles(context());
+    const main = read(files, "agent/main.py");
+
+    // The guard mirrors container-agent's `resolve_card_address()`: the URL the
+    // proxy dials must not be this host.
+    expect(main).toContain("def resolve_card_url(");
+    expect(main).toContain("_is_loopback_or_wildcard");
+    // The generated default IS loopback-wildcard, so it is refused rather than
+    // advertised.
+    expect(main).toContain('DEFAULT_CARD_URL = "http://0.0.0.0:');
+    // Enforced at import: the module cannot load advertising a bad address.
+    expect(main).toContain("CARD_URL = resolve_card_url()");
+  });
+
+  it("ships a test that the guard fires and that a dialable URL passes", async () => {
+    const files = await generateAllFiles(context());
+    const wireTest = read(files, "tests/test_a2a_wire.py");
+
+    expect(wireTest).toContain(
+      "test_guard_refuses_a_loopback_or_wildcard_card_url",
+    );
+    expect(wireTest).toContain("test_guard_accepts_a_dialable_card_url");
+    expect(wireTest).toContain("pytest.raises(ValueError)");
+  });
+
+  it("gives the generated suite a dialable A2A_CARD_URL so the import succeeds", async () => {
+    const files = await generateAllFiles(context());
+    const conftest = read(files, "tests/conftest.py");
+
+    expect(conftest).toContain('os.environ.setdefault("A2A_CARD_URL"');
+    // The default must not itself be loopback, or every test would fail to
+    // import the module under test.
+    expect(conftest).not.toMatch(/A2A_CARD_URL".*127\.0\.0\.1/);
+    expect(conftest).not.toMatch(/A2A_CARD_URL".*localhost/);
+  });
+});

@@ -33,6 +33,13 @@ ROOST_ENABLED=true
 ROOST_TOKEN_ENV=ROOST_AGENT_TOKEN
 ROOST_AGENT_TOKEN=
 
-# The address the card advertises to the LiteLLM proxy, when the container
-# cannot infer a reachable one. Must be reachable FROM the proxy's host.
+# The address the card advertises to the LiteLLM proxy - the URL the proxy
+# dials. REQUIRED in practice: the in-code default is the wildcard bind address
+# (http://0.0.0.0:{{listenPort}}), which the agent REFUSES at startup because
+# 0.0.0.0/127.0.0.1/localhost are unreachable from the proxy's host. Set it to
+# this agent's reachable address - an IP or a resolvable name on a network the
+# proxy shares (e.g. a Tailscale IP, or the container name on a shared Docker
+# network), never a loopback address. An empty value is refused too, so this
+# MUST be set to a real address.
 # A2A_CARD_URL=http://<host>:{{listenPort}}
+A2A_CARD_URL=

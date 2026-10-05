@@ -102,6 +102,13 @@ The agent listens on `{{listenPort}}`; the container publishes the same port
 generation time). The card URL (`A2A_CARD_URL`) must be an address the proxy's
 host can resolve — an IP or a name with working DNS, not `localhost`.
 
+`agent/main.py` **refuses to start** on a loopback or wildcard card URL (the
+in-code default `http://0.0.0.0:{{listenPort}}` is exactly that): the proxy dials
+the advertised URL from a different host, so `0.0.0.0`, `127.0.0.1` and
+`localhost` register cleanly and then fail every call. `resolve_card_url()` is
+the guard, the same class of check container-agent applies via
+`resolve_card_address()`; set `A2A_CARD_URL` to a reachable address and restart.
+
 If the gateway and this container share a Docker network, prefer
 `docker-container.externalNetworks` and drop the published port entirely: the
 proxy can then reach the agent by container name.
