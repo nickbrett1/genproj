@@ -19,6 +19,7 @@ Run with `pytest` (the generated project's CI already does).
 
 from __future__ import annotations
 
+import pytest
 from a2a.server.request_handlers.response_helpers import agent_card_to_dict
 from a2a.server.routes.jsonrpc_dispatcher import JsonRpcDispatcher
 
@@ -93,3 +94,33 @@ def test_endpoint_routes_the_method_the_card_advertises() -> None:
         f"the card advertises A2A {interface['protocolVersion']!r} (method "
         f"{method!r}) but the endpoint does not route {method!r}: {body}"
     )
+
+
+# The card URL the proxy dials is a different host, so a loopback/wildcard one
+# is a card nothing can reach. `resolve_card_url` refuses it at import (the
+# generated default is the wildcard), the same guard container-agent applies via
+# `resolve_card_address()`.
+@pytest.mark.parametrize(
+    "bad_url",
+    [
+        "http://0.0.0.0:{{listenPort}}",
+        "http://127.0.0.1:{{listenPort}}",
+        "http://localhost:{{listenPort}}",
+        "http://[::1]:{{listenPort}}",
+        "http://[::]:{{listenPort}}",
+        "http://:{{listenPort}}",
+    ],
+)
+def test_guard_refuses_a_loopback_or_wildcard_card_url(bad_url: str) -> None:
+    with pytest.raises(ValueError):
+        main.resolve_card_url(bad_url)
+
+
+def test_guard_refuses_the_generated_default() -> None:
+    with pytest.raises(ValueError):
+        main.resolve_card_url(main.DEFAULT_CARD_URL)
+
+
+def test_guard_accepts_a_dialable_card_url() -> None:
+    dialable = "http://192.0.2.10:{{listenPort}}"
+    assert main.resolve_card_url(dialable) == dialable

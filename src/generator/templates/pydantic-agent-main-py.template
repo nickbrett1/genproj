@@ -27,10 +27,12 @@ container across the network, so a loopback bind is unreachable.
 
 from __future__ import annotations
 
+import ipaddress
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import urlparse
 
 from a2a.helpers import new_task_from_user_message, new_text_message, new_text_part
 from a2a.server.agent_execution import AgentExecutor, RequestContext
@@ -86,7 +88,64 @@ SUPPORTED_DIALECTS: frozenset[str] = frozenset({PROTOCOL_VERSION})
 
 # The URL the card advertises - the address the LiteLLM proxy dials. It must be
 # reachable from the proxy's host, so it is an address, not a loopback name.
-CARD_URL = os.environ.get("A2A_CARD_URL", "http://0.0.0.0:{{listenPort}}")
+# The generated default IS loopback-wildcard and is therefore refused outright:
+# see `resolve_card_url`, the guard mirroring container-agent's
+# `resolve_card_address()`. It exists because a card advertising 0.0.0.0/127.0.0.1
+# registers cleanly and then fails every call - the proxy dials a different host.
+DEFAULT_CARD_URL = "http://0.0.0.0:{{listenPort}}"
+
+# Host names that mean "this host". They can never be dialled from the proxy.
+_LOOPBACK_HOSTS = frozenset(
+    {"localhost", "localhost.localdomain", "ip6-localhost", "ip6-loopback"}
+)
+
+
+def _is_loopback_or_wildcard(host: str) -> bool:
+    """True for a host that is this machine, not one the proxy can dial.
+
+    A loopback name/IP or the wildcard bind address (0.0.0.0, ::) is
+    unreachable from another host; anything else (a domain or routable IP) is
+    accepted, because the proxy's resolver is not visible from here.
+    """
+    host = host.strip().strip("[]").lower()
+    if not host:
+        return True
+    if host in _LOOPBACK_HOSTS or host.endswith(".localhost"):
+        return True
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return address.is_loopback or address.is_unspecified
+
+
+def resolve_card_url(raw: str | None = None) -> str:
+    """The advertised card URL, refusing a loopback or wildcard host.
+
+    The LiteLLM proxy - a different host - dials the URL this card advertises, so
+    a loopback address (127.0.0.0/8, ::1, `localhost`) or the wildcard bind
+    address (0.0.0.0, ::) cannot be reached: the agent registers happily and then
+    fails every call. This is the same class of guard container-agent's
+    `resolve_card_address()` applies in shell; here it is a loud startup refusal
+    instead of a card nothing can dial. `A2A_CARD_URL` overrides the default.
+    """
+    url = (raw if raw is not None else os.environ.get("A2A_CARD_URL", "")).strip()
+    if not url:
+        url = DEFAULT_CARD_URL
+    host = urlparse(url).hostname or ""
+    if _is_loopback_or_wildcard(host):
+        raise ValueError(
+            f"A2A_CARD_URL={url!r} is not a dialable card address: it is "
+            "loopback, wildcard, or has no host. The card must name an address "
+            "the LiteLLM proxy's host can dial - a full URL whose host is an IP "
+            "or a resolvable name on a shared network, never "
+            "0.0.0.0/::/127.0.0.1/localhost. Set A2A_CARD_URL to this agent's "
+            "reachable address and restart."
+        )
+    return url
+
+
+CARD_URL = resolve_card_url()
 
 
 def _load_instructions() -> str:
