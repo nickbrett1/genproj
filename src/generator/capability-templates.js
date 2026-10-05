@@ -492,6 +492,22 @@ export const capabilityTemplates = {
       templateId: "pydantic-agent-probe-py",
     },
     {
+      // The host-side deploy gate (scripts/deploy-gate.sh): brings the compose
+      // service up and dials the freshly deployed agent with `agent.probe
+      // --agent`, from the host that actually holds the deployment. It is
+      // attached to pydantic-agent (the script is the agent's own probe,
+      // defaulted to the agent name), but it drives `docker compose` and has
+      // nothing to run against without a compose file - so it is emitted only
+      // when the project ALSO has `docker-container`. That cross-capability
+      // condition is the `when` below: a pydantic-agent project without a
+      // deployment capability does not get a script that cannot run.
+      id: "deploy-gate",
+      filePath: "scripts/deploy-gate.sh",
+      templateId: "scripts-deploy-gate-sh",
+      isExecutable: true,
+      when: (context) => context.capabilities.includes("docker-container"),
+    },
+    {
       id: "agent-instructions",
       filePath: "prompts/instructions.md",
       templateId: "pydantic-agent-instructions-md",

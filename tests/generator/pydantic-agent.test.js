@@ -23,7 +23,7 @@ import {
 import { isAppOwnedPath } from "../../src/generator/genproj-overwrite.js";
 import { ValidationError } from "../../src/generator/genproj-errors.js";
 import { getCapabilityById } from "../../src/catalog/index.js";
-
+import { capabilityTemplates } from "../../src/generator/capability-templates.js";
 const BASE_CAPABILITIES = [
   "devcontainer-python",
   "doppler",
@@ -800,5 +800,62 @@ describe("pydantic-agent registration-reachability probe", () => {
       "docker compose run --rm app python -m agent.probe",
     );
     expect(readme.toLowerCase()).toContain("non-zero");
+  });
+
+  it("ships the host-side deploy gate, templated to this agent, only with a compose file", async () => {
+    const files = await generateAllFiles(context());
+    const gate = files.find((f) => f.filePath === "scripts/deploy-gate.sh");
+    expect(gate).toBeTruthy();
+
+    // It is the *host-side* gate: it drives the compose service (default `app`)
+    // and dials the agent through the probe, scoped to this agent's name.
+    expect(gate.content).toContain("docker compose up -d");
+    expect(gate.content).toContain("docker compose exec -T");
+    expect(gate.content).toContain("python -m agent.probe --agent");
+    expect(gate.content).toContain('SERVICE="${SERVICE:-app}"');
+    // `set -euo pipefail` is what makes the non-zero probe exit gate the deploy.
+    expect(gate.content).toContain("set -euo pipefail");
+
+    // The agent name is templated (the pydantic-agent data generator sets
+    // agentName to the project name) - never a stale reference default.
+    expect(gate.content).toContain('AGENT_NAME="${AGENT_NAME:-price-gate}"');
+    expect(gate.content).not.toContain("{{");
+    expect(gate.content).not.toContain("{{agentName}}");
+
+    // The runbook points the operator at the gate, after deploy.
+    const readme = read(files, "deploy/README.md");
+    expect(readme).toContain("./scripts/deploy-gate.sh");
+    expect(readme).not.toContain("{{");
+
+    // Honesty: the script drives `docker compose`, so it is emitted only when
+    // the project also has a compose file. `pydantic-agent` requires a
+    // deployment capability (today only `docker-container`), so the `when`
+    // guard on the wiring is what encodes "probe AND compose file" - assert it
+    // directly rather than generating an invalid selection.
+    const gateDescriptor = capabilityTemplates["pydantic-agent"].find(
+      (t) => t.id === "deploy-gate",
+    );
+    expect(gateDescriptor).toBeTruthy();
+    expect(
+      gateDescriptor.when({
+        capabilities: ["pydantic-agent", "docker-container"],
+      }),
+    ).toBe(true);
+    expect(gateDescriptor.when({ capabilities: ["pydantic-agent"] })).toBe(
+      false,
+    );
+
+    // And a plain docker-container project (no agent, so no probe) must not
+    // carry the gate nor a runbook that tells the operator to run it.
+    const noAgent = await generateAllFiles({
+      ...context(),
+      capabilities: ["devcontainer-python", "doppler", "docker-container"],
+    });
+    expect(
+      noAgent.find((f) => f.filePath === "scripts/deploy-gate.sh"),
+    ).toBeUndefined();
+    expect(
+      noAgent.find((f) => f.filePath === "deploy/README.md").content,
+    ).not.toContain("deploy-gate.sh");
   });
 });

@@ -1497,7 +1497,28 @@ function getDockerContainerTemplateData(context) {
     buildPlatforms,
     circleciContext,
   });
+  // Deploy-gate guidance is pydantic-agent-specific: the gate script is emitted
+  // only for a pydantic-agent + docker-container project (see
+  // capability-templates.js, `deploy-gate`). A plain docker-container runbook
+  // must not tell the operator to run a script that is not there, so the
+  // section collapses to nothing without the agent.
+  const hasAgent = (context.capabilities || []).includes("pydantic-agent");
+  const deployGateSection = hasAgent
+    ? `**Deploy gate.** A green registration proves nothing about reachability —
+the URL on the agent's card may be one only the container can dial. After the
+deploy step, run the gate on the host that holds the deployment:
 
+\`\`\`bash
+./scripts/deploy-gate.sh
+\`\`\`
+
+It brings the \`app\` service up and dials the freshly deployed agent from that
+host (\`python -m agent.probe --agent <agent-name>\`), retrying until it
+answers. It exits non-zero if the agent is undialable, unreachable, or serving
+a card that disagrees with its registration, so treat a non-zero exit as a
+failed deploy. Override \`AGENT_NAME\`, \`SERVICE\`, \`WAIT_SECONDS\` or
+\`LITELLM_MASTER_KEY\` in the environment if your deploy differs.`
+    : "";
   // glibc base by default: Alpine (musl) breaks native npm/python modules
   // (duckdb, better-sqlite3, sharp, ...) which ship glibc prebuilds.
   // Alpine only via explicit opt-in (safe for pure-JS apps).
@@ -1949,6 +1970,7 @@ ${composeEnvVars}`
     registryNamespace,
     circleciContext,
     ...deployCiDocs,
+    deployGateSection,
     dockerBaseImage,
     dockerRuntimeImage,
     dockerAptInstall,
