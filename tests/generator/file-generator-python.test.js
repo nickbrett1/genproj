@@ -124,26 +124,23 @@ describe("Python Dockerfile (memo §2.2, §3.1, §3.2, §2.8)", () => {
 
     const content = dockerfile.content;
     expect(content).toContain("FROM python:3.12-slim AS build");
-    // genproj-docker-build-speedup: manifest-first ordering — manifests +
-    // README copied first, deps installed pre-copy via a placeholder
-    // package, then the source copy and a cheap --no-deps reinstall.
+    // Python installs ONCE, from the copied source. Cache-prime ordering is
+    // deliberately abandoned here: the old pre-COPY stub install
+    // (`touch src/nas_port_mcp/__init__.py` + `pip install .`) followed by a
+    // `--no-deps` reinstall could ship the empty stub when a warm BuildKit
+    // layer reused the first install's build/lib artifact (defect 1).
     // requirements.txt with an editable self-install (`-e .[dev]`) still
-    // works: local refs are filtered out of the pre-copy install and the
-    // full requirements install happens after the copy (nas-port-mcp bug 2).
-    expect(content).toContain(
+    // works: local refs are filtered out because the real source is already
+    // present (nas-port-mcp bug 2).
+    expect(content).toContain("COPY . .");
+    expect(content).not.toContain(
       "COPY README.md pyproject.toml* requirements.txt* ./",
     );
-    expect(content).toContain(
-      "mkdir -p src/nas_port_mcp && touch src/nas_port_mcp/__init__.py",
-    );
-    expect(content.indexOf("pip install --no-cache-dir .")).toBeLessThan(
-      content.indexOf("COPY . ."),
-    );
+    expect(content).not.toContain("touch src/nas_port_mcp/__init__.py");
+    expect(content).not.toContain("--no-deps");
+    // The single install follows the source copy.
     expect(content.indexOf("COPY . .")).toBeLessThan(
-      content.indexOf("pip install --no-cache-dir --no-deps ."),
-    );
-    expect(content).toContain(
-      "RUN if [ -f requirements.txt ]; then \\\n      /opt/venv/bin/pip install --no-cache-dir -r requirements.txt; \\\n    elif [ -f pyproject.toml ]; then \\\n      /opt/venv/bin/pip install --no-cache-dir --no-deps .; \\\n    fi",
+      content.indexOf("pip install --no-cache-dir ."),
     );
     // No placeholder comment; ENTRYPOINT comes from configuration.
     expect(content).not.toContain("TODO");
@@ -211,7 +208,7 @@ describe("Python Dockerfile (memo §2.2, §3.1, §3.2, §2.8)", () => {
   it("emits no script COPY for the default language command (no entrypoint/command config)", async () => {
     const config = {
       "docker-container": {
-        ...NAS_PORT_MCP_CONFIG["docker-container"],
+        ...NAS_PORT_MCP_NO_HEALTH_CONFIG["docker-container"],
         entrypoint: undefined,
         command: undefined,
       },
@@ -219,9 +216,83 @@ describe("Python Dockerfile (memo §2.2, §3.1, §3.2, §2.8)", () => {
     const { files } = await generateNasPortMcp(config);
     const dockerfile = files.find((f) => f.filePath === "Dockerfile");
     expect(dockerfile.content).not.toContain("COPY scripts/");
+    // No declared healthcheck -> nothing to serve -> the default language
+    // command is the plain stdio module entry point.
     expect(dockerfile.content).toContain(
       'CMD ["python", "-m", "nas_port_mcp"]',
     );
+  });
+});
+
+// The two image defects this branch fixes, asserted together so a reviewer can
+// see both guards in one place. They are deliberately separate from the
+// rendering tests above: each names the failure it prevents.
+describe("Python image contract (regressions: stale stub + healthcheck CMD)", () => {
+  it("defect 1: the build stage installs once from the copied source (no stub __init__.py, no --no-deps)", async () => {
+    const { files } = await generateNasPortMcp({
+      "docker-container": {
+        ...NAS_PORT_MCP_CONFIG["docker-container"],
+        entrypoint: undefined,
+        command: undefined,
+      },
+    });
+    const content = files.find((f) => f.filePath === "Dockerfile").content;
+
+    // No pre-COPY stub install and no post-COPY `--no-deps` reinstall: those
+    // two together are what let a warm BuildKit cache ship the empty stub, so
+    // `python -m nas_port_mcp` died on `__version__`.
+    expect(content).not.toMatch(/touch src\/\S*__init__\.py/);
+    expect(content).not.toMatch(/--no-deps/);
+    expect(content).not.toContain(
+      "COPY README.md pyproject.toml* requirements.txt* ./",
+    );
+
+    // Exactly one install, and it runs against the copied source.
+    expect(content.match(/pip install --no-cache-dir \./g) || []).toHaveLength(
+      1,
+    );
+    expect(content.indexOf("COPY . .")).toBeLessThan(
+      content.indexOf("pip install --no-cache-dir ."),
+    );
+
+    // The scaffold package is real, not an empty stub: it defines
+    // `__version__`, which is precisely what the stale stub lacked.
+    const init = files.find(
+      (f) => f.filePath === "src/nas_port_mcp/__init__.py",
+    );
+    expect(init).toBeDefined();
+    expect(init.content).toContain("__version__");
+  });
+
+  it("defect 2: with an http healthcheck the default CMD serves that path", async () => {
+    const { files } = await generateNasPortMcp({
+      "docker-container": {
+        ...NAS_PORT_MCP_CONFIG["docker-container"],
+        entrypoint: undefined,
+        command: undefined,
+      },
+    });
+    const dockerfile = files.find((f) => f.filePath === "Dockerfile");
+
+    // The smoke step runs the image with NO command override while polling the
+    // declared `http:/healthz`, so the default CMD must select the HTTP
+    // transport on the EXPOSE port. The old stdio default exited immediately,
+    // so the container restart-looped.
+    expect(dockerfile.content).toContain(
+      'CMD ["python","-m","nas_port_mcp","--transport","streamable-http","--host","0.0.0.0","--port","3001"]',
+    );
+
+    // The module the CMD runs must actually answer the declared path - the CMD
+    // is not a promise the generated code fails to keep.
+    const main = files.find(
+      (f) => f.filePath === "src/nas_port_mcp/__main__.py",
+    );
+    expect(main).toBeDefined();
+    expect(main.content).toContain('HEALTH_PATH = "/healthz"');
+    expect(main.content).toContain("streamable-http");
+    // `python -m nas_port_mcp` with no arguments (a local stdio client) stays
+    // stdio, so the same module serves both.
+    expect(main.content).toContain('default="stdio"');
   });
 });
 
