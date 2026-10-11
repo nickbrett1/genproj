@@ -100,36 +100,26 @@ has no equivalent of Vite's `?raw` import suffix, so
 `src/generator/templates.generated.js` — committed, and rebuilt on
 `pretest`/`prebuild`.
 
-### The host `~/.ssh` mount
+### The host `~/.ssh` keyring
 
-Every generated devcontainer bind-mounts the **host's** `~/.ssh` at `$HOME/.ssh`
-(`source=${localEnv:HOME}/.ssh,...,type=bind`). It is a bind mount, not a copy:
-the container's `~/.ssh/config` and keys _are_ the host's files, live. Two
-consequences follow, and neither is per-project:
+Every generated devcontainer bind-mounts the **host's** `~/.ssh` at
+`$HOME/.ssh-host` — deliberately _not_ at `$HOME/.ssh`. Mounting over the
+container's own `~/.ssh` was the original design and it was wrong: the host's
+files keep the host uid (macOS `501`), which OpenSSH running as the container
+uid refuses, so plain `ssh`, `git`, `scp` and VS Code all failed; the bind also
+shadowed the image's own `~/.ssh/authorized_keys`, and it forced the host's
+`~/.ssh/config` to be world-readable (`644`) so a uid-`1000` process could read
+a uid-`501` file.
 
-- **Host aliases and key authorization live on the host machine.** A container's
-  `ssh <alias>` resolves through the host's `~/.ssh/config`, and the key it
-  offers is the host's own key — so what the host can reach, the container can
-  reach, and a key the host has not authorized _on the target_ is refused no
-  matter how many times the project is regenerated. Add the alias (`Host <name>`
-  with `User`) and authorize the key **on the host**; every existing and future
-  container inherits it.
-- **`~/.ssh/config` must be world-readable (`644`).** The mount can keep the host
-  uid (macOS `501`) while the container runs as `1000`, and OpenSSH refuses a
-  config that is writable by others — `600` owned by `501` is unreadable in the
-  container. The file holds no secrets.
-
-Keys are a special case: OpenSSH in the container refuses a private key it does
-not own, so `GIT_GITHUB_AUTH_SETUP_SCRIPT` copies the mounted key into a
-container-owned `~/.genproj-ssh/` (or uses a forwarded agent) — it never chowns
-the mount. **Never mutate the mounted `~/.ssh` from inside a container; that is
-the host's directory.**
-
-Worked example (mac-studio, 2026-09-17): the host's `~/.ssh/id_ed25519` was
-authorized in its own `~/.ssh/authorized_keys` and a `Host mac-studio` block
-added with both `~/.ssh/id_ed25519` and `~/.genproj-ssh/id_ed25519` as
-`IdentityFile`; from then on `ssh mac-studio whoami` → the host user, in every
-container, with no rebuild.
+Instead, `GIT_GITHUB_AUTH_SETUP_SCRIPT` copies the host's keys (and
+`known_hosts`) into the container-owned `~/.ssh`, owned by the container user
+and with the right modes (`700` dir, `600` private, `644` public) — or uses a
+forwarded SSH agent, which needs no keys on disk at all. Never mutate the mount
+(`~/.ssh-host`); it is the host's directory. Nothing pins `core.sshCommand`:
+the keys live where `ssh` looks by default, so `ssh <host>`, `git push` and VS
+Code just work. Host aliases and key authorization still live on the host — a
+key the host has not authorized _on the target_ is refused no matter how often
+the project is regenerated.
 
 ### Port forwarding
 

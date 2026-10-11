@@ -103,7 +103,7 @@ describe("File Generator - Coding Agents", () => {
       "source=${localEnv:HOME}/.config/goose,target=/home/node/.config/goose,type=bind",
     );
     // Sanity: doppler/ssh mounts still present, goose recipe bootstrap intact.
-    expect(parsed.mounts.some((m) => m.includes("/.ssh,"))).toBe(true);
+    expect(parsed.mounts.some((m) => m.includes("/.ssh-host,"))).toBe(true);
   });
 
   it("should include xcode-native in mcp_config.json when xcode-development capability is selected", async () => {

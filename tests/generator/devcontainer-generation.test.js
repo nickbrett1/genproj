@@ -462,7 +462,9 @@ describe("DevContainer Generation Tests", () => {
     ).toBeUndefined();
     // Host ~/.ssh is bind-mounted for SSH-first GitHub auth.
     expect(
-      json.mounts.some((m) => m.includes(".ssh") && m.includes("type=bind")),
+      json.mounts.some(
+        (m) => m.includes(".ssh-host") && m.includes("type=bind"),
+      ),
     ).toBe(true);
 
     const setup = files.find(
@@ -716,7 +718,9 @@ describe("DevContainer kitchen-sink gating (memo §2.9 / audit §4.5)", () => {
     // genproj-ssh-auth: host ~/.ssh is always bind-mounted (SSH-first GitHub
     // auth; no PAT in git config/remotes).
     expect(
-      json.mounts.some((m) => m.includes(".ssh") && m.includes("type=bind")),
+      json.mounts.some(
+        (m) => m.includes(".ssh-host") && m.includes("type=bind"),
+      ),
     ).toBe(true);
     expect(
       json.features["ghcr.io/devcontainers-contrib/features/doppler-cli:1"],
