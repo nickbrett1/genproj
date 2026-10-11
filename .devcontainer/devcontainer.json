@@ -34,7 +34,7 @@
     "source=genproj-wrangler-config,target=/home/node/.wrangler,type=volume",
     "source=${localEnv:HOME}/.doppler,target=/home/node/.doppler,type=bind",
     "source=gemini-cli-settings,target=/home/node/.gemini,type=volume",
-    "source=${localEnv:HOME}/.ssh,target=/home/node/.ssh,type=bind"
+    "source=${localEnv:HOME}/.ssh,target=/home/node/.ssh-host,type=bind"
   ],
   "forwardPorts": [],
   "containerEnv": {
