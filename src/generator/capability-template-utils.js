@@ -2010,6 +2010,13 @@ ${composeEnvVars}`
     ? `    widget:\n      type: customapi\n      url: http://localhost:${hostPort}${healthcheckPath}\n      mappings:\n        - field: status\n          label: Status`
     : "";
 
+  // Section 5 of the generated deploy README must agree with what was actually
+  // emitted: with `homepage: false` there are no labels and no snippet, so it
+  // must not tell the reader to append a file that does not exist.
+  const homepageDashboard = homepage
+    ? "Append `deploy/homepage-services.yaml` to your Homepage `services.yaml`\n(and enable the `homepage` Docker provider) to show a health widget for the\nservice."
+    : "Homepage integration is disabled (`docker-container.homepage: false`): no\n`homepage.*` labels and no `deploy/homepage-services.yaml` were generated.\nDefine this service in your Homepage `services.yaml` by hand.";
+
   return {
     registryPrefix,
     registryNamespace,
@@ -2037,6 +2044,7 @@ ${composeEnvVars}`
     envExampleEntries,
     composeLabels: labels.join("\n"),
     homepageWidget,
+    homepageDashboard,
     hostname,
     watchtower: String(watchtower),
     homepage: String(homepage),

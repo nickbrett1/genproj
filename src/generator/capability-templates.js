@@ -390,6 +390,13 @@ export const capabilityTemplates = {
       id: "homepage-snippet",
       filePath: "deploy/homepage-services.yaml",
       templateId: "homepage-services",
+      // Homepage is opt-out: `docker-container.homepage: false` suppresses EVERY
+      // Homepage artifact, not just the compose labels. A project that opts out
+      // defines its own Homepage entry by hand (services.yaml), so emitting a
+      // generated snippet too would be inconsistent (and label-discovered
+      // services render icon-less and out of order).
+      when: (context) =>
+        context.configuration?.["docker-container"]?.homepage !== false,
     },
     {
       id: "env-example",

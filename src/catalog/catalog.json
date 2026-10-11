@@ -1339,7 +1339,8 @@
           },
           "homepage": {
             "type": "boolean",
-            "default": true
+            "default": true,
+            "description": "Emit the Homepage integration: the homepage.* container labels on docker-compose.yml AND the deploy/homepage-services.yaml snippet. Set false to opt out entirely and define the service in Homepage's services.yaml by hand (e.g. when label-discovered services render icon-less or out of order)."
           },
           "armBuilds": {
             "type": "boolean",
