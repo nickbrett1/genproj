@@ -2,6 +2,8 @@
 
 Status: PR open. Author: goose. Date: 2026-10-11.
 Branch: `fix/python-image-importable-and-serves-healthcheck`.
+PR: https://github.com/nickbrett1/genproj/pull/76
+Fix commit: `45d6f78`. Memo commit: `e0ea53c` (branch cut from `main` @ `4e7ebd4`).
 
 Two defects in the generated `docker-container` image for a Python project,
 each of which makes a freshly generated project fail the smoke step that
