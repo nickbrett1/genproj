@@ -1656,26 +1656,32 @@ RUN npm run build
       ? `RUN apt-get update && apt-get install -y --no-install-recommends ${aptPackages.join(" ")} \\\n    && rm -rf /var/lib/apt/lists/*`
       : "";
 
-  // Stage 1 (build) — manifest-first layer ordering (memo:
-  // genproj-docker-build-speedup, proven in mailroom 4f8d9a4): copy the
+  // Stage 1 (build) — Node/Java/Rust keep the manifest-first layer ordering
+  // (memo: genproj-docker-build-speedup, proven in mailroom 4f8d9a4): copy the
   // dependency manifests, install dependencies, THEN copy the source and
   // build. The expensive dependency layer only rebuilds when the manifest
   // changes, so every source-only commit reuses it (via docker_layer_caching
   // and the buildx registry cache in the docker-publish job).
   //
-  // Python: deps install before `COPY . .` via a minimal placeholder package
-  // (`pip install .` resolves pyproject deps with no source present; the
-  // real package is reinstalled `--no-deps` after the copy). README.md must
-  // be copied too — pyproject's `readme = "README.md"` fails the metadata
-  // build without it. A requirements.txt is pre-installed with local
-  // references (`-e .[dev]`) filtered out, then fully installed after the
-  // copy (nas-port-mcp bug 2: editable self-installs need the real source).
+  // Python: install ONCE, from the real source, after it has been copied.
+  //
+  // The generator used to install a stub package before `COPY . .` (touch an
+  // empty `src/<pkg>/__init__.py`, `pip install .`, then copy the source and
+  // "reinstall" with `--no-deps`). That shape is cache-dependent: the first
+  // install leaves a setuptools `build/lib/<pkg>/__init__.py` stub in the
+  // image, and the post-COPY reinstall skips re-copying a source file whose
+  // mtime is older than that artifact — exactly what a warm BuildKit layer
+  // cache produces. The wheel then ships the empty stub, so `python -m <pkg>`
+  // dies with `cannot import name '__version__' from '<pkg>'` and the
+  // container never serves. A single install from the copied source removes
+  // the stale-artifact class of bug entirely. A requirements.txt is installed
+  // with local references (`-e .[dev]`) filtered out, because an editable
+  // self-install needs the real source that is now present (nas-port-mcp
+  // bug 2).
   let dockerBuildCommands;
   if (isPython) {
-    dockerBuildCommands = `COPY README.md pyproject.toml* requirements.txt* ./
-RUN python -m venv /opt/venv \\\n    && /opt/venv/bin/pip install --upgrade pip \\\n    && mkdir -p src/${pkgName} && touch src/${pkgName}/__init__.py \\\n    && if [ -f requirements.txt ]; then \\\n         grep -vE '^\\s*(-e|--editable)\\s+\\.' requirements.txt > /tmp/reqs.txt || true; \\\n         [ -s /tmp/reqs.txt ] && /opt/venv/bin/pip install --no-cache-dir -r /tmp/reqs.txt; \\\n       fi \\\n    && if [ -f pyproject.toml ]; then \\\n         /opt/venv/bin/pip install --no-cache-dir .; \\\n       fi
-COPY . .
-RUN if [ -f requirements.txt ]; then \\\n      /opt/venv/bin/pip install --no-cache-dir -r requirements.txt; \\\n    elif [ -f pyproject.toml ]; then \\\n      /opt/venv/bin/pip install --no-cache-dir --no-deps .; \\\n    fi${svelteBuildCopyLine}`;
+    dockerBuildCommands = `COPY . .
+RUN python -m venv /opt/venv \\\n    && /opt/venv/bin/pip install --upgrade pip \\\n    && if [ -f requirements.txt ]; then \\\n         grep -vE '^\\s*(-e|--editable)\\s+\\.' requirements.txt > /tmp/reqs.txt || true; \\\n         [ -s /tmp/reqs.txt ] && /opt/venv/bin/pip install --no-cache-dir -r /tmp/reqs.txt; \\\n       fi \\\n    && if [ -f pyproject.toml ]; then \\\n         /opt/venv/bin/pip install --no-cache-dir .; \\\n       fi${svelteBuildCopyLine}`;
   } else if (isNode) {
     // genproj-npm-pin: activate the npm pinned in package.json before
     // installing. npm 10 bundled with node:22 crashes fresh-installing
@@ -1815,8 +1821,32 @@ RUN cargo build --release`;
   if (Array.isArray(effectiveCommand) && effectiveCommand.length > 0) {
     dockerCommand = `CMD ${JSON.stringify(effectiveCommand)}`;
   } else if (!dockerEntrypoint) {
-    if (isPython) dockerCommand = `CMD ["python", "-m", "${pkgName}"]`;
-    else if (isNode) dockerCommand = 'CMD ["node", "build/index.js"]';
+    if (isPython) {
+      // The image is the deployment artifact, and the generated smoke step runs
+      // it with NO command override while polling the DECLARED healthcheck. A
+      // stdio default (`python -m <pkg>`) cannot satisfy an `http:/...`
+      // healthcheck - the process exits before the probe can pass, so the
+      // container restart-loops (notes-mcp). When an http healthcheck is
+      // declared and no serving harness already answers it, the default CMD
+      // selects the HTTP/streamable-http transport instead. Local clients still
+      // get stdio from the module default (`python -m <pkg>`, no arguments) -
+      // see the generated `__main__.py`.
+      const pythonServesHttp =
+        healthcheckSetting.startsWith("http:") && !harness;
+      dockerCommand = pythonServesHttp
+        ? `CMD ${JSON.stringify([
+            "python",
+            "-m",
+            pkgName,
+            "--transport",
+            "streamable-http",
+            "--host",
+            "0.0.0.0",
+            "--port",
+            String(exposePort),
+          ])}`
+        : `CMD ["python", "-m", "${pkgName}"]`;
+    } else if (isNode) dockerCommand = 'CMD ["node", "build/index.js"]';
     else if (isJava) dockerCommand = 'CMD ["java", "-jar", "/app/app.jar"]';
     // Non-node: the language's own binary is the entry point (and the server,
     // for a project that adds one). The frontend is static assets it serves.
@@ -3290,26 +3320,40 @@ ${syncSecrets("preview")}`);
     //   - a non-node primary WITH a frontend (genproj now scaffolds a serving
     //     harness for it - see servingHarnessSpec - so the image serves the
     //     default /healthz out of the box); or
+    //   - a Python project that DECLARES an http healthcheck (genproj now
+    //     defaults its CMD to the streamable-http transport, so the bare image
+    //     serves that path - see the Python default CMD in getDockerContainer
+    //     TemplateData); or
     //   - a declared command/entrypoint (the user owns the entry point).
-    // A non-node project with NO frontend still gets no gate: its placeholder
-    // binary makes no promise, so a health-gate there would be red by default.
-    // No healthcheck at all means there is nothing to poll.
+    // A non-node project with NO frontend and no healthcheck still gets no gate:
+    // its placeholder binary makes no promise, so a health-gate there would be
+    // red by default. No healthcheck at all means there is nothing to poll.
     const smokeHealthcheck =
       typeof dcConfig.healthcheck === "string"
         ? dcConfig.healthcheck.trim()
         : "";
     const smokeLanguage = resolveProjectLanguage(context);
+    // A Python primary now serves HTTP by default when (and only when) an http
+    // healthcheck is declared and no harness/custom entry point overrides it -
+    // the same condition the Dockerfile CMD uses.
+    const smokeDeclaresEntrypointEarly =
+      (Array.isArray(dcConfig.command) && dcConfig.command.length > 0) ||
+      (Array.isArray(dcConfig.entrypoint) && dcConfig.entrypoint.length > 0);
+    const smokePythonServesHttp =
+      smokeLanguage === "python" &&
+      smokeHealthcheck.startsWith("http:") &&
+      !smokeDeclaresEntrypointEarly;
     const smokeServesByDefault =
-      smokeLanguage === "node" || servingHarnessSpec(context) !== null;
+      smokeLanguage === "node" ||
+      servingHarnessSpec(context) !== null ||
+      smokePythonServesHttp;
     // A node project defaults to http:/health and a non-node frontend project
     // to http:/healthz (see the Dockerfile emitter), so no declared
     // healthcheck still means there IS one; `none` opts out.
     const smokeHasHealthcheck =
       smokeHealthcheck !== "none" &&
       (smokeHealthcheck !== "" || smokeServesByDefault);
-    const smokeDeclaresEntrypoint =
-      (Array.isArray(dcConfig.command) && dcConfig.command.length > 0) ||
-      (Array.isArray(dcConfig.entrypoint) && dcConfig.entrypoint.length > 0);
+    const smokeDeclaresEntrypoint = smokeDeclaresEntrypointEarly;
     const emitsSmokeGate =
       smokeHasHealthcheck && (smokeServesByDefault || smokeDeclaresEntrypoint);
     const smokeTimeoutChecks = 30;

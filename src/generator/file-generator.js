@@ -144,6 +144,8 @@ import {
   capabilityProvides,
   canonicalCapabilityOrder,
   servingHarnessSpec,
+  resolveDeclaredHealthPath,
+  resolveAgentListenPort,
 } from "./capability-template-utils.js";
 import {
   validateAgentPorts,
@@ -2159,10 +2161,31 @@ def test_package_imports():
   // servingHarnessSpec). A custom entry point still wins: the app owns its
   // entry point, so no scaffold (placeholder or harness) is emitted.
   const harness = servingHarnessSpec(context);
-  const entryPoint =
-    harness && !hasCustomEntrypoint
+
+  // When an `http:/...` healthcheck is declared and no harness already answers
+  // it, the generated Dockerfile's default CMD selects the streamable-http
+  // transport (see capability-template-utils.js): the bare image must serve
+  // HTTP for the smoke step, while a local `python -m <pkg>` still speaks stdio.
+  // The scaffold therefore gains a stdio|streamable-http switch, defaulting to
+  // stdio. A custom entry point wins, so no scaffold is emitted and the app
+  // owns its own `__main__.py`.
+  const healthPath = resolveDeclaredHealthPath(dockerConfig);
+  const servesHttpByDefault =
+    !hasCustomEntrypoint && !harness && healthPath !== "";
+  const entryPoint = hasCustomEntrypoint
+    ? null
+    : harness
       ? buildPythonServingHarness(harness)
-      : mainPy;
+      : servesHttpByDefault
+        ? buildPythonTransportEntrypoint({
+            pkgName,
+            port:
+              dockerConfig.exposePort ??
+              resolveAgentListenPort(context) ??
+              3000,
+            healthPath,
+          })
+        : mainPy;
 
   return [
     { filePath: "pyproject.toml", content: pyproject },
@@ -2172,6 +2195,105 @@ def test_package_imports():
       : [{ filePath: `src/${pkgName}/__main__.py`, content: entryPoint }]),
     { filePath: "tests/test_smoke.py", content: smokeTest },
   ];
+}
+
+/**
+ * The Python `__main__.py` for a project that declares an `http:/...`
+ * healthcheck but has no serving harness and no custom entry point (see
+ * `generatePyProjectToml`).
+ *
+ * It exists to make the Dockerfile's default CMD valid. That CMD selects
+ * `--transport streamable-http` so the bare image serves its declared
+ * healthcheck (the smoke step runs the image with no command override); a local
+ * client still runs `python -m <pkg>` with no arguments, which is stdio. The
+ * HTTP branch is a minimal standard-library server answering the health path
+ * (`{"status": "ok"}`), so the generated project keeps zero runtime
+ * dependencies and the container comes up and passes its own HEALTHCHECK. The
+ * wire protocol and business endpoints are the developer's to add.
+ *
+ * @param {{pkgName: string, port: number, healthPath: string}} spec
+ * @returns {string} The `__main__.py` source
+ */
+export function buildPythonTransportEntrypoint({ pkgName, port, healthPath }) {
+  return `"""Entry point for ${pkgName} (python -m ${pkgName}).
+
+Transport selection: \`stdio\` (the default, so a local client can spawn the
+module and inherit its own filesystem) or \`streamable-http\` (so the container
+image serves HTTP and answers the \`http:/...\` healthcheck its Dockerfile
+declares). The generated Dockerfile selects the HTTP transport by default; a
+local client runs the module with no arguments and gets stdio.
+"""
+
+import argparse
+import os
+import sys
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+DEFAULT_PORT = int(os.environ.get("PORT", ${port}))
+HEALTH_PATH = "${healthPath}"
+
+
+class _HealthHandler(BaseHTTPRequestHandler):
+    """Answer GET HEALTH_PATH with \`{"status": "ok"}\`; 404 everything else."""
+
+    def do_GET(self):
+        if self.path.split("?", 1)[0] == HEALTH_PATH:
+            body = b'{"status": "ok"}'
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        self.send_error(404)
+
+    def log_message(self, fmt, *args):
+        """Keep the default one-line-per-request stderr logging quiet."""
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="${pkgName}",
+        description="${pkgName} entry point (stdio by default).",
+    )
+    parser.add_argument(
+        "--transport",
+        choices=["stdio", "streamable-http"],
+        default="stdio",
+        help="Transport to serve on (default: stdio).",
+    )
+    parser.add_argument(
+        "--host",
+        default="0.0.0.0",
+        help="Bind address for streamable-http (default: 0.0.0.0).",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=DEFAULT_PORT,
+        help=f"Port for streamable-http (default: {DEFAULT_PORT}).",
+    )
+    return parser
+
+
+def serve_http(host: str, port: int) -> None:
+    server = ThreadingHTTPServer((host, port), _HealthHandler)
+    print(f"serving http://{host}:{port}{HEALTH_PATH}", flush=True)
+    server.serve_forever()
+
+
+def main() -> int:
+    args = build_parser().parse_args()
+    if args.transport == "streamable-http":
+        serve_http(args.host, args.port)
+        return 0
+    print(f"{__package__} is installed and importable.", file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+`;
 }
 
 /**

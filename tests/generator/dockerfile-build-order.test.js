@@ -29,6 +29,8 @@ const LANGUAGES = {
   rust: {
     capabilities: ["devcontainer-rust", "docker-container"],
     baseImage: /^FROM rust:\S+ AS build$/m,
+    // Dependencies are fetched before the source copy (cache priming).
+    fetchBeforeCopy: true,
     // cargo fetch parses Cargo.toml and needs a target present.
     fetchNeedsSource: true,
     fetchStep: /cargo fetch/,
@@ -42,6 +44,7 @@ const LANGUAGES = {
     baseImage: /^FROM maven:\S+ AS build$/m,
     // dependency:go-offline resolves from pom.xml only; no src required.
     // This is the canonical Maven Docker cache pattern.
+    fetchBeforeCopy: true,
     fetchNeedsSource: false,
     fetchStep: /dependency:go-offline/,
     sourceCopy: /^COPY src \.\/src/,
@@ -50,18 +53,24 @@ const LANGUAGES = {
   python: {
     capabilities: ["devcontainer-python", "docker-container"],
     baseImage: /^FROM python:\S+ AS build$/m,
-    // pip install . builds metadata from the package; genproj already stubs
-    // src/<pkg>/__init__.py before installing.
-    fetchNeedsSource: true,
+    // Python installs ONCE, from the copied source: there is deliberately no
+    // pre-COPY dependency fetch. The old shape stubbed
+    // src/<pkg>/__init__.py, ran `pip install .` before `COPY . .`, then
+    // "reinstalled" with `--no-deps`. That is cache-dependent: a warm
+    // BuildKit layer can leave the setuptools build/lib stub in the image,
+    // so the package ships an empty `__init__.py` and `python -m <pkg>` dies
+    // on `__version__` (defect 1). The install must therefore follow the
+    // source copy - see the dedicated regression test below.
+    fetchBeforeCopy: false,
     fetchStep: /pip install --no-cache-dir \.(?:;|\s|$)/m,
-    stubMarkers: [/__init__\.py/],
     sourceCopy: /^COPY \. \./,
-    buildStep: /^RUN if \[ -f requirements\.txt \]/,
+    buildStep: /^RUN python -m venv \/opt\/venv/,
   },
   node: {
     capabilities: ["devcontainer-node", "sveltekit", "docker-container"],
     baseImage: /^FROM node:\S+ AS build$/m,
     // npm ci reads package.json + lockfile only; no source required.
+    fetchBeforeCopy: true,
     fetchNeedsSource: false,
     fetchStep: /\bnpm (?:ci|install)\b/,
     sourceCopy: /^COPY \. \./,
@@ -131,6 +140,14 @@ describe("docker-container build stage ordering", () => {
 
         // The compile step must always run against the real source tree.
         expect(buildIndex).toBeGreaterThan(copyIndex);
+
+        if (spec.fetchBeforeCopy === false) {
+          // Python: the install *is* the compile step and runs against the
+          // copied source, so it must follow the copy and there is no stub
+          // priming step to inspect.
+          expect(fetchIndex).toBeGreaterThan(copyIndex);
+          return;
+        }
 
         // Cache priming may happen before the source copy ...
         expect(fetchIndex).toBeLessThan(copyIndex);
