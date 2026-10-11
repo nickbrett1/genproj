@@ -389,7 +389,7 @@ describe("DevContainer Generation Tests", () => {
     expect(setup).toBeDefined();
 
     // The SSH-first marker + idempotent guard must be present.
-    expect(setup.content).toContain("genproj-github-auth");
+    expect(setup.content).toContain("genproj-ssh-auth");
     expect(setup.content).toContain("git@github.com:");
     expect(setup.content).toContain("StrictHostKeyChecking=accept-new");
     expect(setup.content).toContain(
@@ -471,7 +471,7 @@ describe("DevContainer Generation Tests", () => {
       (f) => f.filePath === ".devcontainer/post-create-setup.sh",
     );
     // SSH-first auth (no PAT), and git hooks installed non-interactively.
-    expect(setup.content).toContain("genproj-github-auth");
+    expect(setup.content).toContain("genproj-ssh-auth");
     expect(setup.content).not.toContain("x-access-token");
     // Non-interactive hooks install (the bare `npx simple-git-hooks` form
     // hangs on the "Ok to proceed? (y)" prompt in a non-tty build).
@@ -495,7 +495,7 @@ describe("DevContainer Generation Tests", () => {
       (f) => f.filePath === ".devcontainer/post-create-setup.sh",
     );
     expect(setup).toBeDefined();
-    expect(setup.content).not.toContain("genproj-github-auth");
+    expect(setup.content).not.toContain("genproj-ssh-auth");
     expect(setup.content).not.toContain('insteadOf "https://github.com/"');
   });
 
