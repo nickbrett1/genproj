@@ -1323,6 +1323,11 @@
             "description": "Health mechanism: \"none\", \"http:<path>\" (e.g. \"http:/healthz\"; installs curl on non-node images, which do not ship it), or \"command:<cmd>\". The Dockerfile HEALTHCHECK and Homepage widget are only emitted when declared. A node web app defaults to \"http:/health\" (the SvelteKit app is the node server). A non-node primary owns the path in its own server.",
             "default": ""
           },
+          "healthcheckTimeout": {
+            "type": "string",
+            "description": "Docker HEALTHCHECK --timeout, as a duration string (e.g. \"10s\", \"3s\"). Split default: 10s for an \"http:<path>\" probe (it does real work - the app answers the request), 3s for a \"command:<cmd>\" probe (a local process). Set this to raise the limit for a slow health endpoint without editing the generated Dockerfile.",
+            "default": ""
+          },
           "language": {
             "type": "string",
             "enum": ["python", "node", "java", "rust"],

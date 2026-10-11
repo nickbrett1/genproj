@@ -99,6 +99,11 @@ generated Dockerfile, compose file and Homepage widget stay consistent:
 - `healthcheck`: `none` (default for Python), `http:<path>` (e.g.
   `http:/healthz`; installs `curl` on Python images), or `command:<cmd>`.
   The Homepage widget is only emitted when a real health endpoint exists.
+- `healthcheckTimeout`: the Docker `HEALTHCHECK --timeout` as a duration string
+  (e.g. `"10s"`). Defaults are split by probe type: `10s` for an `http:<path>`
+  check (the app does real work behind the request), `3s` for a `command:<cmd>`
+  check. Raise it if your health endpoint is slow rather than editing the
+  generated Dockerfile.
 - `envVars`: emitted into the compose `environment:` and `.env.example`
   (e.g. `["MCP_PORT=3001"]`). Compose entries use `${KEY:-default}`
   interpolation so a NAS-side `.env` can override them.

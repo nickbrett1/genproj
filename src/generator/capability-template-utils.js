@@ -1637,6 +1637,21 @@ RUN npm run build
     healthcheckPath = harness.healthPath;
   }
 
+  // ---- Healthcheck probe timeout (config `healthcheckTimeout`): a scalar
+  // duration string ("10s", "3s"). The SPLIT default: an `http:` probe does
+  // real work behind the request (the app answers it), so it gets a generous
+  // 10s; a `command:` probe runs a local process and keeps the tighter 3s.
+  // A ported app whose health endpoint is slow can raise it without editing the
+  // generated Dockerfile (notes-mcp had to hand-loosen 3s -> 10s). Explicit
+  // config wins in both cases.
+  const healthcheckTimeout =
+    typeof config.healthcheckTimeout === "string" &&
+    config.healthcheckTimeout.trim()
+      ? config.healthcheckTimeout.trim()
+      : healthcheckSetting.startsWith("command:")
+        ? "3s"
+        : "10s";
+
   // ---- apt packages (memo §3.2): aptPackages config emitted into the
   // runtime stage. curl is auto-added for http healthchecks on non-Node
   // images (python/java/rust) because they do not ship curl — Node uses
@@ -1759,10 +1774,10 @@ RUN cargo build --release`;
   let dockerHealthcheck = "";
   if (healthcheckSetting.startsWith("http:")) {
     dockerHealthcheck = runtimeHasNode
-      ? `HEALTHCHECK --interval=30s --timeout=3s --start-period=10s CMD node -e "fetch('http://127.0.0.1:${exposePort}${healthcheckPath}').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"`
-      : `HEALTHCHECK --interval=30s --timeout=3s --start-period=10s CMD curl -fsS http://127.0.0.1:${exposePort}${healthcheckPath} || exit 1`;
+      ? `HEALTHCHECK --interval=30s --timeout=${healthcheckTimeout} --start-period=10s CMD node -e "fetch('http://127.0.0.1:${exposePort}${healthcheckPath}').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"`
+      : `HEALTHCHECK --interval=30s --timeout=${healthcheckTimeout} --start-period=10s CMD curl -fsS http://127.0.0.1:${exposePort}${healthcheckPath} || exit 1`;
   } else if (healthcheckSetting.startsWith("command:")) {
-    dockerHealthcheck = `HEALTHCHECK --interval=30s --timeout=3s --start-period=10s CMD ${healthcheckSetting
+    dockerHealthcheck = `HEALTHCHECK --interval=30s --timeout=${healthcheckTimeout} --start-period=10s CMD ${healthcheckSetting
       .slice("command:".length)
       .trim()}`;
   }
