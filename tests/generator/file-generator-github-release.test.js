@@ -67,6 +67,12 @@ describe("GitHub release file generation", () => {
     expect(release).toContain("key: release");
     expect(release).toContain("depends_on:\n      - build");
     expect(release).toContain('if: build.branch == "main"');
+    // Two builds of one commit (the push webhook and the API "First build
+    // (genproj)") must not race the tag push: the step is serialised, and the
+    // group is scoped per project so releases of different projects do not
+    // block each other.
+    expect(release).toContain("concurrency: 1");
+    expect(release).toContain('concurrency_group: "release-test-project"');
     expect(release).toContain("git tag -a");
     expect(release).toContain('git push origin "refs/tags/$$TAG"');
     expect(release).toContain("gh release create");
