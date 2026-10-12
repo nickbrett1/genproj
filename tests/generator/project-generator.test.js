@@ -1570,3 +1570,125 @@ describe("ProjectGeneratorService", () => {
     });
   });
 });
+
+describe("mergeDevcontainerJson: the runArgs union is flag-aware", () => {
+  // A devcontainer.json that hand-set `--name` (FR-016e) and is later
+  // regenerated with overwrite: true goes through this merge. Deduping runArgs
+  // token-wise appended the generated *value* on its own, which docker then
+  // reads as a stray positional argument. These pin the flag-and-value unit.
+  const withRunArgs = (runArgs) => JSON.stringify({ name: "myrepo", runArgs });
+
+  it("keeps an existing --name with a different value and appends no stray token", () => {
+    const existing = withRunArgs([
+      "--name",
+      "my-custom-name",
+      "--sysctl",
+      "net.ipv6.conf.all.disable_ipv6=1",
+      "--stop-timeout",
+      "30",
+    ]);
+    const generated = withRunArgs([
+      "--name",
+      "myrepo-devcontainer",
+      "--stop-timeout",
+      "30",
+    ]);
+
+    const merged = JSON.parse(mergeDevcontainerJson(existing, generated));
+
+    // Existing values win and nothing is reordered or duplicated.
+    expect(merged.runArgs).toEqual([
+      "--name",
+      "my-custom-name",
+      "--sysctl",
+      "net.ipv6.conf.all.disable_ipv6=1",
+      "--stop-timeout",
+      "30",
+    ]);
+    expect(merged.runArgs).not.toContain("myrepo-devcontainer");
+  });
+
+  it("is a no-op when the existing --name already equals the generated value", () => {
+    const existing = withRunArgs([
+      "--name",
+      "myrepo-devcontainer",
+      "--stop-timeout",
+      "30",
+    ]);
+    const generated = withRunArgs([
+      "--name",
+      "myrepo-devcontainer",
+      "--stop-timeout",
+      "30",
+    ]);
+
+    const merged = JSON.parse(mergeDevcontainerJson(existing, generated));
+
+    expect(merged.runArgs).toEqual([
+      "--name",
+      "myrepo-devcontainer",
+      "--stop-timeout",
+      "30",
+    ]);
+  });
+
+  it("recognises the single-token --name=value form, so a second --name is not added", () => {
+    const existing = withRunArgs(["--name=myrepo", "--stop-timeout", "30"]);
+    const generated = withRunArgs([
+      "--name",
+      "myrepo-devcontainer",
+      "--stop-timeout",
+      "30",
+    ]);
+
+    const merged = JSON.parse(mergeDevcontainerJson(existing, generated));
+
+    expect(merged.runArgs).toEqual(["--name=myrepo", "--stop-timeout", "30"]);
+    expect(
+      merged.runArgs.filter((token) => token.startsWith("--name")),
+    ).toEqual(["--name=myrepo"]);
+  });
+
+  it("still appends a genuinely new flag together with its value", () => {
+    const existing = withRunArgs([
+      "--sysctl",
+      "net.ipv6.conf.all.disable_ipv6=1",
+    ]);
+    const generated = withRunArgs([
+      "--name",
+      "myrepo-devcontainer",
+      "--sysctl",
+      "net.ipv6.conf.all.disable_ipv6=1",
+      "--stop-timeout",
+      "30",
+    ]);
+
+    const merged = JSON.parse(mergeDevcontainerJson(existing, generated));
+
+    expect(merged.runArgs).toEqual([
+      "--sysctl",
+      "net.ipv6.conf.all.disable_ipv6=1",
+      "--name",
+      "myrepo-devcontainer",
+      "--stop-timeout",
+      "30",
+    ]);
+  });
+
+  it("keeps an existing boolean flag and a flag=value token from being duplicated", () => {
+    const existing = withRunArgs(["--privileged", "--cap-add=NET_ADMIN"]);
+    const generated = withRunArgs([
+      "--privileged",
+      "--cap-add=NET_ADMIN",
+      "--device=/dev/net/tun",
+    ]);
+
+    const merged = JSON.parse(mergeDevcontainerJson(existing, generated));
+
+    expect(merged.runArgs).toEqual([
+      "--privileged",
+      "--cap-add=NET_ADMIN",
+      "--device=/dev/net/tun",
+    ]);
+  });
+});

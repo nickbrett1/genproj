@@ -18,15 +18,79 @@ import { computeGitBlobSha } from "../clients/git-blob.js";
 import { isAppOwnedPath, isMergeTargetFile } from "./genproj-overwrite.js";
 
 /**
+ * Splits a `docker run` argv token list into option groups, so a flag and its
+ * value can be moved (or skipped) as a unit.
+ *
+ * A token beginning with `-` starts a group. `--flag=value` is self-contained;
+ * otherwise a following token that does not itself begin with `-` is that
+ * flag's value, and is folded into the same group. A token that does not begin
+ * with `-` is a standalone group (a positional argument), keyed by itself.
+ *
+ * This is a heuristic over an argv list, not a parser of docker's option table:
+ * it decides whether a bare token belongs to the preceding `-`-token, which is
+ * what the runArgs union needs in order to keep a flag and its value together.
+ * @param {unknown} tokens - Candidate runArgs array
+ * @returns {{key: string, tokens: string[]}[]} Option groups, in order
+ */
+function splitRunArgs(tokens) {
+  const list = Array.isArray(tokens) ? tokens : [];
+  const groups = [];
+  for (let i = 0; i < list.length; i += 1) {
+    const token = list[i];
+    if (typeof token !== "string" || !token.startsWith("-")) {
+      groups.push({ key: token, tokens: [token] });
+      continue;
+    }
+    const equals = token.indexOf("=");
+    if (equals !== -1) {
+      groups.push({ key: token.slice(0, equals), tokens: [token] });
+      continue;
+    }
+    const next = list[i + 1];
+    if (typeof next === "string" && !next.startsWith("-")) {
+      groups.push({ key: token, tokens: [token, next] });
+      i += 1;
+    } else {
+      groups.push({ key: token, tokens: [token] });
+    }
+  }
+  return groups;
+}
+
+/**
+ * Unions two runArgs token lists flag-aware: existing entries keep their order
+ * and are never rewritten, and a generated flag is appended (with its value)
+ * only when its name is absent from the existing list. A flag already present is
+ * left entirely alone, so a project that hand-set `--name myrepo` does not get
+ * the generated value token dumped in as a stray positional argument, and the
+ * `--name=myrepo` single-token form is recognised too. Re-merging the same
+ * inputs is a no-op.
+ * @param {unknown} existingRunArgs - runArgs from the file in the repo
+ * @param {unknown} generatedRunArgs - runArgs from the freshly generated file
+ * @returns {string[]} The merged token list
+ */
+function mergeRunArgs(existingRunArgs, generatedRunArgs) {
+  const merged = Array.isArray(existingRunArgs) ? [...existingRunArgs] : [];
+  const seen = new Set(splitRunArgs(merged).map((group) => group.key));
+  for (const group of splitRunArgs(generatedRunArgs)) {
+    if (seen.has(group.key)) continue;
+    seen.add(group.key);
+    merged.push(...group.tokens);
+  }
+  return merged;
+}
+
+/**
  * Merges the freshly-generated devcontainer.json into the existing one,
  * monotonically (round-4 semantics):
  * - customizations.vscode.extensions: union (existing first, then additions)
  * - mounts: append entries whose target path is not already present
  * - features / containerEnv: merge maps (existing keys win, generated-only added)
- * - runArgs: union (existing first, then generated-only additions) — a
+ * - runArgs: flag-aware union (existing first, then generated-only flags) — a
  *   capability that needs a `docker run` flag (e.g. `container-agent`'s
  *   `--stop-timeout`) must be able to reach a project that already has a
- *   devcontainer, and it cannot depend on the flag surviving a hand-edit
+ *   devcontainer, and it cannot depend on the flag surviving a hand-edit; a
+ *   flag the project already sets is left untouched, whatever value it has
  * - all other keys (workspaceFolder, postCreateCommand, ...): keep existing
  *   values — never clobber project/user-owned settings
  * Nothing is ever removed, so re-merging the same inputs is a no-op.
@@ -77,25 +141,15 @@ export function mergeDevcontainerJson(existingContent, generatedContent) {
     }
   }
 
-  // --- runArgs: union (existing first, then generated-only additions) ---
-  // Each entry is a standalone argv token, so a union is meaningful here in a
-  // way it is not for a key/value setting: an existing `--stop-timeout 5` keeps
-  // its position and the generated tokens that are not already present are
-  // appended. Nothing is removed and the generated set is deduped against the
-  // existing one, so re-merging is still a no-op.
-  const existingRunArgs = Array.isArray(existing.runArgs)
-    ? [...existing.runArgs]
-    : [];
-  const generatedRunArgs = Array.isArray(generated.runArgs)
-    ? generated.runArgs
-    : [];
-  const runArgsSeen = new Set(existingRunArgs);
-  for (const arg of generatedRunArgs) {
-    if (!runArgsSeen.has(arg)) {
-      runArgsSeen.add(arg);
-      existingRunArgs.push(arg);
-    }
-  }
+  // --- runArgs: flag-aware union (existing first, then new flags only) ---
+  // A `docker run` flag and its value are a unit, so the union is keyed by flag
+  // name rather than by token: a flag already present keeps its value and its
+  // position, and only genuinely new flags are appended with their values.
+  // Deduping token-wise instead would append the generated *value* on its own
+  // when the flag is present with a different value, leaving a stray positional
+  // argument in the `docker run` invocation. Nothing is removed, so re-merging
+  // is a no-op (see mergeRunArgs).
+  const existingRunArgs = mergeRunArgs(existing.runArgs, generated.runArgs);
 
   // --- features / containerEnv: merge maps (existing keys win) ---
   const mergedFeatures = {
