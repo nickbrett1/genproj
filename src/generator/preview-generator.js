@@ -48,6 +48,7 @@ import {
 import {
   getCapabilityTemplateData,
   applyDefaults,
+  containerVenvBinPath,
   resolveDopplerTarget,
   resolveSvelteDirectory,
   resolveProjectLanguage,
@@ -1102,6 +1103,14 @@ function generateVscodeSettingsPreview(
   const content = templateEngine.generateFile("vscode-settings-json", {
     ...projectConfig,
     projectName: projectConfig.name || "my-project",
+    // The container venv's bin dir, outside the bind-mounted workspace (see
+    // CONTAINER_VENV_DIR_NAME in capability-template-utils.js). `projectConfig`
+    // does not carry `capabilities` (the devcontainer JSON below passes them
+    // explicitly), so resolve the user from the resolved capability set.
+    containerVenvBinPath: containerVenvBinPath({
+      ...projectConfig,
+      capabilities: allCapabilities,
+    }),
   });
 
   let settings;

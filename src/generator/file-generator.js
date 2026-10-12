@@ -129,6 +129,8 @@ import {
   cargoPackageName,
   primaryDevcontainerCapabilityId,
   devcontainerUser,
+  CONTAINER_VENV_DIR_NAME,
+  containerVenvBinPath,
   resolveDopplerTarget,
   toPythonPackageName,
   toDistributionName,
@@ -594,47 +596,58 @@ npx --yes playwright install --with-deps chromium
 echo "INFO: Playwright Chromium installation complete."`;
 
 export const PYTHON_SETUP_SCRIPT = `
-# Setup python virtual environment and install dependencies
-# (memo: genproj python devcontainer .venv PATH). postCreate runs with the
-# workspace as CWD, but cd explicitly so this also works when invoked from
-# elsewhere (e.g. a manual re-run after the container restarted in $HOME).
+# Setup python virtual environment and install dependencies.
+#
+# The venv lives under the container user's $HOME (${CONTAINER_VENV_DIR_NAME}),
+# NOT under the workspace. The workspace is bind-mounted to the developer's
+# host, so a venv created there would be shared with the host: 'pip install -e'
+# rewrites the venv's __editable__.*.pth / direct_url.json to the container
+# path and can repoint the venv's own python, silently breaking a host service
+# that runs the same interpreter (EX_CONFIG (78) after a container build). $HOME is
+# not bind-mounted, so host and container venvs can never collide.
+#
+# postCreate runs with the workspace as CWD, but cd explicitly so the editable
+# install (which needs pyproject.toml/requirements.txt) also works when invoked
+# from elsewhere (e.g. a manual re-run after the container restarted in $HOME).
+VENV_DIR="$HOME/${CONTAINER_VENV_DIR_NAME}"
 cd "/workspaces/{{projectName}}" 2>/dev/null || true
 
-if [ ! -d ".venv" ]; then
-    echo "INFO: Creating Python virtual environment (.venv)..."
-    python3 -m venv .venv
+if [ ! -d "$VENV_DIR" ]; then
+    echo "INFO: Creating Python virtual environment ($VENV_DIR)..."
+    python3 -m venv "$VENV_DIR"
 fi
 
 if [ -f "requirements.txt" ]; then
     echo "INFO: Installing dependencies from requirements.txt..."
-    .venv/bin/pip install -r requirements.txt
+    "$VENV_DIR/bin/pip" install -r requirements.txt
 elif [ -f "pyproject.toml" ]; then
     echo "INFO: Installing dependencies from pyproject.toml (dev extras)..."
-    .venv/bin/pip install -e ".[dev]"
+    "$VENV_DIR/bin/pip" install -e ".[dev]"
 fi
 
-# genproj-python-venv-path: expose .venv/bin on PATH for shells that do NOT
+# genproj-python-venv-path: expose the venv bin on PATH for shells that do NOT
 # inherit devcontainer.json remoteEnv (VS Code terminals get PATH from
 # remoteEnv; ssh / 'bash -lc' / tmux panes started outside VS Code do not).
-# The marker comment keeps this idempotent across post-create re-runs.
+# The hook resolves $HOME at shell start, matching the venv above. The marker
+# comment keeps this idempotent across post-create re-runs.
 VENV_RC_MARKER='# genproj-python-venv-path'
 if ! grep -qF "$VENV_RC_MARKER" "$HOME/.bashrc" 2>/dev/null; then
     cat >> "$HOME/.bashrc" <<'EOF'
-# genproj-python-venv-path: prefer project .venv
-if [ -d "/workspaces/{{projectName}}/.venv/bin" ]; then
-    export PATH="/workspaces/{{projectName}}/.venv/bin:$PATH"
+# genproj-python-venv-path: prefer the container venv (outside the shared workspace)
+if [ -d "$HOME/${CONTAINER_VENV_DIR_NAME}/bin" ]; then
+    export PATH="$HOME/${CONTAINER_VENV_DIR_NAME}/bin:$PATH"
 fi
 EOF
-    echo "INFO: Added .venv PATH hook to ~/.bashrc"
+    echo "INFO: Added venv PATH hook to ~/.bashrc"
 fi
 if ! grep -qF "$VENV_RC_MARKER" "$HOME/.zshrc" 2>/dev/null; then
     cat >> "$HOME/.zshrc" <<'EOF'
-# genproj-python-venv-path: prefer project .venv
-if [ -d "/workspaces/{{projectName}}/.venv/bin" ]; then
-    export PATH="/workspaces/{{projectName}}/.venv/bin:$PATH"
+# genproj-python-venv-path: prefer the container venv (outside the shared workspace)
+if [ -d "$HOME/${CONTAINER_VENV_DIR_NAME}/bin" ]; then
+    export PATH="$HOME/${CONTAINER_VENV_DIR_NAME}/bin:$PATH"
 fi
 EOF
-    echo "INFO: Added .venv PATH hook to ~/.zshrc"
+    echo "INFO: Added venv PATH hook to ~/.zshrc"
 fi
 `;
 
@@ -1272,7 +1285,7 @@ function addExtensionsFromCapabilities(allExtensions, capabilityIds) {
  * volumes only when those capabilities are selected, and the kitchen-sink
  * forwardPorts are dropped (docsify adds its own below).
  * @param {Object} context - Generation context
- * @returns {{devcontainerUser: string, devcontainerMounts: string, devcontainerForwardPorts: string}} Template data
+ * @returns {{devcontainerUser: string, containerVenvBinPath: string, devcontainerMounts: string, devcontainerForwardPorts: string}} Template data
  */
 export function getDevcontainerJsonExtras(context) {
   // The mount home follows the user the rendered devcontainer actually runs
@@ -1344,6 +1357,11 @@ export function getDevcontainerJsonExtras(context) {
 
   return {
     devcontainerUser: user,
+    // The container venv's bin dir, rooted at the container's own $HOME (see
+    // CONTAINER_VENV_DIR_NAME) — never ${containerWorkspaceFolder}/.venv,
+    // which is bind-mounted to the host. Python's devcontainer.json prepends
+    // this to remoteEnv.PATH.
+    containerVenvBinPath: containerVenvBinPath(context),
     devcontainerMounts: mounts.map((m) => `"${m}"`).join(",\n    "),
     devcontainerForwardPorts: JSON.stringify(forwardPorts),
   };
@@ -3161,6 +3179,10 @@ export function generateVscodeSettingsFile(templateEngine, context) {
   const content = templateEngine.generateFile("vscode-settings-json", {
     ...context,
     projectName: context.projectName || context.name || "my-project",
+    // `python.defaultInterpreterPath` points at the container venv under the
+    // container's $HOME — NOT ${workspaceFolder}/.venv, which is bind-mounted
+    // to the host (see CONTAINER_VENV_DIR_NAME).
+    containerVenvBinPath: containerVenvBinPath(context),
   });
 
   let settings;

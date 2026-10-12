@@ -1227,6 +1227,43 @@ export function devcontainerUser(context) {
 }
 
 /**
+ * Directory (relative to the container user's `$HOME`) that holds the
+ * devcontainer Python virtualenv.
+ *
+ * The venv deliberately does NOT live under the workspace. The workspace is
+ * bind-mounted to the developer's host (`~/DevOpen/workspaces/<project>` on
+ * macOS), so a venv created there is shared between host and container:
+ * `pip install -e` rewrites the venv's `__editable__.*.pth` and
+ * `direct_url.json` to the container path `/workspaces/<project>/src` and can
+ * even repoint `.venv/bin/python`, silently breaking any host service that runs
+ * that same interpreter (e.g. a LaunchAgent invoking
+ * `<project>/.venv/bin/python -m <project>`, which then dies with EX_CONFIG
+ * (78) after a routine container build). Keeping the venv under the container's
+ * own `$HOME` — which is not bind-mounted — makes host and container venvs
+ * physically incapable of colliding.
+ *
+ * This is the single source of truth for the directory name. The shell and
+ * devcontainer.json spellings are derived from it (see
+ * {@link containerVenvBinPath} and the `PYTHON_SETUP_SCRIPT`) so the paths
+ * cannot drift apart.
+ */
+export const CONTAINER_VENV_DIR_NAME = ".devcontainer-venv";
+
+/**
+ * Absolute path to the container venv's `bin` directory for a given context.
+ *
+ * Rooted at the *login user's* `$HOME` (the same user the rendered devcontainer
+ * runs as, via {@link devcontainerUser}) rather than `${containerWorkspaceFolder}`,
+ * so the PATH and interpreter settings point outside the bind-mounted workspace.
+ *
+ * @param {Object} context - Generation context
+ * @returns {string} e.g. "/home/vscode/.devcontainer-venv/bin"
+ */
+export function containerVenvBinPath(context) {
+  return `/home/${devcontainerUser(context)}/${CONTAINER_VENV_DIR_NAME}/bin`;
+}
+
+/**
  * Converts a project/repo name into a valid Python import package name.
  * e.g. "nas-port-mcp" -> "nas_port_mcp"
  * @param {string} projectName

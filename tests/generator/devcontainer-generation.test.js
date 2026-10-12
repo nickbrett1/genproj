@@ -109,16 +109,16 @@ describe("DevContainer Generation Tests", () => {
     expect(dockerfileFile).toBeDefined();
     expect(dockerfileFile.content).toContain("USER vscode");
 
-    // memo: python devcontainer .venv PATH — remoteEnv prepends the project
-    // venv to PATH for VS Code terminals/tasks (spec: updating PATH is the
-    // documented remoteEnv use case; containerEnv cannot reference container
-    // variables like ${containerEnv:PATH}).
+    // The container venv lives under the container's own $HOME — NOT
+    // ${containerWorkspaceFolder}/.venv, which is bind-mounted to the host and
+    // therefore shared (a container build rewrites it and breaks host tooling).
+    // remoteEnv still prepends it to PATH for VS Code terminals/tasks.
     expect(devcontainerJson.remoteEnv.PATH).toBe(
-      "${containerWorkspaceFolder}/.venv/bin:${containerEnv:PATH}",
+      "/home/vscode/.devcontainer-venv/bin:${containerEnv:PATH}",
     );
   });
 
-  it("wires the project .venv into post-create setup so python3 works in any shell", async () => {
+  it("puts the container venv under $HOME so a container build cannot touch the workspace", async () => {
     const engine = new TemplateEngine();
     await engine.initialize();
 
@@ -136,23 +136,63 @@ describe("DevContainer Generation Tests", () => {
     );
     expect(setup).toBeDefined();
 
-    // The setup script must run from the workspace (venv + editable install
-    // are project-relative) and create the venv if missing.
+    // The setup script must still cd into the workspace (the editable install
+    // reads pyproject.toml there) but create the venv under $HOME, outside the
+    // bind-mounted tree.
     expect(setup.content).toContain('cd "/workspaces/mailroom"');
-    expect(setup.content).toContain("python3 -m venv .venv");
-    // pyproject-first projects install dev extras (matches README + CI).
-    expect(setup.content).toContain('.venv/bin/pip install -e ".[dev]"');
+    expect(setup.content).toContain('VENV_DIR="$HOME/.devcontainer-venv"');
+    expect(setup.content).toContain('python3 -m venv "$VENV_DIR"');
+    // pyproject-first projects install dev extras (matches README + CI), into
+    // the $HOME venv.
+    expect(setup.content).toContain('"$VENV_DIR/bin/pip" install -e ".[dev]"');
 
-    // Idempotent rc hook: prefer the project .venv in every interactive
+    // Idempotent rc hook: prefer the container venv in every interactive
     // shell that does not inherit remoteEnv (bash -lc / ssh / tmux).
     expect(setup.content).toContain("genproj-python-venv-path");
     expect(setup.content).toContain("$HOME/.bashrc");
     expect(setup.content).toContain("$HOME/.zshrc");
-    expect(setup.content).toContain("/workspaces/mailroom/.venv/bin:$PATH");
+    expect(setup.content).toContain("$HOME/.devcontainer-venv/bin:$PATH");
 
     // The generator must substitute the project name — no literal
     // {{projectName}} may leak into the rendered script.
     expect(setup.content).not.toContain("{{projectName}}");
+  });
+
+  it("never writes the venv into the workspace tree (the shared bind mount)", async () => {
+    const engine = new TemplateEngine();
+    await engine.initialize();
+
+    const context = {
+      projectName: "mailroom",
+      capabilities: ["devcontainer-python"],
+      configuration: {},
+    };
+
+    const files = generateMergedDevelopmentContainerFiles(engine, context, [
+      "devcontainer-python",
+    ]);
+    const setup = files.find(
+      (f) => f.filePath === ".devcontainer/post-create-setup.sh",
+    );
+    const devcontainerJson = files.find(
+      (f) => f.filePath === ".devcontainer/devcontainer.json",
+    );
+    expect(setup).toBeDefined();
+    expect(devcontainerJson).toBeDefined();
+
+    // The whole point of the fix: no reference to a workspace-local venv may
+    // survive in either the script or the devcontainer JSON, so post-create
+    // cannot create or rewrite <workspace>/.venv (which the host shares).
+    for (const content of [setup.content, devcontainerJson.content]) {
+      expect(content).not.toContain("/workspaces/mailroom/.venv");
+      expect(content).not.toMatch(/\$\{containerWorkspaceFolder\}\/\.venv/);
+      expect(content).not.toMatch(/(^|[^/])\.venv\/bin/);
+    }
+    // And it must positively point at the $HOME venv.
+    expect(setup.content).toContain("$HOME/.devcontainer-venv");
+    expect(JSON.parse(devcontainerJson.content).remoteEnv.PATH).toContain(
+      "/home/vscode/.devcontainer-venv/bin",
+    );
   });
 
   it("should generate valid Node devcontainer.json with node username and remoteUser", async () => {
