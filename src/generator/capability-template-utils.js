@@ -2871,6 +2871,22 @@ function renderSmokeStep(unit, { assemblePayload } = {}) {
  * @param {Object} context - Template context (capabilities, configuration)
  * @returns {Object} Buildkite template data
  */
+/**
+ * A stable, YAML-safe token derived from the project name, for generated values
+ * that must not carry the raw name - the pipeline's other consumers sanitise it
+ * (cargo rejects `My.Proj`, the image ref cannot hold a space), and a raw name
+ * leaking into generated YAML is the drift that check guards against. Used to
+ * scope the release step's Buildkite concurrency group to one project.
+ * @param {string} name - The project/repository name
+ * @returns {string} A lowercase `[a-z0-9_-]` token, never empty
+ */
+function projectSlug(name) {
+  const sanitized = String(name || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, "");
+  return sanitized || "project";
+}
+
 function getBuildkiteTemplateData(context) {
   const config = context.configuration?.buildkite || {};
   const caps = context.capabilities || [];
@@ -3577,10 +3593,26 @@ ${dopplerCliInstallCommands("        ")}      - |
 `
       : "";
 
+    // A single generation can produce two builds of one commit - the push that
+    // creates the repo and the explicit "First build (genproj)" trigger - and
+    // both reach this step. The tag-existence guard below is check-then-act, so
+    // it only protects a build that starts after the winner has pushed: run
+    // concurrently, both see the tag absent, both create it, and the loser dies
+    // on `cannot lock ref` looking like a repository problem rather than a
+    // duplicate trigger. Serialising the step makes the guard correct without
+    // depending on there being only one build. The group is named per project
+    // because Buildkite concurrency groups are shared across pipelines, and one
+    // project's release must not block another's.
+    const releaseConcurrencyGroup = `release-${projectSlug(
+      context.projectName || context.name || "my-project",
+    )}`;
+
     steps.push(`
   - label: ":bookmark: Release"
     key: release
 ${releaseDependencies}    if: build.branch == "main"
+    concurrency: 1
+    concurrency_group: "${releaseConcurrencyGroup}"
 ${_bkAgents(queue)}    plugins:
 ${_bkDockerPlugin(image, releaseEnv)}    commands:
 ${installGh}${releaseToken}      - |
