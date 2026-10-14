@@ -862,7 +862,13 @@ export const GOOSE_INSTALL_FRAGMENT = `RUN GOOSE_ARCH="$(uname -m | sed 's/arm64
     && mkdir -p /tmp/goose-extract \\
     && tar -xjf /tmp/goose.tar.bz2 -C /tmp/goose-extract \\
     && install -m 0755 /tmp/goose-extract/goose "$HOME/.local/bin/goose" \\
-    && "$HOME/.local/bin/goose" --version \\
+    && GOOSE_MIN_VERSION=1.53 \\
+    && GOOSE_INSTALLED_VERSION="$("$HOME/.local/bin/goose" --version 2>/dev/null | grep -oE '[0-9]+\\.[0-9]+(\\.[0-9]+)?' | head -n1)" \\
+    && echo "Installed goose \${GOOSE_INSTALLED_VERSION:-unknown} (minimum \${GOOSE_MIN_VERSION})" \\
+    && if [ -z "$GOOSE_INSTALLED_VERSION" ] \\
+         || [ "$(printf '%s\\n%s\\n' "$GOOSE_MIN_VERSION" "$GOOSE_INSTALLED_VERSION" | sort -V | head -n1)" != "$GOOSE_MIN_VERSION" ]; then \\
+         echo "ERROR: goose \${GOOSE_INSTALLED_VERSION:-unknown} is older than \${GOOSE_MIN_VERSION}, the first release with in-turn auto-compaction. Auto-compaction needs goose >= \${GOOSE_MIN_VERSION} AND GOOSE_STATE_MACHINE=1; fix the goose source release before building." >&2; exit 1; \\
+       fi \\
     && rm -rf /tmp/goose.tar.bz2 /tmp/goose-extract`;
 
 /**
@@ -878,6 +884,51 @@ export const GOOSE_INSTALL_FRAGMENT = `RUN GOOSE_ARCH="$(uname -m | sed 's/arm64
  */
 export function gooseInstallFragment(capabilities) {
   return hasGoose(capabilities) ? GOOSE_INSTALL_FRAGMENT : "";
+}
+
+/**
+ * The devcontainer.json `containerEnv` entries goose owns, injected iff
+ * {@link hasGoose}.
+ *
+ * `GOOSE_STATE_MACHINE=1` enables goose's state machine, which is what makes
+ * goose auto-compact *during* a turn rather than only between turns. Two halves
+ * are needed and neither alone is enough: a goose at or above the floor the
+ * install fragment enforces ({@link GOOSE_INSTALL_FRAGMENT}, 1.53) and this
+ * flag. The flag on an older binary is inert; the new binary without the flag
+ * never compacts mid-turn.
+ *
+ * It lives in `containerEnv` rather than the Dockerfile or `.zshrc` so *every*
+ * process in the container sees it — the interactive `goose()` wrapper
+ * ({@link GOOSE_ALIAS}) and the a2a-goose agent's own goose child, which
+ * `post-start-setup.sh` starts and which inherits the container environment.
+ *
+ * @param {string[]} capabilities Resolved capability IDs.
+ * @returns {Record<string, string>} The env entries, or {} when goose is absent.
+ */
+export function gooseContainerEnv(capabilities) {
+  return hasGoose(capabilities) ? { GOOSE_STATE_MACHINE: "1" } : {};
+}
+
+/**
+ * Merge {@link gooseContainerEnv} into a parsed devcontainer.json.
+ *
+ * Shared by the generator ({@link generateAndMergeDevcontainerJson}) and the
+ * preview renderer so what the UI shows and what the generator writes cannot
+ * drift. Existing `containerEnv` keys are preserved — an operator who pinned
+ * `GOOSE_STATE_MACHINE: "0"` keeps it.
+ *
+ * @param {Object} devcontainerJson Parsed devcontainer.json (mutated in place).
+ * @param {string[]} capabilities Resolved capability IDs.
+ * @returns {Object} The same object, for chaining.
+ */
+export function applyGooseContainerEnv(devcontainerJson, capabilities) {
+  const gooseEnv = gooseContainerEnv(capabilities);
+  if (Object.keys(gooseEnv).length === 0) return devcontainerJson;
+  devcontainerJson.containerEnv = {
+    ...(devcontainerJson.containerEnv || {}),
+    ...gooseEnv,
+  };
+  return devcontainerJson;
 }
 
 /**
@@ -1523,6 +1574,11 @@ function generateAndMergeDevcontainerJson(
     }
     mergedDevelopmentContainerJson.runArgs = runArgs;
   }
+
+  // goose: in-turn auto-compaction needs GOOSE_STATE_MACHINE=1 in the container
+  // environment (see gooseContainerEnv). Added when the merged container env is
+  // final, so it cannot be clobbered by a later template merge.
+  applyGooseContainerEnv(mergedDevelopmentContainerJson, context.capabilities);
 
   return {
     filePath: ".devcontainer/devcontainer.json",

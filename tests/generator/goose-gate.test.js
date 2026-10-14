@@ -96,6 +96,19 @@ describe("gooseInstallFragment", () => {
     );
   });
 
+  it("enforces the goose 1.53 floor auto-compaction needs", () => {
+    const fragment = gooseInstallFragment(["doppler"]);
+    // 1.53 is the first release with in-turn auto-compaction; "latest" almost
+    // always clears it, but the 'stable' fallback must not ship a goose that
+    // silently cannot compact. The fragment reads the installed binary's
+    // version and fails the build if it is below the floor.
+    expect(fragment).toContain("GOOSE_MIN_VERSION=1.53");
+    expect(fragment).toContain('goose" --version');
+    expect(fragment).toContain("sort -V");
+    expect(fragment).toContain("auto-compaction");
+    expect(fragment).toContain("exit 1");
+  });
+
   it("is empty when goose is not selected", () => {
     expect(gooseInstallFragment(["devcontainer-node"])).toBe("");
   });
@@ -147,6 +160,57 @@ describe("goose gating across the devcontainer languages", () => {
       expect(postStartFor(files)).not.toContain("goose not found");
     });
   }
+});
+
+describe("GOOSE_STATE_MACHINE is set where goose can run", () => {
+  const LANG = "devcontainer-node";
+
+  function devcontainerJsonFor(files) {
+    return JSON.parse(
+      files.find((f) => f.filePath === ".devcontainer/devcontainer.json")
+        .content,
+    );
+  }
+
+  it("is in containerEnv when the selection carries doppler", async () => {
+    const engine = new TemplateEngine();
+    await engine.initialize();
+    const files = generateMergedDevelopmentContainerFiles(
+      engine,
+      { capabilities: [LANG, "doppler"], configuration: {} },
+      [LANG],
+    );
+    const devcontainer = devcontainerJsonFor(files);
+    // Both halves of the auto-compaction contract: the install fragment
+    // enforces goose >= 1.53, and this flag turns the state machine on.
+    expect(devcontainer.containerEnv.GOOSE_STATE_MACHINE).toBe("1");
+    // ...without disturbing the env the base template already carried.
+    expect(devcontainer.containerEnv.LANG).toBe("en_US.UTF-8");
+  });
+
+  it("is absent when goose is not selected", async () => {
+    const engine = new TemplateEngine();
+    await engine.initialize();
+    const files = generateMergedDevelopmentContainerFiles(
+      engine,
+      { capabilities: [LANG], configuration: {} },
+      [LANG],
+    );
+    expect(
+      devcontainerJsonFor(files).containerEnv.GOOSE_STATE_MACHINE,
+    ).toBeUndefined();
+  });
+
+  it("is shown by the preview, so the UI matches the generator", async () => {
+    const preview = await generatePreview({ name: "PreviewProject" }, [
+      LANG,
+      "doppler",
+    ]);
+    const devcontainer = preview.files
+      .find((f) => f.name === ".devcontainer" && f.type === "folder")
+      .children.find((f) => f.name === "devcontainer.json").content;
+    expect(JSON.parse(devcontainer).containerEnv.GOOSE_STATE_MACHINE).toBe("1");
+  });
 });
 
 describe("goose config and recipes follow the same gate", () => {

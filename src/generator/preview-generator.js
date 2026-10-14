@@ -41,6 +41,7 @@ import {
   generateRustCrateFiles,
   generateReadmeFile,
   getDevcontainerJsonExtras,
+  applyGooseContainerEnv,
   normalizeYamlBlankLines,
   generatePrettierIgnoreFile,
   HEALTH_ROUTE_SOURCE,
@@ -253,6 +254,10 @@ function createMergedDevelopmentContainerJson(
     }
     mergedJson.runArgs = runArgs;
   }
+
+  // goose: mirror the generator's GOOSE_STATE_MACHINE=1 (gated on doppler) so
+  // the preview shows the env the generated project actually gets.
+  applyGooseContainerEnv(mergedJson, allCapabilities);
 
   const content = `${JSON.stringify(mergedJson, undefined, 2)}\n`;
   return {

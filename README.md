@@ -100,6 +100,22 @@ has no equivalent of Vite's `?raw` import suffix, so
 `src/generator/templates.generated.js` — committed, and rebuilt on
 `pretest`/`prebuild`.
 
+### goose auto-compaction in generated projects
+
+In-turn auto-compaction needs two things together, and genproj guarantees both
+for every generated project:
+
+- **goose ≥ 1.53** — the install fragment (`GOOSE_INSTALL_FRAGMENT`) reads the
+  installed binary's version and fails the image build if it is below the floor,
+  so the `stable` fallback cannot ship an older goose silently.
+- **`GOOSE_STATE_MACHINE=1`** — set in the devcontainer's `containerEnv` whenever
+  goose is present (`gooseContainerEnv`), so the interactive `goose()` wrapper
+  and the container's own agent both inherit it.
+
+The flag and the version are one contract: the flag is inert on an older binary,
+and a new binary without the flag never compacts mid-turn. `coding-agents` is
+core and locked, so this reaches every generated project.
+
 ### The host `~/.ssh` keyring
 
 Every generated devcontainer bind-mounts the **host's** `~/.ssh` at
