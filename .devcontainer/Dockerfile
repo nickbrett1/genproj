@@ -45,7 +45,13 @@ RUN if [ -d "$HOME/.oh-my-zsh" ]; then rm -rf "$HOME/.oh-my-zsh"; fi \
     && mkdir -p /tmp/goose-extract \
     && tar -xjf /tmp/goose.tar.bz2 -C /tmp/goose-extract \
     && install -m 0755 /tmp/goose-extract/goose "$HOME/.local/bin/goose" \
-    && "$HOME/.local/bin/goose" --version \
+    && GOOSE_MIN_VERSION=1.53 \
+    && GOOSE_INSTALLED_VERSION="$("$HOME/.local/bin/goose" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -n1)" \
+    && echo "Installed goose ${GOOSE_INSTALLED_VERSION:-unknown} (minimum ${GOOSE_MIN_VERSION})" \
+    && if [ -z "$GOOSE_INSTALLED_VERSION" ] \
+         || [ "$(printf '%s\n%s\n' "$GOOSE_MIN_VERSION" "$GOOSE_INSTALLED_VERSION" | sort -V | head -n1)" != "$GOOSE_MIN_VERSION" ]; then \
+         echo "ERROR: goose ${GOOSE_INSTALLED_VERSION:-unknown} is older than ${GOOSE_MIN_VERSION}, the first release with in-turn auto-compaction. Auto-compaction needs goose >= ${GOOSE_MIN_VERSION} AND GOOSE_STATE_MACHINE=1; fix the goose source release before building." >&2; exit 1; \
+       fi \
     && rm -rf /tmp/goose.tar.bz2 /tmp/goose-extract
 
 # Add uv tools and goose to PATH for the non-root user
