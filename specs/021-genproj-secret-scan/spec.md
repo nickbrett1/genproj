@@ -42,16 +42,43 @@ it as optional, but the server would still apply it — the dangerous direction
 
 ## What it emits
 
-| File                          | Purpose                                                                                                       |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `.githooks/pre-commit`        | `gitleaks git --pre-commit --staged --redact --verbose`, fail-open when the binary is missing                 |
-| `.gitleaks.toml`              | `[extend] useDefault = true` plus three commented, narrow allowlists (lockfiles, vendored/minified, fixtures) |
-| `.gitleaksignore`             | seeded empty — the reviewed escape hatch, instead of `--no-verify`                                            |
-| `scripts/install-gitleaks.sh` | pinned `v8.30.1`, platform-specific sha256 verified before install                                            |
-| `scripts/setup-git-hooks.sh`  | installs the scanner (warn-only), sets `core.hooksPath .githooks`, then **verifies** it                       |
+| File                          | Purpose                                                                                                                                           |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.githooks/pre-commit`        | `gitleaks git --pre-commit --staged --redact --verbose`, fail-open when the binary is missing                                                     |
+| `.gitleaks.toml`              | `[extend] useDefault = true`, two custom rules for the `${VAR:-secret}` shell shape, three commented narrow allowlists, one placeholder allowlist |
+| `.gitleaksignore`             | comment-only seed documenting the exact fingerprint format — the reviewed escape hatch, instead of `--no-verify`                                  |
+| `scripts/install-gitleaks.sh` | pinned `v8.30.1`, platform-specific sha256 verified before install                                                                                |
+| `scripts/setup-git-hooks.sh`  | installs the scanner (warn-only), sets `core.hooksPath .githooks`, then **verifies** it                                                           |
 
 The three release checksums in the note were re-verified against the published
 `v8.30.1` assets (linux_x64, linux_arm64, darwin_arm64) before being committed.
+
+### The shape the default rules miss
+
+Found while backfilling `reader`: gitleaks 8.30.1's `generic-api-key` rule
+matches `export KEY=sk-...` but **not** `export KEY="${KEY:-sk-...}"`, which is
+how a script carries a fallback credential. The reader's historical leak was in
+exactly that form, so the first full-history scan of 36 commits reported
+nothing. Verified directly with the pinned binary (`gitleaks dir` on the file:
+`no leaks found` with the default rules alone).
+
+Two length-partitioned rules fix it so that one secret produces one finding:
+
+| rule                           | catches                                                                     |
+| ------------------------------ | --------------------------------------------------------------------------- |
+| `shell-default-provider-token` | short provider-prefixed tokens: `sk-`, `ghp_`, `AKIA`, `glpat-`, `eyJ`, ... |
+| `shell-default-high-entropy`   | any 24+ char token at entropy >= 3.5                                        |
+
+A rule-level allowlist with `regexTarget = "secret"` and placeholder stopwords
+(`replace`, `changeme`, `your_`, `example`, `fake`, ...) keeps
+`${TOKEN:-REPLACE_ME}` in `.env` examples quiet. Verified against a
+false-positive corpus (`${HOME:-/root}`, `${PATH:-/usr/bin:/bin}`,
+`${TAG:-sha-abc123def456}`, `${MODE:-production}`, a compose file with
+`${POSTGRES_PASSWORD:-postgres}`): no findings.
+
+The `.gitleaksignore` seed also documents the real format — a fingerprint cannot
+be followed by a trailing reason, gitleaks takes the whole line and stops
+matching (verified).
 
 ## The root-cause fix
 
@@ -117,6 +144,10 @@ New projects get this automatically. Existing repos need it applied by hand;
    whenever those capabilities are selected. ✔
 6. `--redact` is used in the hook and in both CI gates. ✔
 7. Allowlists are narrow and commented; no blanket entry. ✔
+8. A credential in `${VAR:-secret}` form is detected, and a placeholder default
+   is not. ✔ (rules asserted in `tests/generator/secret-scan.test.js`, both
+   directions verified with the pinned binary; the rules themselves are not
+   exercised in CI because the suite does not download gitleaks)
 
 The hook's wiring is exercised directly, not just asserted as text: the
 generated `.githooks/pre-commit` is run in a temporary git repository against a

@@ -117,6 +117,31 @@ describe("secret-scan capability", () => {
     expect(config).not.toContain("paths = ['''*''']");
   });
 
+  it("catches a credential hidden in a shell parameter-expansion default", async () => {
+    const files = await generateAllFiles(context(["secret-scan"]));
+    const config = contentOf(files, ".gitleaks.toml");
+
+    // `export KEY="${KEY:-secret}"` is invisible to the default ruleset.
+    expect(config).toContain('id = "shell-default-provider-token"');
+    expect(config).toContain('id = "shell-default-high-entropy"');
+    expect(config).toContain("secretGroup = 1");
+    expect(config).toContain("entropy = 3.5");
+    // Placeholder defaults in .env examples must not trip the new rules.
+    expect(config).toContain('regexTarget = "secret"');
+    expect(config).toContain("placeholder");
+  });
+
+  it("documents the fingerprint format gitleaks actually parses", async () => {
+    const files = await generateAllFiles(context(["secret-scan"]));
+    const ignore = contentOf(files, ".gitleaksignore");
+
+    // A trailing reason breaks the match, so the format must be exact.
+    expect(ignore).toContain("<commit-sha>:<path>:<rule-id>:<line>");
+    expect(ignore).toContain("<path>:<rule-id>:<line>");
+    expect(ignore).not.toContain("optionally followed by a reason");
+    expect(ignore).toContain("--no-verify");
+  });
+
   it("installs core.hooksPath from post-create and fails loudly if it does not stick", async () => {
     const files = await generateAllFiles(
       context(["secret-scan", "devcontainer-python", "code-quality-python"]),
