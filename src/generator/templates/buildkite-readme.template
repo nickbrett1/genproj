@@ -54,7 +54,12 @@ without it:
    `scripts/smoke-launch.sh`) has to be on that host too, and the step fetches
    the build's artifacts with `buildkite-agent`, which a native step can do and a
    containerised one cannot.
-4. **Secrets, delivered to the job environment** by the agent's `environment`
+4. **The secret scan runs natively.** `gitleaks git` walks the repository's
+   full history, which only the agent's checkout has, so that step is
+   deliberately not containerised. It needs `curl` (or `wget`) and a writable
+   `$HOME`; `scripts/install-gitleaks.sh` fetches the pinned, sha256-verified
+   binary into `$HOME/.local/bin` on first run.
+5. **Secrets, delivered to the job environment** by the agent's `environment`
    hook. A step-level `env:` value does **not** reach the container — only names
    listed in the docker plugin's `environment:` list do. This is the most common
    way a working step mysteriously loses its credentials.

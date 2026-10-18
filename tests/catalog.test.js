@@ -40,6 +40,7 @@ const EXPECTED_IDS = [
   "github-release",
   "fetch-launch",
   "doppler",
+  "secret-scan",
   "gitguardian",
   "sonarcloud",
   "code-quality",
@@ -99,11 +100,34 @@ describe("catalog metadata", () => {
       "container-agent",
       "editor-tools",
       "shell-tools",
+      // Required, but filed under `secrets` rather than `core`: the generator
+      // forces it through `locked` (see getLockedCapabilityIds), so its
+      // category describes what it is, not whether it can be turned off.
+      "secret-scan",
     ]);
 
     for (const capability of capabilities) {
-      expect(capability.selectedByDefault).toBe(capability.category === "core");
+      // A locked capability is always applied, so it must also be presented as
+      // pre-selected. Every other capability is pre-selected iff it is core.
+      expect(capability.selectedByDefault).toBe(
+        capability.locked === true || capability.category === "core",
+      );
     }
+  });
+
+  it("locks the secret scan wherever it is filed", () => {
+    const capability = getCapabilityById("secret-scan");
+    expect(capability.locked).toBe(true);
+    expect(capability.category).toBe("secrets");
+    expect(capability.dependencies).toEqual([]);
+    expect(capability.requiresAny).toBeUndefined();
+    expect(capability.authServices).toEqual([]);
+    expect(capability.externalServices).toEqual([]);
+    // The zero-dependency claim is the whole point: it has to be applied
+    // alongside nothing else at all.
+    expect(resolveDependencies([]).resolvedCapabilities).toContain(
+      "secret-scan",
+    );
   });
 
   it("declares the project-level Primary Language", () => {

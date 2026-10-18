@@ -3,9 +3,10 @@
 # nothing at all, which is the failure mode to watch for.
 #
 # Which steps appear here is decided by the capabilities the project selects:
-# the deployment capabilities contribute their deploy steps, gitguardian
-# contributes the secret scan, lighthouse-ci the performance gate. The
-# agent-side prerequisites for all of them are in .buildkite/README.md.
+# the deployment capabilities contribute their deploy steps, secret-scan
+# (gitleaks, required) and gitguardian contribute secret scans, lighthouse-ci
+# the performance gate. The agent-side prerequisites for all of them are in
+# .buildkite/README.md.
 
 steps:
 {{buildkiteSteps}}

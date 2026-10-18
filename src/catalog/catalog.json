@@ -910,6 +910,40 @@
       "website": "https://www.doppler.com/"
     },
     {
+      "id": "secret-scan",
+      "name": "Secret Scanning (gitleaks)",
+      "description": "Required on every project: gitleaks scans staged changes in a pre-commit hook and the full history in CI. Free, offline, no account and no quota.",
+      "category": "secrets",
+      "icon": "secret",
+      "iconColor": "red",
+      "selectedByDefault": true,
+      "locked": true,
+      "provides": [],
+      "dependencies": [],
+      "conflicts": [],
+      "requiresAuth": [],
+      "authServices": [],
+      "externalServices": [],
+      "configurationSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "vscodeExtensions": [],
+      "benefits": [
+        "Blocks a commit that stages a credential, locally and without a network",
+        "Scans the full history in CI, which a developer cannot skip",
+        "No account, API key or quota: works offline in a closed devcontainer",
+        "Suppressions live in .gitleaksignore, so they are reviewed in a diff"
+      ],
+      "links": [
+        {
+          "label": "gitleaks",
+          "url": "https://github.com/gitleaks/gitleaks"
+        }
+      ],
+      "website": "https://github.com/gitleaks/gitleaks"
+    },
+    {
       "id": "gitguardian",
       "name": "GitGuardian",
       "description": "Automated secrets detection in your CI pipeline.",

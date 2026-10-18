@@ -446,6 +446,34 @@ function getSonarCloudTemplateData(context) {
   };
 }
 
+/**
+ * The full-history gitleaks scan, as a step in the build job.
+ *
+ * It runs before build/test so a leak fails fast, and it is a plain `run` step
+ * in the build job rather than a job of its own so it cannot be dropped from
+ * the workflow independently. CircleCI's checkout is a full clone (no
+ * `--depth`), which the
+ * scan depends on: a shallow clone would scan only the newest commits and
+ * report a clean history it did not read.
+ *
+ * The capability is `locked`, so this is emitted for every generated project.
+ * @param {Object} data - CircleCI template data (mutated)
+ * @param {Object} context - Template context
+ */
+function _applySecretScanConfig(data, context) {
+  if (!context.capabilities.includes("secret-scan")) {
+    return;
+  }
+  data.preBuildSteps =
+    `
+      - run:
+          name: Secret scan (gitleaks, full history)
+          command: |
+            bash scripts/install-gitleaks.sh
+            "$HOME/.local/bin/gitleaks" git --redact --verbose .` +
+    data.preBuildSteps;
+}
+
 function _applyGitGuardianConfig(
   data,
   context,
@@ -2271,6 +2299,7 @@ function getCircleCiTemplateData(context) {
 `;
   }
 
+  _applySecretScanConfig(data, context);
   _applyGitGuardianConfig(
     data,
     context,
@@ -3077,6 +3106,22 @@ function getBuildkiteTemplateData(context) {
   };
 
   const steps = [];
+
+  // --- secret scan (gitleaks, full history) --------------------------------
+  // Native, not containerised: `gitleaks git` walks the repository with git,
+  // and the scan is only meaningful over the FULL history — which is what the
+  // agent's checkout has. The `secret-scan` capability is locked, so this step
+  // is present in every generated pipeline; a developer can skip the local
+  // hook with `--no-verify`, but cannot skip this.
+  if (caps.includes("secret-scan")) {
+    steps.push(`
+  - label: ":shield: Secret scan (gitleaks, full history)"
+    key: secret_scan_gitleaks
+${_bkAgents(queue)}    command: |
+      bash scripts/install-gitleaks.sh
+      "$$HOME/.local/bin/gitleaks" git --redact --verbose .
+`);
+  }
 
   // --- secret scan (gitguardian) -------------------------------------------
   // Runs first and gates the build, mirroring the CircleCI workflow where

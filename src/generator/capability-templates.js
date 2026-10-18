@@ -351,6 +351,42 @@ export const capabilityTemplates = {
       templateId: "doppler-yaml",
     },
   ],
+  // Required capability (`locked: true`): every generated repository carries a
+  // local pre-commit secret scan and the configuration it reads. The hook is a
+  // plain file discovered through `core.hooksPath`, not something installed
+  // into `.git/hooks` by a package manager — the previous mechanism
+  // (`npx simple-git-hooks`) silently installed nothing in a repo with no
+  // package.json, and that is how a live key reached history.
+  "secret-scan": [
+    {
+      id: "pre-commit-hook",
+      filePath: ".githooks/pre-commit",
+      templateId: "githooks-pre-commit",
+      isExecutable: true,
+    },
+    {
+      id: "gitleaks-config",
+      filePath: ".gitleaks.toml",
+      templateId: "gitleaks-toml",
+    },
+    {
+      id: "gitleaks-ignore",
+      filePath: ".gitleaksignore",
+      templateId: "gitleaksignore",
+    },
+    {
+      id: "install-gitleaks-script",
+      filePath: "scripts/install-gitleaks.sh",
+      templateId: "scripts-install-gitleaks-sh",
+      isExecutable: true,
+    },
+    {
+      id: "setup-git-hooks-script",
+      filePath: "scripts/setup-git-hooks.sh",
+      templateId: "scripts-setup-git-hooks-sh",
+      isExecutable: true,
+    },
+  ],
   sonarcloud: [
     {
       id: ".sonarcloud.properties",

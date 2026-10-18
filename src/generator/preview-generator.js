@@ -401,10 +401,11 @@ function createDevelopmentContainerShellFiles(
       playwrightSetup: allCapabilities.includes("playwright")
         ? PLAYWRIGHT_SETUP_SCRIPT
         : "",
-      gitHooksSetup:
-        allCapabilities.includes("code-quality") ||
-        allCapabilities.includes("code-quality-python") ||
-        allCapabilities.includes("devcontainer-node")
+      gitHooksSetup: allCapabilities.includes("secret-scan")
+        ? `echo "INFO: Installing git hooks and gitleaks..."\n(cd /workspaces/${projectConfig.name || "my-project"} && bash scripts/setup-git-hooks.sh) || exit 1\n`
+        : allCapabilities.includes("code-quality") ||
+            allCapabilities.includes("code-quality-python") ||
+            allCapabilities.includes("devcontainer-node")
           ? `echo "INFO: Installing git pre-commit hooks (lint-staged)..."\n(cd /workspaces/${projectConfig.name || "my-project"} && npx --yes simple-git-hooks) || echo "WARN: Run 'npx simple-git-hooks' to install hooks manually."`
           : "",
       specdagSetup: allCapabilities.includes("spec-kit")
@@ -772,7 +773,6 @@ function generatePackageJsonFile(
       '"eslint-plugin-security": "^4.0.1"',
       '"globals": "^17.0.0"',
       '"prettier": "^3.9.6"',
-      '"simple-git-hooks": "^2.13.1"',
       '"lint-staged": "^16.4.0"',
     ];
     const missing = codeQualityDevDeps.filter(

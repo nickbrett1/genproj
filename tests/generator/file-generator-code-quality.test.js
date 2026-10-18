@@ -34,8 +34,10 @@ describe("file-generator code-quality capability", () => {
     expect(pkg.devDependencies).toContain('"eslint-plugin-security":');
     expect(pkg.devDependencies).toContain('"globals":');
     expect(pkg.devDependencies).toContain('"prettier":');
-    expect(pkg.devDependencies).toContain('"simple-git-hooks":');
     expect(pkg.devDependencies).toContain('"lint-staged":');
+    // Hook installation belongs to `secret-scan` (core.hooksPath), so the
+    // package-manager mechanism is not emitted beside it.
+    expect(pkg.devDependencies).not.toContain('"simple-git-hooks":');
   });
 
   it("should add a lint script when code-quality is selected", () => {

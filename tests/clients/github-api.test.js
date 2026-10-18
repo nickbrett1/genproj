@@ -256,6 +256,37 @@ describe("GitHubAPIService", () => {
     expect(lastCall.options.method).toBe("PATCH");
   });
 
+  it("marks git hooks executable, even without a .sh extension", async () => {
+    const { requests } = mockCommitEndpoints({
+      commit: {
+        oid: "content-commit",
+        url: "url",
+        tree: { oid: "content-tree" },
+      },
+      modeCommitSha: "mode-commit",
+    });
+
+    await service.createMultipleFiles(
+      "user",
+      "repo",
+      [{ path: ".githooks/pre-commit", content: "#!/bin/sh\nexit 0\n" }],
+      "Initial commit",
+    );
+
+    const treeRequest = requests.find(
+      (request) => request.endpoint === "/repos/user/repo/git/trees",
+    );
+    expect(treeRequest).toBeDefined();
+    expect(JSON.parse(treeRequest.options.body).tree).toEqual([
+      {
+        path: ".githooks/pre-commit",
+        mode: "100755",
+        type: "blob",
+        sha: await computeGitBlobSha("#!/bin/sh\nexit 0\n"),
+      },
+    ]);
+  });
+
   it("omits the mode-fix commit when no .sh files are written", async () => {
     const { requests } = mockCommitEndpoints({
       commit: { oid: "content-commit", url: "url", tree: { oid: "tree" } },

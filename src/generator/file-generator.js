@@ -64,6 +64,13 @@ const scriptsSyncDopplerSecretsSh =
   templateFiles["scripts-sync-doppler-secrets-sh.template"];
 const scriptsAgentDevSh = templateFiles["scripts-agent-dev.sh.template"];
 const scriptsDeployGateSh = templateFiles["scripts-deploy-gate.sh.template"];
+const scriptInstallGitleaksSh =
+  templateFiles["scripts-install-gitleaks.sh.template"];
+const scriptsSetupGitHooksSh =
+  templateFiles["scripts-setup-git-hooks.sh.template"];
+const githooksPreCommit = templateFiles["githooks-pre-commit.template"];
+const gitleaksToml = templateFiles["gitleaks-toml.template"];
+const gitleaksIgnore = templateFiles["gitleaksignore.template"];
 const eslintConfigJs = templateFiles["eslint-config-js.template"];
 const gitignoreTemplate = templateFiles["gitignore.template"];
 const dependabotConfig = templateFiles["dependabot.yml.template"];
@@ -1054,6 +1061,11 @@ const templateImports = {
   "scripts-sync-doppler-secrets-sh": scriptsSyncDopplerSecretsSh,
   "scripts-agent-dev-sh": scriptsAgentDevSh,
   "scripts-deploy-gate-sh": scriptsDeployGateSh,
+  "scripts-install-gitleaks-sh": scriptInstallGitleaksSh,
+  "scripts-setup-git-hooks-sh": scriptsSetupGitHooksSh,
+  "githooks-pre-commit": githooksPreCommit,
+  "gitleaks-toml": gitleaksToml,
+  gitleaksignore: gitleaksIgnore,
 
   gitignore: gitignoreTemplate,
   "dependabot-config": dependabotConfig,
@@ -1762,10 +1774,18 @@ fi
           playwrightSetup: context.capabilities.includes("playwright")
             ? PLAYWRIGHT_SETUP_SCRIPT
             : "",
-          gitHooksSetup:
-            context.capabilities.includes("code-quality") ||
-            context.capabilities.includes("code-quality-python") ||
-            context.capabilities.includes("devcontainer-node")
+          // The hooks are installed through `core.hooksPath`, which is what
+          // makes the repository's own `.githooks/pre-commit` authoritative.
+          // Deliberately NOT `|| true`: the bug this replaces reported success
+          // having installed nothing, and every commit since went unscanned.
+          // `setup-git-hooks.sh` itself only warns when the scanner cannot be
+          // downloaded (CI still scans), but it exits non-zero if the hooks
+          // are not actually wired up.
+          gitHooksSetup: context.capabilities.includes("secret-scan")
+            ? `echo "INFO: Installing git hooks and gitleaks..."\n(cd /workspaces/${context.projectName || context.name || "my-project"} && bash scripts/setup-git-hooks.sh) || exit 1\n`
+            : context.capabilities.includes("code-quality") ||
+                context.capabilities.includes("code-quality-python") ||
+                context.capabilities.includes("devcontainer-node")
               ? `echo "INFO: Installing git pre-commit hooks (lint-staged)..."\n(cd /workspaces/${context.projectName || context.name || "my-project"} && npx --yes simple-git-hooks) || echo "WARN: Run 'npx simple-git-hooks' to install hooks manually."`
               : "",
           specdagSetup: context.capabilities.includes("spec-kit")
@@ -1908,7 +1928,6 @@ const CODE_QUALITY_DEV_DEPS = [
   '"eslint-plugin-security": "^4.0.1"',
   '"globals": "^17.0.0"',
   '"prettier": "^3.9.6"',
-  '"simple-git-hooks": "^2.13.1"',
   '"lint-staged": "^16.4.0"',
 ];
 
@@ -1941,10 +1960,13 @@ export function buildGitHooksBlock(context) {
   if (!context.capabilities.includes("code-quality")) {
     return "";
   }
+  const simpleGitHooks = context.capabilities.includes("secret-scan")
+    ? ""
+    : '  "simple-git-hooks": {\n' +
+      '    "pre-commit": "npx lint-staged"\n' +
+      "  },\n";
   return (
-    '  "simple-git-hooks": {\n' +
-    '    "pre-commit": "npx lint-staged"\n' +
-    "  },\n" +
+    simpleGitHooks +
     '  "lint-staged": {\n' +
     '    "**/*.{js,ts,svelte,json,css,html,md}": "prettier --write --ignore-unknown",\n' +
     '    "**/*.{js,ts,svelte}": "eslint --fix"\n' +
@@ -1962,7 +1984,10 @@ export function buildGitHooksBlock(context) {
  * @returns {string} JSON body for the scripts object
  */
 export function buildScriptsBlock(context, scriptsFragment) {
-  if (context.capabilities.includes("code-quality")) {
+  if (
+    context.capabilities.includes("code-quality") &&
+    !context.capabilities.includes("secret-scan")
+  ) {
     return `"prepare": "simple-git-hooks"${scriptsFragment}`;
   }
   return scriptsFragment.replace(/^\s*,\s*/, "");
@@ -2969,12 +2994,40 @@ does not prove the board will parse the code.
 `
     : "";
 
+  // secret-scan: the one thing a reader must know BEFORE the first finding is
+  // that a finding means rotate. A scanner added to a repo whose key is live is
+  // a monitor on an open door, so this section is deliberately blunt.
+  const secretScanSection = context.capabilities.includes("secret-scan")
+    ? `## Secret scanning
+
+Every commit is scanned for credentials by \`gitleaks\`, and CI scans the
+**full history**. The local hook is convenience; CI is the gate you cannot skip
+with \`git commit --no-verify\`.
+
+\`\`\`bash
+scripts/setup-git-hooks.sh   # installs gitleaks and sets core.hooksPath
+\`\`\`
+
+If a commit is blocked, **rotate the credential first** — a finding means it may
+already be exposed. Then remove it from the staged changes and commit again.
+
+Only for a verified false positive, add its fingerprint to \`.gitleaksignore\`,
+which is a committed and reviewable diff. Never bypass the hook with
+\`--no-verify\`: it leaves no record and the next commit is unscanned too.
+
+This is detection, not storage (Doppler holds secrets) and not rotation (that is
+a human step). Allowlist edits in \`.gitleaks.toml\` are reviewable changes on
+purpose.
+`
+    : "";
+
   const content = `# ${projectName}
 
 ${description}
 
 ${capabilitiesSection}
 ${quickstart}
+${secretScanSection}
 ${dopplerSection}
 ${deploySection}
 ${containerAgentSection}

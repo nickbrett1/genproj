@@ -401,8 +401,13 @@ export class GitHubAPIService extends BaseAPIService {
       throw new Error("GitHub GraphQL createCommitOnBranch returned no commit");
     }
 
-    // Preserve the executable bit on shell scripts (GraphQL cannot express it).
-    const executableFiles = files.filter((file) => file.path.endsWith(".sh"));
+    // Preserve the executable bit on shell scripts and git hooks (GraphQL
+    // cannot express it). `.githooks/*` is named without an extension because
+    // git discovers hooks by name, and a non-executable hook is silently
+    // ignored — the exact failure mode the secret scan exists to prevent.
+    const executableFiles = files.filter(
+      (file) => file.path.endsWith(".sh") || file.path.startsWith(".githooks/"),
+    );
     let finalCommit = commit;
     if (executableFiles.length > 0) {
       finalCommit = await this.#applyExecutableModes(
