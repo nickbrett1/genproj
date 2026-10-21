@@ -46,6 +46,7 @@ const EXPECTED_IDS = [
   "code-quality",
   "code-quality-python",
   "code-quality-rust",
+  "code-quality-shell",
   "sonarlint",
   "cloudflare-wrangler",
   "google-cloud",
@@ -136,7 +137,7 @@ describe("catalog metadata", () => {
     // It must be discoverable from the public descriptor so a UI can render it.
     const catalog = buildCatalog();
     const language = catalog.configurationSchema.properties.language;
-    expect(language.enum).toEqual(["python", "node", "java", "rust"]);
+    expect(language.enum).toEqual(["python", "node", "java", "rust", "shell"]);
   });
 
   it("declares the release knobs a project can set, and no tag prefix", () => {

@@ -11,7 +11,7 @@ services:
   app:
     image: {{registryPrefix}}/{{registryNamespace}}/{{projectName}}:latest
     container_name: {{projectName}}
-    restart: unless-stopped
+    restart: {{restartPolicy}}
 {{networkModeLine}}
 {{portsConfig}}
 {{volumesConfig}}

@@ -259,6 +259,19 @@ doppler projects create genproj
 doppler configs create dev --project genproj
 ```
 
+### Deployment settings synced to the Worker
+
+Every secret in the `genproj` Doppler config is bulk-synced into the Worker on
+deploy, so deployment-level settings ride the same path as credentials:
+
+- `MCPHUB_BASE_URL` — origin of the MCPHub deployment, e.g.
+  `http://ryzen:8781`. The generator writes `${MCPHUB_BASE_URL}/mcp/dev` as the
+  `mcphub-dev` goose extension in generated projects, and previews show the same
+  value. Absent falls back to `http://ryzen:8781`. This is generation-time
+  configuration: it affects newly generated projects and regenerated
+  `post-create-setup.sh` files, not a running container that already wrote its
+  `~/.config/goose/config.yaml`.
+
 ### Env-var precedence (read this if `doppler run` hits the wrong project)
 
 Doppler resolves its target as **environment variables > `doppler.yaml` >

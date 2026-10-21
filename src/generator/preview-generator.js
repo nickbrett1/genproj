@@ -396,7 +396,12 @@ function createDevelopmentContainerShellFiles(
         ? AGY_SETUP_SCRIPT
         : "",
       gooseSetup: hasGoose(allCapabilities)
-        ? generateGooseSetupScript({ capabilities: allCapabilities })
+        ? generateGooseSetupScript({
+            capabilities: allCapabilities,
+            // Keep previews byte-identical to what generation writes: the
+            // handler stamps the deployment's MCPHub origin onto the config.
+            mcpHubBaseUrl: projectConfig.mcpHubBaseUrl,
+          })
         : "",
       playwrightSetup: allCapabilities.includes("playwright")
         ? PLAYWRIGHT_SETUP_SCRIPT

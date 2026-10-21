@@ -1,6 +1,7 @@
 // src/generator/capability-templates.js
 import {
   resolveAgentRegistration,
+  resolveDockerWorkload,
   resolveProjectLanguage,
 } from "./capability-template-utils.js";
 
@@ -406,6 +407,15 @@ export const capabilityTemplates = {
       id: "dockerfile",
       filePath: "Dockerfile",
       templateId: "dockerfile",
+      // `language: shell` has nothing to compile, so it gets a single-stage
+      // Dockerfile instead of build+runtime stages that copy nothing.
+      when: (context) => resolveProjectLanguage(context) !== "shell",
+    },
+    {
+      id: "dockerfile-shell",
+      filePath: "Dockerfile",
+      templateId: "dockerfile-shell",
+      when: (context) => resolveProjectLanguage(context) === "shell",
     },
     {
       id: "dockerignore",
@@ -421,6 +431,16 @@ export const capabilityTemplates = {
       id: "deploy-readme",
       filePath: "deploy/README.md",
       templateId: "deploy-readme",
+      // `workload: batch` is not a service: its runbook describes
+      // `docker run --rm`, scheduling and no Watchtower, so it gets its own
+      // template rather than a service-shaped one with the wrong sections.
+      when: (context) => resolveDockerWorkload(context) !== "batch",
+    },
+    {
+      id: "deploy-readme-batch",
+      filePath: "deploy/README.md",
+      templateId: "deploy-readme-batch",
+      when: (context) => resolveDockerWorkload(context) === "batch",
     },
     {
       id: "homepage-snippet",
@@ -431,7 +451,10 @@ export const capabilityTemplates = {
       // defines its own Homepage entry by hand (services.yaml), so emitting a
       // generated snippet too would be inconsistent (and label-discovered
       // services render icon-less and out of order).
+      // `workload: batch` derives homepage: false (a widget for a container
+      // that never listens is noise), so the snippet must follow the labels.
       when: (context) =>
+        resolveDockerWorkload(context) !== "batch" &&
         context.configuration?.["docker-container"]?.homepage !== false,
     },
     {

@@ -25,7 +25,7 @@ artifact and is never used as a deployable image.
   so GHCR links the published package to this repo on first push — a **public
   repo yields a public package** automatically. To keep a package private, keep
   the repo private (or set `imageVisibility: private` in the genproj config;
-  then `docker login` is required on the NAS — see section 3).
+  then `docker login` is required on the NAS — see section 3).{{imageVisibilitySection}}
 
 {{ciSetupSection}}
 

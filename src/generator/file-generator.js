@@ -40,9 +40,11 @@ const githubReleaseSmokeLaunch =
 const githubReleaseBuildPayload =
   templateFiles["scripts-build-payload.sh.template"];
 const dockerfileTemplate = templateFiles["dockerfile.template"];
+const dockerfileShellTemplate = templateFiles["dockerfile-shell.template"];
 const dockerignoreTemplate = templateFiles["dockerignore.template"];
 const dockerComposeTemplate = templateFiles["docker-compose.template"];
 const deployReadmeTemplate = templateFiles["deploy-readme.template"];
+const deployReadmeBatchTemplate = templateFiles["deploy-readme-batch.template"];
 const homepageServicesTemplate = templateFiles["homepage-services.template"];
 const envExampleTemplate = templateFiles["env-example.template"];
 const sonarProjectProperties = templateFiles[".sonarcloud.properties.template"];
@@ -159,6 +161,7 @@ import {
 import {
   validateAgentPorts,
   validateDockerNetworks,
+  validateShellLanguage,
   validateFetchLaunch,
   validatePrimaryLanguage,
   validatePydanticAgent,
@@ -1039,9 +1042,11 @@ const templateImports = {
   "github-release-smoke-launch": githubReleaseSmokeLaunch,
   "github-release-build-payload": githubReleaseBuildPayload,
   dockerfile: dockerfileTemplate,
+  "dockerfile-shell": dockerfileShellTemplate,
   dockerignore: dockerignoreTemplate,
   "docker-compose": dockerComposeTemplate,
   "deploy-readme": deployReadmeTemplate,
+  "deploy-readme-batch": deployReadmeBatchTemplate,
   "homepage-services": homepageServicesTemplate,
   "env-example": envExampleTemplate,
   ".sonarcloud.properties": sonarProjectProperties,
@@ -3725,6 +3730,7 @@ export async function generateAllFiles(context) {
   validateFetchLaunch(context);
   validateRequiredAny(context);
   validateDockerNetworks(context);
+  validateShellLanguage(context);
   validatePydanticAgent(context);
   validateAgentPorts(context);
 

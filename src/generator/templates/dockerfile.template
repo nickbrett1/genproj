@@ -19,7 +19,7 @@ WORKDIR /app
 LABEL org.opencontainers.image.source=https://github.com/{{registryNamespace}}/{{projectName}}
 {{dockerAptInstall}}
 {{dockerRuntimeCommands}}
-EXPOSE {{exposePort}}
+{{dockerExpose}}
 
 {{dockerHealthcheck}}
 {{dockerRunCommand}}

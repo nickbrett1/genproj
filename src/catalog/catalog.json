@@ -5,8 +5,8 @@
     "properties": {
       "language": {
         "type": "string",
-        "enum": ["python", "node", "java", "rust"],
-        "description": "Primary Language: the one language the project builds, tests and releases. Declared, not inferred. Optional with 0-1 devcontainer-* capabilities (implied); required with 2+, so selection order decides nothing. Devcontainer-* capabilities are toolboxes: non-primary container code is not built, tested or released."
+        "enum": ["python", "node", "java", "rust", "shell"],
+        "description": "Primary Language: the one language the project builds, tests and releases. Declared, not inferred. Optional with 0-1 devcontainer-* capabilities (implied); required with 2+, so selection order decides nothing. Devcontainer-* capabilities are toolboxes: non-primary container code is not built, tested or released. `shell` is for a script repo: no devcontainer is implied, CI has nothing to build (ShellCheck only with code-quality-shell), and a docker-container image is single-stage."
       }
     }
   },
@@ -1122,6 +1122,34 @@
       "website": "https://doc.rust-lang.org/clippy/"
     },
     {
+      "id": "code-quality-shell",
+      "name": "ShellCheck (shell code quality)",
+      "description": "Adds ShellCheck to the generated CI for a shell project: `shellcheck -x scripts/*.sh`. Opt-in rather than always-on, because an unconditional gate fails repos that use deliberate eval or dynamic sourcing. Lint locally with `shellcheck -x scripts/*.sh`.",
+      "category": "code-quality",
+      "icon": "terminal",
+      "iconColor": "gray",
+      "selectedByDefault": false,
+      "provides": [],
+      "dependencies": [],
+      "conflicts": [],
+      "requiresAuth": [],
+      "authServices": [],
+      "externalServices": [],
+      "configurationSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "vscodeExtensions": ["timonwong.shellcheck"],
+      "benefits": [
+        "Catches quoting, word-splitting and portability bugs before merge",
+        "No external service or API token required",
+        "Works offline and in any CI environment",
+        "Opt-in, so scripts that rely on eval or dynamic sourcing are not forced to silence a permanent failure"
+      ],
+      "links": [],
+      "website": "https://www.shellcheck.net/"
+    },
+    {
       "id": "sonarlint",
       "name": "SonarLint",
       "description": "Configures SonarLint for local code quality analysis.",
@@ -1211,7 +1239,7 @@
     {
       "id": "docker-container",
       "name": "Docker Container",
-      "description": "Containerize the project and publish to the GitHub Container Registry (GHCR) for deployment to a NAS or self-hosted host via Docker Compose. Mutually exclusive with other deployment systems.",
+      "description": "Containerize the project and publish to the GitHub Container Registry (GHCR) for deployment to a NAS or self-hosted host via Docker Compose. Mutually exclusive with other deployment systems. Set `workload: batch` for a scheduled job image (runs and exits; no port, no healthcheck, no Watchtower) instead of a long-running service.",
       "category": "deployment",
       "icon": "docker",
       "iconColor": "cyan",
@@ -1250,6 +1278,12 @@
             "type": "string",
             "enum": ["public", "private"],
             "default": "public"
+          },
+          "workload": {
+            "type": "string",
+            "enum": ["service", "batch"],
+            "default": "service",
+            "description": "Workload shape. `service` (default) is a long-running process: it exposes a port, publishes a binding, may declare a healthcheck and is re-created by Watchtower. `batch` is a scheduled job that runs to completion and exits: EXPOSE, ports:, HEALTHCHECK, Watchtower and Homepage are all DERIVED off (an explicit true still wins for Homepage/Watchtower), compose emits restart: \"no\", the runbook documents `docker run --rm`, and CI runs the image with --dry-run requiring exit 0. The generated entrypoint must honour --dry-run: print what it would do and exit 0 without doing it. `service` output is byte-identical to not setting this key."
           },
           "tagStrategy": {
             "type": "string",
@@ -1364,8 +1398,8 @@
           },
           "language": {
             "type": "string",
-            "enum": ["python", "node", "java", "rust"],
-            "description": "Project language override. Normally derived from the selected devcontainer-* capability; set this only to override it."
+            "enum": ["python", "node", "java", "rust", "shell"],
+            "description": "Project language override. Normally derived from the selected devcontainer-* capability; set this only to override it. `shell` produces a single-stage image and requires a declared entrypoint or command (there is no binary to guess)."
           },
           "watchtower": {
             "type": "boolean",

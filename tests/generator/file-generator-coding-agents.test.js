@@ -58,7 +58,7 @@ describe("File Generator - Coding Agents", () => {
     expect(postCreateSetup).toBeDefined();
 
     expect(postCreateSetup.content).toContain("mcphub-dev:");
-    expect(postCreateSetup.content).toContain("uri: http://nas:8781/mcp/dev");
+    expect(postCreateSetup.content).toContain("uri: http://ryzen:8781/mcp/dev");
     expect(postCreateSetup.content).not.toContain("ensure_goose_extension");
     expect(postCreateSetup.content).not.toContain(
       'args: ["run", "--", "npx", "-y", "@circleci/mcp-server-circleci"]',
@@ -90,7 +90,7 @@ describe("File Generator - Coding Agents", () => {
     // exists (mcphub-dev default toolset). No provider block is emitted.
     expect(postCreateSetup.content).toContain("GOOSECFGEOF");
     expect(postCreateSetup.content).toContain("mcphub-dev:");
-    expect(postCreateSetup.content).toContain("uri: http://nas:8781/mcp/dev");
+    expect(postCreateSetup.content).toContain("uri: http://ryzen:8781/mcp/dev");
     expect(postCreateSetup.content).not.toContain("provider:");
 
     // The host goose config must no longer be bind-mounted into the container.

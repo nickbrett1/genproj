@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse } from "yaml";
+import { generatePreview } from "../../src/generator/preview-generator.js";
 import {
   generateGooseSetupScript,
   generateAllFiles,
@@ -64,7 +65,7 @@ describe("goose recipes bootstrap in generated projects", () => {
     expect(script).toContain("GOOSECFGEOF");
     expect(script).toContain("extensions:");
     expect(script).toContain("mcphub-dev:");
-    expect(script).toContain("uri: http://nas:8781/mcp/dev");
+    expect(script).toContain("uri: http://ryzen:8781/mcp/dev");
     // Extensions-only: NO provider block is emitted (resolves from Doppler env).
     expect(script).not.toContain("provider:");
   });
@@ -117,7 +118,7 @@ describe("goose recipes bootstrap in generated projects", () => {
     expect(parsed.GOOSE_TELEMETRY_ENABLED).toBe(true);
     expect(parsed.extensions["mcphub-dev"]).toMatchObject({
       type: "streamable_http",
-      uri: "http://nas:8781/mcp/dev",
+      uri: "http://ryzen:8781/mcp/dev",
     });
   });
 
@@ -213,7 +214,7 @@ describe("goose recipes bootstrap in generated projects", () => {
 
     // The user's own (disabled, differently-pointed) mcphub-dev is respected…
     expect(written).toContain("uri: http://somewhere-else:1234/mcp");
-    expect(written).not.toContain("uri: http://nas:8781/mcp/dev");
+    expect(written).not.toContain("uri: http://ryzen:8781/mcp/dev");
     // …and only sonarqube was added.
     expect(output).toContain("(added: sonarqube).");
     expect(Object.keys(parse(written).extensions).sort()).toEqual([
@@ -255,7 +256,7 @@ describe("goose recipes bootstrap in generated projects", () => {
 
     expect(written.match(/^extensions:/gm)).toHaveLength(1);
     expect(parse(written).extensions["mcphub-dev"].uri).toBe(
-      "http://nas:8781/mcp/dev",
+      "http://ryzen:8781/mcp/dev",
     );
   });
 
@@ -302,10 +303,37 @@ describe("generated post-create-setup.sh goose config (round-4 rewrite: MCPHub d
     );
     expect(setup).toBeDefined();
     expect(setup.content).toContain("mcphub-dev:");
-    expect(setup.content).toContain("uri: http://nas:8781/mcp/dev");
+    expect(setup.content).toContain("uri: http://ryzen:8781/mcp/dev");
     // The circleci capability no longer wires a per-capability stdio block.
     expect(setup.content).not.toContain("ensure_goose_extension");
     expect(setup.content).not.toContain("@circleci/mcp-server-circleci");
     expect(setup.content).not.toContain("CIRCLECI_TOKEN");
+  });
+
+  it("takes the MCPHub origin from the generation context (MCPHUB_BASE_URL)", async () => {
+    const engine = new TemplateEngine();
+    await engine.initialize();
+    const files = await generateAllFiles({
+      projectName: "hub-url-project",
+      capabilities: ["devcontainer-node", "doppler"],
+      configuration: {},
+      mcpHubBaseUrl: "http://hub.internal:8781",
+    });
+    const setup = files.find(
+      (f) => f.filePath === ".devcontainer/post-create-setup.sh",
+    );
+    expect(setup.content).toContain("uri: http://hub.internal:8781/mcp/dev");
+    expect(setup.content).not.toContain("ryzen:8781");
+  });
+
+  it("previews the same MCPHub origin that generation writes", async () => {
+    const preview = await generatePreview(
+      { name: "hub-url-project", mcpHubBaseUrl: "http://hub.internal:8781" },
+      ["devcontainer-node", "doppler"],
+    );
+    const setup = preview.files
+      .find((f) => f.name === ".devcontainer" && f.type === "folder")
+      .children.find((f) => f.name === "post-create-setup.sh").content;
+    expect(setup).toContain("uri: http://hub.internal:8781/mcp/dev");
   });
 });

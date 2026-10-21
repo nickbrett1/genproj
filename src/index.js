@@ -75,7 +75,7 @@ export function handleRequest(request, env = {}) {
   }
 
   if (pathname === "/v1/preview" && request.method === "POST") {
-    return handlePreview(request);
+    return handlePreview(request, env);
   }
 
   if (pathname === "/v1/generate" && request.method === "POST") {

@@ -58,6 +58,59 @@ export function validateRequiredAny(context) {
 }
 
 /**
+ * A `shell` project is a script repo, and `docker-container` needs an entry
+ * point for it.
+ *
+ * Every other language has a default CMD derived from its build output (a
+ * binary, a module, a jar). Shell has none: the deliverable is `scripts/<name>`
+ * copied to `/usr/local/bin/<name>`, and guessing a filename would emit a CMD
+ * that exits 127 on the first run. So the entry point must be declared.
+ *
+ * A frontend is rejected too: a shell project scaffolds no server to serve the
+ * built assets, and the single-stage Dockerfile has no build stage to build
+ * them in. Emitting nothing would look like it worked.
+ *
+ * @param {Object} context - Generation context (capabilities, configuration)
+ * @throws {ValidationError} When a shell container has no entrypoint/command,
+ *   or when a shell project selects a frontend capability
+ */
+export function validateShellLanguage(context) {
+  if (resolveProjectLanguage(context) !== "shell") return;
+  const capabilities = context?.capabilities || [];
+  const config = context?.configuration?.["docker-container"] || {};
+
+  if (
+    capabilities.includes("docker-container") &&
+    !(Array.isArray(config.entrypoint) && config.entrypoint.length > 0) &&
+    !(Array.isArray(config.command) && config.command.length > 0)
+  ) {
+    throw new ValidationError(
+      `This project's primary language is shell and it selects ` +
+        `docker-container, but declares neither "entrypoint" nor "command". ` +
+        `A shell image has no language default to fall back on - there is no ` +
+        `binary name to derive - so the container would exit 127 on its first ` +
+        `run. Set e.g. "command": ["/usr/local/bin/entrypoint.sh"] and keep ` +
+        `the script at scripts/entrypoint.sh.`,
+      "command",
+    );
+  }
+
+  const frontendCapability = capabilities.find((id) =>
+    ["svelte", "sveltekit"].includes(id),
+  );
+  if (frontendCapability) {
+    throw new ValidationError(
+      `This project selects ${frontendCapability} but its primary language ` +
+        `is shell. A shell project scaffolds no server to serve the built ` +
+        `files, and its single-stage image has no build stage to build them ` +
+        `in. Choose an application language for a project with a frontend, ` +
+        `or drop ${frontendCapability}.`,
+      "language",
+    );
+  }
+}
+
+/**
  * The primary language can be *derived* when there is at most one
  * `devcontainer-*` selected — the toolchain is unambiguous. With two or more
  * selected there is no fact to derive from, and every picker that guesses

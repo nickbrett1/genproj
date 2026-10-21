@@ -67,6 +67,7 @@ describe("list_genproj_capabilities", () => {
       "node",
       "java",
       "rust",
+      "shell",
     ]);
   });
 });

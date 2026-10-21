@@ -26,6 +26,7 @@ import {
   getLockedCapabilityIds,
 } from "../catalog/index.js";
 import { json } from "../http.js";
+import { DEFAULT_MCPHUB_BASE_URL } from "./capability-template-utils.js";
 import { resolveBuildkiteDeployment } from "./external-services.js";
 
 /**
@@ -169,6 +170,12 @@ export function buildProjectContext(payload, userId, authTokens, env = {}) {
     // Deployment-level Buildkite identity, resolved from the Worker
     // environment so genproj is not pinned to one organisation.
     buildkiteDeployment: resolveBuildkiteDeployment(env),
+    // MCPHub origin for the generated `mcphub-dev` goose extension. This is
+    // deployment data, not project data: `MCPHUB_BASE_URL` lives in Doppler
+    // (`genproj` config) and is bulk-synced into the Worker on every deploy.
+    // The fallback keeps generation working when the variable is absent
+    // (direct calls, tests, a first deploy before the secret exists).
+    mcpHubBaseUrl: env.MCPHUB_BASE_URL || DEFAULT_MCPHUB_BASE_URL,
     userId,
     overwrite: overwrite || false,
     resolutions: resolutions || null,

@@ -301,6 +301,14 @@ function assertNoGooseEnvVarReferences(yamlFragment, key) {
 }
 
 /**
+ * Fallback MCPHub origin when the generation context carries no
+ * `mcpHubBaseUrl`. Deployments set MCPHUB_BASE_URL in Doppler (`genproj`
+ * config), which the deploy job syncs into the Worker environment; this
+ * constant only keeps direct generator calls (tests, local scripts) working.
+ */
+const DEFAULT_MCPHUB_BASE_URL = "http://ryzen:8781";
+
+/**
  * Generates goose MCP server configuration YAML entries for a project's
  * generated `~/.config/goose/config.yaml` (extensions only).
  *
@@ -308,7 +316,11 @@ function assertNoGooseEnvVarReferences(yamlFragment, key) {
  * MCPHub is now goose's single data plane. genproj no longer wires individual
  * per-capability hub-backed stdio servers — those arrive via the MCPHub `dev`
  * group, consumed as ONE auth-off `streamable_http` extension: `mcphub-dev`
- * (http://nas:8781/mcp/dev). `mcphub-dev` is ALWAYS emitted (default toolset).
+ * (`${MCPHUB_BASE_URL}/mcp/dev`). The base URL is a generation-time setting:
+ * `buildProjectContext` reads the genproj Worker's `MCPHUB_BASE_URL` (synced
+ * from Doppler by scripts/sync-doppler-secrets.sh), so moving the hub is a
+ * Doppler change plus a regenerate, not a source edit. `mcphub-dev` is ALWAYS
+ * emitted (default toolset).
  *
  * EXCEPTIONS — capabilities whose tooling is NOT carried by the `dev` group
  * (live membership confirmed on the hub) must stay as per-capability blocks so
@@ -323,6 +335,7 @@ function assertNoGooseEnvVarReferences(yamlFragment, key) {
  * environment at runtime — GOOSE_ALIAS runs goose under `doppler run`).
  *
  * @param {object} context - The project generation context with capabilities
+ *   and, optionally, `mcpHubBaseUrl` (the MCPHub origin, no `/mcp/...` path).
  * @returns {object} Object with goose YAML config parts (mcphub-dev always present)
  */
 function getGooseMcpConfig(context) {
@@ -334,12 +347,19 @@ function getGooseMcpConfig(context) {
 
   // MCPHub `dev` group — the default project toolset (auth-off end state).
   // No headers / env keys / envs: safe on a now auth-free trusted tailnet.
+  // The origin is deployment data: genproj passes `mcpHubBaseUrl` from the
+  // Worker's MCPHUB_BASE_URL (Doppler `genproj` config → Cloudflare secret).
+  // The constant is the fallback for direct callers/tests, not a second source
+  // of truth for deployments.
+  const mcphubBaseUrl = (
+    context?.mcpHubBaseUrl || DEFAULT_MCPHUB_BASE_URL
+  ).replace(/\/+$/, "");
   let mcphubDevGooseConfig = `
   mcphub-dev:
     type: streamable_http
     name: mcphub-dev
     enabled: true
-    uri: http://nas:8781/mcp/dev
+    uri: ${mcphubBaseUrl}/mcp/dev
     timeout: 300`;
 
   // sonarqube is NOT in the `dev` group, so a sonarcloud project still gets
@@ -839,7 +859,7 @@ export function resolveDopplerTarget(context) {
  * release; prefer the project-level `language`.
  *
  * @param {Object} context - Generation context (capabilities, configuration)
- * @returns {'python'|'node'|'java'|'rust'} The resolved primary language
+ * @returns {'python'|'node'|'java'|'rust'|'shell'} The resolved primary language
  */
 export function resolveProjectLanguage(context) {
   const explicit =
@@ -847,7 +867,7 @@ export function resolveProjectLanguage(context) {
     context.configuration?.["docker-container"]?.language;
   if (typeof explicit === "string") {
     const normalized = explicit.toLowerCase().trim();
-    if (["python", "node", "java", "rust"].includes(normalized)) {
+    if (["python", "node", "java", "rust", "shell"].includes(normalized)) {
       return normalized;
     }
   }
@@ -856,6 +876,55 @@ export function resolveProjectLanguage(context) {
   if (caps.some((c) => c.startsWith("devcontainer-java"))) return "java";
   if (caps.some((c) => c.startsWith("devcontainer-rust"))) return "rust";
   return "node";
+}
+
+/**
+ * The workload shape of a generated `docker-container`.
+ *
+ * `service` (default) is a long-running process: it listens on a port, may be
+ * polled by a HEALTHCHECK, and is recreated by Watchtower on a new image.
+ * `batch` is a scheduled job: it runs to completion and exits, so a port, a
+ * published binding and a health probe are all meaningless, and an
+ * auto-update between runs is a footgun.
+ *
+ * Every service default points the wrong way for a job (`watchtower` and
+ * `homepage` are true unless explicitly false, `exposePort` is emitted
+ * unconditionally, compose hardcodes `restart: unless-stopped`). `batch`
+ * derives all of them instead of asking for five `false`s, and `service`
+ * remains byte-identical to the pre-`workload` output.
+ *
+ * @param {Object} context - Generation context (capabilities, configuration)
+ * @returns {'service'|'batch'} The resolved workload shape
+ */
+export function resolveDockerWorkload(context) {
+  const config = context.configuration?.["docker-container"] || {};
+  return config.workload === "batch" ? "batch" : "service";
+}
+
+/**
+ * The argument list that makes a batch image prove itself in CI.
+ *
+ * A batch job's only promise is "runs to completion and exits 0", so the smoke
+ * gate runs the image and requires exit 0. `--dry-run` is what keeps that from
+ * doing real work (a real backup on every pull request): the generated
+ * entrypoint must print what it would do and exit 0 without doing it.
+ *
+ * Placement matters. With a declared ENTRYPOINT, `docker run` arguments are
+ * appended to it; with only a declared CMD, they REPLACE it - so the command is
+ * repeated before the flag or the container would try to exec `--dry-run`.
+ *
+ * @param {Object} context - Generation context
+ * @returns {string[]} argv to pass after the image reference
+ */
+export function resolveBatchSmokeArgv(context) {
+  const config = context.configuration?.["docker-container"] || {};
+  const declaredEntrypoint =
+    Array.isArray(config.entrypoint) && config.entrypoint.length > 0;
+  const declaredCommand =
+    Array.isArray(config.command) && config.command.length > 0;
+  if (declaredEntrypoint) return ["--dry-run"];
+  if (declaredCommand) return [...config.command, "--dry-run"];
+  return ["--dry-run"];
 }
 
 /**
@@ -1225,7 +1294,18 @@ export function cargoPackageName(name) {
  * @returns {string} A devcontainer capability id, e.g. "devcontainer-python"
  */
 export function primaryDevcontainerCapabilityId(context) {
-  return `devcontainer-${resolveProjectLanguage(context)}`;
+  const primary = `devcontainer-${resolveProjectLanguage(context)}`;
+  // Every language but `shell` has a devcontainer capability, and a
+  // declared-but-absent one is legal (language rust + only devcontainer-python:
+  // rust base image, no python tooling). `shell` has no devcontainer at all -
+  // the deliverable is a script, not a toolchain - so the base falls back to a
+  // selected devcontainer, and a shell project that selects none never gets
+  // here.
+  if (getCatalogCapability(primary)) return primary;
+  const selected = (context.capabilities || []).find((c) =>
+    c.startsWith("devcontainer-"),
+  );
+  return selected || primary;
 }
 
 /**
@@ -1326,6 +1406,16 @@ export function toDistributionName(projectName) {
 // public packages need no NAS-side credentials).
 const DOCKER_REGISTRY_PREFIX = "ghcr.io";
 const DOCKER_CREDENTIAL_VARS = { user: "GHCR_USERNAME", token: "GHCR_TOKEN" };
+
+/**
+ * POSIX-shell single-quote a value, so a configured command/entrypoint can be
+ * embedded in a generated pipeline command verbatim.
+ * @param {string} value - Raw argument text
+ * @returns {string} The value wrapped in single quotes with `'` escaped
+ */
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, "'\\''")}'`;
+}
 
 function getDockerRegistryPrefix() {
   return DOCKER_REGISTRY_PREFIX;
@@ -1536,8 +1626,25 @@ function getDockerContainerTemplateData(context) {
   // `validateAgentPorts` if it disagrees. See `resolveAgentListenPort`.
   const agentListenPort = resolveAgentListenPort(context);
   const exposePort = config.exposePort ?? agentListenPort ?? 3000;
-  const watchtower = config.watchtower !== false;
-  const homepage = config.homepage !== false;
+  // `workload: batch` is a scheduled job, not a service: it has no port, no
+  // health endpoint and no long-running process. The whole batch default set is
+  // DERIVED from this one enum, because the service defaults (watchtower on,
+  // homepage on, EXPOSE always, a published port, `restart: unless-stopped`)
+  // each have to be reversed individually, and forgetting one is silent - a
+  // watchtower label on a backup image only shows up as the wrong backup
+  // running against a newer restic.
+  //
+  // Explicit `true` still wins for watchtower/homepage (the derivation is a
+  // default, not a prohibition), and an explicit `healthcheck` still wins.
+  // See specs/022-genproj-batch-job-container-images.
+  const workload = resolveDockerWorkload(context);
+  const isBatch = workload === "batch";
+  const watchtower = isBatch
+    ? config.watchtower === true
+    : config.watchtower !== false;
+  const homepage = isBatch
+    ? config.homepage === true
+    : config.homepage !== false;
   // Build platforms for the CircleCI docker-publish job. Default to x86_64
   // (linux/amd64) only; arm64 is built additionally only when `armBuilds` is
   // explicitly enabled (most NAS deploy targets are x86_64).
@@ -1591,6 +1698,10 @@ failed deploy. Override \`AGENT_NAME\`, \`SERVICE\`, \`WAIT_SECONDS\` or
   // falling back to the node image (memo: genproj-docker-build-speedup).
   const isJava = language === "java";
   const isRust = language === "rust";
+  // A shell project has no application language in the genproj sense: the
+  // deliverable is an entrypoint script plus pinned CLI tools, so it gets a
+  // single-stage image with nothing to compile (see dockerfile-shell.template).
+  const isShell = language === "shell";
   // "Is there a frontend to build?" is answered by the `frontend` contribution
   // type, not by the `sveltekit` id: any capability providing
   // `{ type: "frontend" }` (svelte, sveltekit, and whatever comes next) is a
@@ -1611,7 +1722,9 @@ failed deploy. Override \`AGENT_NAME\`, \`SERVICE\`, \`WAIT_SECONDS\` or
           ? "maven:3.9-eclipse-temurin-21"
           : isRust
             ? "rust:1-slim"
-            : "node:22-slim");
+            : isShell
+              ? "debian:bookworm-slim"
+              : "node:22-slim");
 
   // The container's HTTP server is the project's primary language. When that
   // language is node the built app *is* a Node server (SvelteKit adapter-node
@@ -1641,7 +1754,11 @@ failed deploy. Override \`AGENT_NAME\`, \`SERVICE\`, \`WAIT_SECONDS\` or
   // runtime that serves it from disk finds it. Where the output lands
   // ({{svelteDirectory}}/{{svelteOutputDirectory}}) is the documented seam: see
   // the generated web/README.md.
-  const buildsSvelteFrontend = hasFrontendSelected && language !== "node";
+  // A shell project scaffolds no application server for a frontend to be
+  // served from; `validateShellLanguage` rejects the combination rather than
+  // emitting a build stage the single-stage template would drop.
+  const buildsSvelteFrontend =
+    hasFrontendSelected && language !== "node" && !isShell;
   const svelteDirectory = buildsSvelteFrontend
     ? resolveSvelteDirectory(context)
     : "";
@@ -1691,13 +1808,17 @@ RUN npm run build
   // A generated pydantic-agent serves /healthz (see the generated agent/main.py),
   // so declare an http healthcheck by default - the promise and the server are
   // emitted together. An explicit docker-container.healthcheck still wins.
-  if (!healthcheckSetting && agentListenPort !== null) {
+  // A batch job has nothing to probe: the process runs and exits, so a
+  // HEALTHCHECK would mark a successful run "unhealthy". `batch` therefore
+  // declares no health mechanism at all unless one is set explicitly (which
+  // the guards above still honour). This is derived, not asked for.
+  if (!isBatch && !healthcheckSetting && agentListenPort !== null) {
     healthcheckSetting = "http:/healthz";
     healthcheckPath = "/healthz";
-  } else if (!healthcheckSetting && isNode) {
+  } else if (!isBatch && !healthcheckSetting && isNode) {
     healthcheckSetting = "http:/health";
     healthcheckPath = "/health";
-  } else if (!healthcheckSetting && harness) {
+  } else if (!isBatch && !healthcheckSetting && harness) {
     healthcheckSetting = `http:${harness.healthPath}`;
     healthcheckPath = harness.healthPath;
   }
@@ -1777,6 +1898,9 @@ RUN PINNED_NPM="$(node -p "try{require('./package.json').packageManager}catch(e)
     && if [ -f package-lock.json ]; then npm ci; else npm install; fi
 COPY . .
 RUN npm run build`;
+  } else if (isShell) {
+    // Nothing to compile: the source tree (scripts/) IS the artifact.
+    dockerBuildCommands = `COPY . .`;
   } else if (isJava) {
     dockerBuildCommands = `COPY pom.xml ./
 RUN mvn -B dependency:go-offline
@@ -1824,6 +1948,10 @@ RUN cargo build --release`;
     // found" (exit 127). ENV NODE_ENV=production keeps npm/Node in
     // production mode for the runtime (memo: genproj Node Dockerfile).
     dockerRuntimeCommands = `ENV NODE_ENV=production\nCOPY --from=build /app/build ./build`;
+  } else if (isShell) {
+    // Single-stage: the runtime stage placeholder is unused by
+    // dockerfile-shell.template, but stays empty so no stage is implied.
+    dockerRuntimeCommands = "";
   } else if (isJava) {
     dockerRuntimeCommands = `COPY --from=build /app/target/*.jar /app/app.jar`;
   } else {
@@ -1928,6 +2056,11 @@ RUN cargo build --release`;
         : `CMD ["python", "-m", "${pkgName}"]`;
     } else if (isNode) dockerCommand = 'CMD ["node", "build/index.js"]';
     else if (isJava) dockerCommand = 'CMD ["java", "-jar", "/app/app.jar"]';
+    else if (isShell) {
+      // No default CMD. A shell project declares its entrypoint (validation
+      // enforces it): there is no binary name to guess, and a guessed one is a
+      // container that exits 127 on its first run.
+    }
     // Non-node: the language's own binary is the entry point (and the server,
     // for a project that adds one). The frontend is static assets it serves.
     else dockerCommand = `CMD ["${rustBinName}"]`;
@@ -1949,8 +2082,13 @@ RUN cargo build --release`;
   // (memo: genproj-homepage-port-wart).
   const publishPort = config.publishPort || `${exposePort}:${exposePort}`;
   const hostPort = getHostPort(publishPort, exposePort);
+  // A batch job is invoked with `docker run --rm` (or by a scheduler), not
+  // reached over the network, so it publishes nothing. `networkMode: host`
+  // already suppressed the binding; batch suppresses it unconditionally.
   const portsConfig =
-    networkMode === "host" ? "" : `    ports:\n      - "${publishPort}"`;
+    networkMode === "host" || isBatch
+      ? ""
+      : `    ports:\n      - "${publishPort}"`;
 
   // Named external Docker networks (memo 018, e.g. MCPHub's `ai_proxy`): a
   // generated container reaches sibling containers by name on a network it did
@@ -2082,6 +2220,75 @@ ${composeEnvVars}`
     ? "Append `deploy/homepage-services.yaml` to your Homepage `services.yaml`\n(and enable the `homepage` Docker provider) to show a health widget for the\nservice."
     : "Homepage integration is disabled (`docker-container.homepage: false`): no\n`homepage.*` labels and no `deploy/homepage-services.yaml` were generated.\nDefine this service in your Homepage `services.yaml` by hand.";
 
+  // ---- Package visibility (friction 4 in spec 022). The runbook's credential
+  // story covered PUSHING only: it said "a public repo yields a public package
+  // (no credentials needed for NAS/Watchtower pulls)", which stops being true
+  // the moment the repo is private. A private package pulled by a host that has
+  // no `docker login` fails at run time with no warning at generation time, so
+  // the section is emitted from the `imageVisibility` value that was already
+  // threaded into this data and never read.
+  //
+  // Empty for `public`, and appended INSIDE an existing line, so the default
+  // runbook stays byte-identical (spec 022 criterion 3).
+  const imageVisibilitySection =
+    imageVisibility === "private"
+      ? `
+
+## Private package: pull credentials for the host
+
+\`imageVisibility\` is \`private\`, so the GHCR package is **not anonymously
+pullable**. Every host that pulls this image — the NAS itself, and anything
+that pulls on its behalf (Watchtower, a scheduler, \`docker compose\`) — needs a
+credential on its Docker daemon:
+
+\`\`\`bash
+echo "$GHCR_READ_TOKEN" | docker login ${registryPrefix} -u <github-user> --password-stdin
+\`\`\`
+
+\`GHCR_READ_TOKEN\` is a **classic** PAT with the \`read:packages\` scope. A
+fine-grained PAT cannot access GHCR. This is the read side only: the CI publish
+credential is a separate \`write:packages\` token and must not be shipped to the
+NAS. If you would rather the host need no credential at all, make the repository
+public — GHCR links the package to it, and the package follows.`
+      : "";
+
+  // ---- Workload-shape artifacts (see resolveDockerWorkload).
+  // `EXPOSE` documents a listening port; a batch image is run with
+  // `docker run --rm`, so it would document a port nobody binds.
+  const dockerExpose = isBatch ? "" : `EXPOSE ${exposePort}`;
+  // Compose's restart policy: `unless-stopped` keeps a service up across
+  // daemon restarts, which is exactly wrong for a job - Docker would re-run a
+  // finished backup. The batch value is the QUOTED string `"no"` because a bare
+  // `no` is YAML boolean false, not the policy name; the quotes live in the
+  // value so the service line stays byte-identical.
+  const restartPolicy = isBatch ? '"no"' : "unless-stopped";
+  // The batch runbook's invocation example, derived from the same
+  // `dataMounts`/`envVars` the compose file uses, so the two cannot disagree
+  // about the mount set. The tag is the commit SHA: a scheduled run pins an
+  // immutable image and is never surprised by a `latest` move.
+  const batchRunArgs = [];
+  for (const mount of dataMounts) {
+    batchRunArgs.push(
+      `  -v ${mount.hostPath}:${mount.containerPath}${mount.readOnly === false ? "" : ":ro"}`,
+    );
+  }
+  for (const entry of envVars) {
+    const eq = entry.indexOf("=");
+    const key = eq === -1 ? entry : entry.slice(0, eq);
+    batchRunArgs.push(eq === -1 ? `  -e ${key}` : `  -e ${entry}`);
+  }
+  const batchRunCommand = `docker run --rm \\\n${batchRunArgs.join(" \\\n")}${batchRunArgs.length ? " \\\n" : ""}  ${registryPrefix}/${registryNamespace}/${projectName}:<commit-sha>`;
+
+  // The batch smoke gate's argument list. `--dry-run` has to REACH the
+  // entrypoint: with a declared ENTRYPOINT, `docker run` arguments are appended
+  // to it, but with only a declared CMD they REPLACE it - so the command is
+  // repeated before the flag. This is the contract the generated entrypoint
+  // must honour: `--dry-run` prints what it would do and exits 0 without doing
+  // it.
+  const batchSmokeCommand = resolveBatchSmokeArgv(context)
+    .map(shellQuote)
+    .join(" ");
+
   return {
     registryPrefix,
     registryNamespace,
@@ -2116,6 +2323,12 @@ ${composeEnvVars}`
     imageVisibility,
     armBuilds,
     buildPlatforms,
+    workload,
+    dockerExpose,
+    restartPolicy,
+    batchRunCommand,
+    batchSmokeCommand,
+    imageVisibilitySection,
   };
 }
 
@@ -2263,6 +2476,19 @@ function getCircleCiTemplateData(context) {
     data.ciInstallCommand =
       '            python3 -m venv .venv\n            echo \'. .venv/bin/activate\' >> "$BASH_ENV"\n            pip install --upgrade pip\n            pip install -e ".[dev]"';
     data.ciBuildStep = "";
+  } else if (language === "shell") {
+    // A shell project has nothing to install or compile. `cimg/base:stable` is
+    // the generic Debian image, so the job runs the same "nothing to build"
+    // note (or ShellCheck, with `code-quality-shell`) that Buildkite does,
+    // instead of the node orb's npm install - which is the exact failure this
+    // language exists to avoid: `npm ci` with no package-lock, red on push one.
+    data.ciOrbs = "";
+    data.buildExecutor = "    docker:\n      - image: cimg/base:stable\n";
+    data.ciCacheRestore = "";
+    data.ciCacheSave = "";
+    data.ciInstallCommand =
+      '            echo "No dependencies to install (shell project)."';
+    data.ciBuildStep = "";
   } else {
     // Node CI: activate the npm pinned in package.json before installing and
     // guard against package.json/package-lock.json drift. Mirrors the FTN
@@ -2298,6 +2524,16 @@ function getCircleCiTemplateData(context) {
             fi
 `;
   }
+
+  // A language with nothing to cache must not emit an empty `restore_cache:` /
+  // `save_cache:` step: CircleCI rejects a cache step with no keys/paths. The
+  // whole step is built here, so the placeholder can disappear.
+  data.ciRestoreCacheBlock = data.ciCacheRestore
+    ? `      - restore_cache:\n${data.ciCacheRestore}`
+    : "";
+  data.ciSaveCacheBlock = data.ciCacheSave
+    ? `      - save_cache:\n${data.ciCacheSave}`
+    : "";
 
   _applySecretScanConfig(data, context);
   _applyGitGuardianConfig(
@@ -3025,6 +3261,7 @@ function getBuildkiteTemplateData(context) {
     python: "python:3.13-slim",
     rust: "rust:1-slim",
     java: "eclipse-temurin:21-jdk",
+    shell: "debian:bookworm-slim",
   };
   const image = images[language];
   // The pinned Playwright image is the one proven on this fleet; Lighthouse
@@ -3103,6 +3340,19 @@ function getBuildkiteTemplateData(context) {
       'echo "genproj generates a Java devcontainer, not a build system."',
       'echo "Add your build/test commands to .buildkite/pipeline.yml (for example: mvn -B -q verify)."',
     ],
+    // A shell project has nothing to build. ShellCheck is opt-in (the
+    // `code-quality-shell` capability), never always-on: an unconditional
+    // `shellcheck -x` fails repos with deliberate `eval`/dynamic sourcing, and
+    // the generator does not gate its own script repos.
+    shell: caps.includes("code-quality-shell")
+      ? [
+          "apt-get update && apt-get install -y --no-install-recommends shellcheck",
+          "shellcheck -x scripts/*.sh",
+        ]
+      : [
+          'echo "Nothing to build: a shell project ships scripts, not a compiled artifact."',
+          'echo "Select code-quality-shell to add a ShellCheck gate."',
+        ],
   };
 
   const steps = [];
@@ -3475,8 +3725,14 @@ ${syncSecrets("preview")}`);
       smokeHealthcheck !== "none" &&
       (smokeHealthcheck !== "" || smokeServesByDefault);
     const smokeDeclaresEntrypoint = smokeDeclaresEntrypointEarly;
+    // A batch job has no health promise to poll, so the service gate does not
+    // apply to it at all - it gets its own "runs and exits 0" gate below.
+    const dockerWorkload = resolveDockerWorkload(context);
+    const isBatchWorkload = dockerWorkload === "batch";
     const emitsSmokeGate =
-      smokeHasHealthcheck && (smokeServesByDefault || smokeDeclaresEntrypoint);
+      !isBatchWorkload &&
+      smokeHasHealthcheck &&
+      (smokeServesByDefault || smokeDeclaresEntrypoint);
     const smokeTimeoutChecks = 30;
     if (emitsSmokeGate)
       steps.push(`
@@ -3520,10 +3776,59 @@ ${buildDependencies}${_bkAgents(queue)}    env:
         exit 1
 `);
 
+    // --- batch smoke gate -------------------------------------------------
+    // "CI green and the image dead" was the failure the service gate was
+    // built for; a batch job's equivalent is "the image builds but the job
+    // does not run to completion". The assertion is therefore `exit 0`, not a
+    // health probe: there is nothing listening to poll.
+    //
+    // `--dry-run` (see resolveBatchSmokeArgv) keeps a pull request from
+    // running the real job - a backup on every push is not a smoke test. The
+    // generated entrypoint must honour it: print the work it would do and exit
+    // 0 without doing it. Runs on EVERY branch, so a broken job fails the PR,
+    // and docker_publish depends on it.
+    const emitsBatchSmokeGate = isBatchWorkload;
+    if (emitsBatchSmokeGate) {
+      const batchSmokeCommand = resolveBatchSmokeArgv(context)
+        .map(shellQuote)
+        .join(" ");
+      steps.push(`
+  - label: ":male-doctor: Smoke test image (runs and exits 0)"
+    key: docker_batch_smoke
+${buildDependencies}${_bkAgents(queue)}    env:
+      SMOKE_IMAGE: ${projectName}-smoke
+    commands:
+      - >-
+        docker build -t "$$SMOKE_IMAGE:$$BUILDKITE_COMMIT" .
+      - |
+        set -euo pipefail
+        CONTAINER="$$SMOKE_IMAGE-$$BUILDKITE_JOB_ID"
+        # Same cancellation-safe cleanup as docker_smoke: a killed shell does
+        # not run its EXIT trap, and these images leaked at ~1 GiB each.
+        trap 'exit 143' TERM INT
+        trap 'docker rm -f "$$CONTAINER" >/dev/null 2>&1 || true; docker rmi "$$SMOKE_IMAGE:$$BUILDKITE_COMMIT" >/dev/null 2>&1 || true' EXIT
+        echo "running the batch job with --dry-run: it must exit 0 without doing the work"
+        if ! docker run --rm --name "$$CONTAINER" "$$SMOKE_IMAGE:$$BUILDKITE_COMMIT" ${batchSmokeCommand}; then
+          echo "batch image did not exit 0 - it builds, but the job does not run:" >&2
+          docker logs "$$CONTAINER" >&2 || true
+          exit 1
+        fi
+        echo "batch image ran to completion and exited 0"
+`);
+    }
+
+    // Nothing to depend on when neither gate applies: an empty depends_on
+    // would be invalid YAML.
+    const smokeGateDependency = emitsSmokeGate
+      ? "      - docker_smoke\n"
+      : emitsBatchSmokeGate
+        ? "      - docker_batch_smoke\n"
+        : "";
+
     steps.push(`
   - label: ":docker: Build and publish image (GHCR)"
     key: docker_publish
-${buildDependencies}${emitsSmokeGate ? "      - docker_smoke\n" : ""}    if: build.branch == "main"
+${buildDependencies}${smokeGateDependency}    if: build.branch == "main"
 ${_bkAgents(queue)}    env:
       IMAGE: ${imageRef}
       CACHE_REF: ${cacheRef}
@@ -4299,7 +4604,11 @@ function getDependabotTemplateData(context) {
   };
 }
 
-export { getGooseMcpConfig, assertNoGooseEnvVarReferences };
+export {
+  getGooseMcpConfig,
+  assertNoGooseEnvVarReferences,
+  DEFAULT_MCPHUB_BASE_URL,
+};
 
 export function getCapabilityTemplateData(capabilityId, context) {
   const dataGenerators = {

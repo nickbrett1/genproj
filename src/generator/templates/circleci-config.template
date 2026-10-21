@@ -5,16 +5,14 @@ orbs:
 {{buildExecutor}}{{jobEnvironment}}
     steps:
       - checkout
-      - restore_cache:
-{{ciCacheRestore}}
+{{ciRestoreCacheBlock}}
 {{ciNpmActivateStep}}
       - run:
           name: Install Packages
           command: |
 {{ciInstallCommand}}
 {{ciDriftCheckStep}}
-      - save_cache:
-{{ciCacheSave}}
+{{ciSaveCacheBlock}}
 {{preBuildSteps}}
 {{ciBuildStep}}
 {{testSteps}}

@@ -69,7 +69,7 @@ describe("capability-template-utils", () => {
       expect(data.mcphubDevGooseConfig).toContain("mcphub-dev");
       expect(data.mcphubDevGooseConfig).toContain("type: streamable_http");
       expect(data.mcphubDevGooseConfig).toContain(
-        "uri: http://nas:8781/mcp/dev",
+        "uri: http://ryzen:8781/mcp/dev",
       );
       // AUTH-OFF end state: no headers / env_keys / envs / doppler wrapper.
       expect(data.mcphubDevGooseConfig).not.toContain("cmd:");
@@ -83,7 +83,18 @@ describe("capability-template-utils", () => {
       // mcphub-dev is the project default toolset — not capability-gated.
       const data = getGooseMcpConfig({ capabilities: ["devcontainer-python"] });
       expect(data.mcphubDevGooseConfig).toContain("mcphub-dev");
-      expect(data.mcphubDevGooseConfig).toContain("http://nas:8781/mcp/dev");
+      expect(data.mcphubDevGooseConfig).toContain("http://ryzen:8781/mcp/dev");
+    });
+
+    it("uses the generation context's MCPHub base URL (MCPHUB_BASE_URL) instead of the fallback", () => {
+      const data = getGooseMcpConfig({
+        capabilities: [],
+        mcpHubBaseUrl: "http://hub.example:9999/",
+      });
+      // The trailing slash is normalised so the group path is never doubled.
+      expect(data.mcphubDevGooseConfig).toContain(
+        "uri: http://hub.example:9999/mcp/dev",
+      );
     });
 
     it("should NOT emit the per-capability circleci stdio block (circleci arrives via dev / circleci-lite)", () => {
