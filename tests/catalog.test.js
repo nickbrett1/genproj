@@ -35,6 +35,7 @@ const EXPECTED_IDS = [
   "devcontainer-python",
   "devcontainer-java",
   "devcontainer-rust",
+  "devcontainer-shell",
   "circleci",
   "buildkite",
   "github-release",
@@ -205,6 +206,7 @@ describe("catalog metadata", () => {
         { type: "sonarcloud.language", value: "java" },
       ],
       "devcontainer-rust": [{ type: "language", value: "rust" }],
+      "devcontainer-shell": [{ type: "language", value: "shell" }],
       // A frontend contribution, so the frontend build/stage logic keys off
       // the contribution type rather than the sveltekit id.
       svelte: [{ type: "frontend", value: "svelte" }],
@@ -245,6 +247,7 @@ describe("catalog metadata", () => {
       "devcontainer-python": "python",
       "devcontainer-java": "java",
       "devcontainer-rust": "rust",
+      "devcontainer-shell": "shell",
     });
   });
 
@@ -337,6 +340,7 @@ describe("the agent capabilities", () => {
       "devcontainer-python",
       "devcontainer-java",
       "devcontainer-rust",
+      "devcontainer-shell",
     ]);
     for (const devcontainer of devcontainers) {
       expect(devcontainer.dependencies).not.toContain("container-agent");

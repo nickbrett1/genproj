@@ -278,6 +278,45 @@ export const capabilityTemplates = {
       isExecutable: true,
     },
   ],
+  "devcontainer-shell": [
+    {
+      id: "devcontainer-json",
+      filePath: ".devcontainer/devcontainer.json",
+      templateId: "devcontainer-shell-json",
+    },
+    {
+      id: "dockerfile",
+      filePath: ".devcontainer/Dockerfile",
+      templateId: "devcontainer-shell-dockerfile",
+    },
+    {
+      id: "zshrc",
+      filePath: ".devcontainer/.zshrc",
+      templateId: "devcontainer-zshrc-full",
+    },
+    {
+      id: "p10k",
+      filePath: ".devcontainer/.p10k.zsh",
+      templateId: "devcontainer-p10k-zsh-full",
+    },
+    {
+      id: "tmux",
+      filePath: ".devcontainer/.tmux.conf",
+      templateId: "devcontainer-tmux-conf",
+    },
+    {
+      id: "setup-sh",
+      filePath: ".devcontainer/post-create-setup.sh",
+      templateId: "devcontainer-post-create-setup-sh",
+      isExecutable: true,
+    },
+    {
+      id: "start-sh",
+      filePath: ".devcontainer/post-start-setup.sh",
+      templateId: "devcontainer-post-start-setup-sh",
+      isExecutable: true,
+    },
+  ],
   circleci: [
     {
       id: "circleci-config",

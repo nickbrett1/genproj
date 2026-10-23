@@ -6,7 +6,7 @@
       "language": {
         "type": "string",
         "enum": ["python", "node", "java", "rust", "shell"],
-        "description": "Primary Language: the one language the project builds, tests and releases. Declared, not inferred. Optional with 0-1 devcontainer-* capabilities (implied); required with 2+, so selection order decides nothing. Devcontainer-* capabilities are toolboxes: non-primary container code is not built, tested or released. `shell` is for a script repo: no devcontainer is implied, CI has nothing to build (ShellCheck only with code-quality-shell), and a docker-container image is single-stage."
+        "description": "Primary Language: the one language the project builds, tests and releases. Declared, not inferred. Optional with 0-1 devcontainer-* capabilities (implied); required with 2+, so selection order decides nothing. Devcontainer-* capabilities are toolboxes: non-primary container code is not built, tested or released. `shell` is for a script repo: no devcontainer-* capability is selected, but `devcontainer-shell` is implied so the repository still opens as a container (spec 023), CI has nothing to build (ShellCheck only with code-quality-shell), and a docker-container image is single-stage."
       }
     }
   },
@@ -630,6 +630,42 @@
         "Instant development environment setup for new contributors",
         "Pre-configured Rust runtime and VS Code extensions",
         "Consistent tooling across the entire engineering team"
+      ],
+      "links": [],
+      "website": "https://code.visualstudio.com/docs/devcontainers/containers"
+    },
+    {
+      "id": "devcontainer-shell",
+      "name": "Shell DevContainer",
+      "description": "Sets up a VS Code DevContainer for a shell (script) repository: zsh, tmux, git and the usual editor tooling, with no language runtime to build. Implied by `language: shell` - a script repo selects no devcontainer capability, but the repository must still open in the container workflow.",
+      "category": "devcontainer",
+      "icon": "terminal",
+      "iconColor": "gray",
+      "selectedByDefault": false,
+      "provides": [
+        {
+          "type": "language",
+          "value": "shell"
+        }
+      ],
+      "dependencies": ["docker"],
+      "conflicts": [],
+      "requiresAuth": [],
+      "authServices": [],
+      "externalServices": [],
+      "configurationSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "vscodeExtensions": [
+        "timonwong.shellcheck",
+        "foxundermoon.shell-format",
+        "mads-hartmann.bash-ide-vscode"
+      ],
+      "benefits": [
+        "Opens a script repository as a container with no manual .devcontainer",
+        "zsh, tmux and the shell tooling the rest of the fleet already uses",
+        "ShellCheck in the editor when the project opts into code-quality-shell"
       ],
       "links": [],
       "website": "https://code.visualstudio.com/docs/devcontainers/containers"

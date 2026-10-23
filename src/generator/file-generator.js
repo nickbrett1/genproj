@@ -20,6 +20,9 @@ const devcontainerPythonJson =
 const devcontainerRustDockerfile =
   templateFiles["devcontainer-rust-dockerfile.template"];
 const devcontainerRustJson = templateFiles["devcontainer-rust-json.template"];
+const devcontainerShellDockerfile =
+  templateFiles["devcontainer-shell-dockerfile.template"];
+const devcontainerShellJson = templateFiles["devcontainer-shell-json.template"];
 const devcontainerZshrcFull = templateFiles["devcontainer-zshrc-full.template"];
 const devcontainerZshrcGooseWt =
   templateFiles["devcontainer-zshrc-goose-wt.template"];
@@ -1027,6 +1030,8 @@ const templateImports = {
   "devcontainer-python-json": devcontainerPythonJson,
   "devcontainer-rust-dockerfile": devcontainerRustDockerfile,
   "devcontainer-rust-json": devcontainerRustJson,
+  "devcontainer-shell-dockerfile": devcontainerShellDockerfile,
+  "devcontainer-shell-json": devcontainerShellJson,
   "devcontainer-zshrc-full": devcontainerZshrcFull,
   "devcontainer-zshrc-goose-wt": devcontainerZshrcGooseWt,
   "devcontainer-zshrc": devcontainerZshrc,
@@ -1649,6 +1654,12 @@ export function generateMergedDevelopmentContainerFiles(
         : "",
       // goose is installed only where it can run (spec 012) — see hasGoose.
       gooseInstall: gooseInstallFragment(context.capabilities),
+      // ShellCheck is a local mirror of the CI gate, and it lands only where
+      // the project opted into it (code-quality-shell) — the same rule the
+      // build step follows, so a repo never has a lint tool it did not ask for.
+      shellcheckInstall: context.capabilities.includes("code-quality-shell")
+        ? " shellcheck"
+        : "",
     },
   );
 
@@ -3737,9 +3748,29 @@ export async function generateAllFiles(context) {
   const templateEngine = new TemplateEngine();
   await templateEngine.initialize();
 
-  const developmentContainerCapabilities = context.capabilities.filter((c) =>
+  const selectedDevelopmentContainers = context.capabilities.filter((c) =>
     c.startsWith("devcontainer-"),
   );
+  // A shell project selects no devcontainer-* capability: there is no toolchain
+  // to opt into, so the checkbox would configure nothing (spec 023). It must
+  // still open in the container workflow - a generated repository the
+  // devcontainer CLI refuses to open is a defect, not a configuration - so
+  // `language: shell` implies the shell base. The copy is local on purpose: the
+  // implicit selection must not change what the project's declared capability
+  // list means anywhere else (CI steps, deploy, the capability graph).
+  const devcontainerContext =
+    selectedDevelopmentContainers.length === 0 &&
+    resolveProjectLanguage(context) === "shell"
+      ? {
+          ...context,
+          capabilities: [...context.capabilities, "devcontainer-shell"],
+        }
+      : context;
+
+  const developmentContainerCapabilities =
+    devcontainerContext.capabilities.filter((c) =>
+      c.startsWith("devcontainer-"),
+    );
   const otherCapabilities = context.capabilities.filter(
     (c) => !c.startsWith("devcontainer-"),
   );
@@ -3769,7 +3800,7 @@ export async function generateAllFiles(context) {
     ),
     ...generateMergedDevelopmentContainerFiles(
       templateEngine,
-      context,
+      devcontainerContext,
       developmentContainerCapabilities,
     ),
     ...cloudLoginFiles,

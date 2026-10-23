@@ -1295,12 +1295,12 @@ export function cargoPackageName(name) {
  */
 export function primaryDevcontainerCapabilityId(context) {
   const primary = `devcontainer-${resolveProjectLanguage(context)}`;
-  // Every language but `shell` has a devcontainer capability, and a
-  // declared-but-absent one is legal (language rust + only devcontainer-python:
-  // rust base image, no python tooling). `shell` has no devcontainer at all -
-  // the deliverable is a script, not a toolchain - so the base falls back to a
-  // selected devcontainer, and a shell project that selects none never gets
-  // here.
+  // Every language has a devcontainer capability, and a declared-but-absent one
+  // is legal (language rust + only devcontainer-python: rust base image, no
+  // python tooling). `shell` has one too, and `language: shell` implies it even
+  // when nothing devcontainer-* is selected - a script repo has no toolchain to
+  // opt into, but it must still open as a container (spec 023) - so the
+  // fallback below covers a selection that names nothing the catalog knows.
   if (getCatalogCapability(primary)) return primary;
   const selected = (context.capabilities || []).find((c) =>
     c.startsWith("devcontainer-"),
