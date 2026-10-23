@@ -59,7 +59,7 @@ configuration choice.
    (and its editor extension).
 5. An explicit `devcontainer-*` selection is not overridden by the implication.
 6. A non-shell language with no devcontainer selected still emits none.
-7. The existing suite stays green (959 tests).
+7. The existing suite stays green (960 tests).
 
 ## Correction for the already-generated repository
 

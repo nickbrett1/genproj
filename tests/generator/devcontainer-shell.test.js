@@ -138,6 +138,17 @@ describe("the shell base", () => {
     );
   });
 
+  it("keeps the devcontainer out of the image build context", async () => {
+    // The devcontainer's Dockerfile, .zshrc and .p10k.zsh are host-side tooling.
+    // Without the exclusion `COPY . .` carries ~125 KB of editor config into
+    // every job image.
+    const { get } = await generate(["docker-container"], {
+      "docker-container": { entrypoint: ["/usr/local/bin/backup.sh"] },
+    });
+
+    expect(get(".dockerignore").content.split("\n")).toContain(".devcontainer");
+  });
+
   it("changes nothing for another language with no devcontainer selected", async () => {
     // `node` still means "no devcontainer unless you ask for one": only shell
     // has no capability to ask for.
