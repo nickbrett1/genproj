@@ -195,6 +195,43 @@ describe("DevContainer Generation Tests", () => {
     );
   });
 
+  it.each(["devcontainer-python", "devcontainer-rust"])(
+    "does not apt-install a second Node alongside the node feature (%s)",
+    async (capability) => {
+      const engine = new TemplateEngine();
+      await engine.initialize();
+
+      const context = {
+        projectName: "mailroom",
+        capabilities: [capability, "devcontainer-node"],
+        configuration: {},
+      };
+
+      const files = generateMergedDevelopmentContainerFiles(engine, context, [
+        capability,
+      ]);
+      const dockerfile = files.find(
+        (f) => f.filePath === ".devcontainer/Dockerfile",
+      );
+      const devcontainerJson = files.find(
+        (f) => f.filePath === ".devcontainer/devcontainer.json",
+      );
+      expect(dockerfile).toBeDefined();
+      expect(devcontainerJson).toBeDefined();
+
+      // The devcontainer installs Node through the devcontainers node feature
+      // (nvm). Installing nodejs/npm from apt *as well* puts Debian's corepack
+      // at /usr/share/nodejs/corepack, which the feature's `corepack enable`
+      // then resolves instead of the nvm-bundled corepack and crashes
+      // (devcontainer-features-install.sh exit 1) -> the image never builds.
+      const features = JSON.parse(devcontainerJson.content).features;
+      expect(features["ghcr.io/devcontainers/features/node:1"]).toBeDefined();
+      expect(dockerfile.content).not.toMatch(
+        /apt-get[^\n]*\bnodejs\b|apt-get[^\n]*\bnpm\b/,
+      );
+    },
+  );
+
   it("should generate valid Node devcontainer.json with node username and remoteUser", async () => {
     const engine = new TemplateEngine();
     await engine.initialize();

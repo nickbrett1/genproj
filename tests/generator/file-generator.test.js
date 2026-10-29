@@ -115,8 +115,14 @@ USER vscode
 `;
 
 const pythonDockerfileTemplateContent = `FROM mcr.microsoft.com/devcontainers/python
+# Node is NOT installed from apt here: devcontainer-python's devcontainer.json
+# already installs it through the devcontainers "node" feature (nvm). A second,
+# apt-provided Node puts Debian's own corepack on the image at
+# /usr/share/nodejs/corepack, and the node feature's \`corepack enable\` then
+# picks that old corepack up instead of the nvm-bundled one and dies
+# (devcontainer-features-install.sh exit 1) - the whole image build fails.
 RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \\
-    && apt-get -y install --no-install-recommends git socat curl gnupg nodejs npm openssh-server mosh micro libevent-dev libncurses-dev pkg-config bison build-essential xclip{{uvInstallation}}{{dopplerInstallation}}{{micropythonInstallation}}
+    && apt-get -y install --no-install-recommends git socat curl gnupg openssh-server mosh micro libevent-dev libncurses-dev pkg-config bison build-essential xclip{{uvInstallation}}{{dopplerInstallation}}{{micropythonInstallation}}
 
 
 # Build a current tmux from source (Debian bookworm's apt tmux is old).
