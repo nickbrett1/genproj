@@ -20,6 +20,8 @@ import {
   GIT_SAFE_DIR_SCRIPT,
   GIT_GITHUB_AUTH_SETUP_SCRIPT,
   AGY_SETUP_SCRIPT,
+  assertNoAptNodeWithNodeFeature,
+  dropRedundantNodeFeature,
   generateGooseSetupScript,
   GOOSE_UPDATE_SCRIPT,
   gooseInstallFragment,
@@ -509,19 +511,30 @@ async function generateDevelopmentContainerArtifacts(
 ) {
   if (developmentContainerCapabilities.length === 0) return;
 
+  const devcontainerJson = createMergedDevelopmentContainerJson(
+    templateEngine,
+    projectConfig,
+    developmentContainerCapabilities,
+    allCapabilities,
+  );
+  const dockerfile = createDevelopmentContainerDockerfile(
+    templateEngine,
+    projectConfig,
+    developmentContainerCapabilities,
+    allCapabilities,
+  );
+  // Same rule as the real generator: the preview must not show a devcontainer
+  // that installs Node twice (apt + the node feature) - it would never build.
+  devcontainerJson.content = dropRedundantNodeFeature(
+    dockerfile.content,
+    devcontainerJson.content,
+  );
+  devcontainerJson.size = devcontainerJson.content.length;
+  assertNoAptNodeWithNodeFeature(dockerfile.content, devcontainerJson.content);
+
   files.push(
-    createMergedDevelopmentContainerJson(
-      templateEngine,
-      projectConfig,
-      developmentContainerCapabilities,
-      allCapabilities,
-    ),
-    createDevelopmentContainerDockerfile(
-      templateEngine,
-      projectConfig,
-      developmentContainerCapabilities,
-      allCapabilities,
-    ),
+    devcontainerJson,
+    dockerfile,
     ...createDevelopmentContainerShellFiles(
       templateEngine,
       projectConfig,

@@ -1,7 +1,10 @@
 import { describe, it, expect } from "vitest";
 import {
+  AGY_SETUP_SCRIPT,
   TemplateEngine,
   WRANGLER_LOGIN_SCRIPT,
+  aptInstalledPackages,
+  assertNoAptNodeWithNodeFeature,
   generateMergedDevelopmentContainerFiles,
 } from "../../src/generator/file-generator.js";
 
@@ -195,7 +198,12 @@ describe("DevContainer Generation Tests", () => {
     );
   });
 
-  it.each(["devcontainer-python", "devcontainer-rust"])(
+  it.each([
+    "devcontainer-python",
+    "devcontainer-rust",
+    "devcontainer-java",
+    "devcontainer-node",
+  ])(
     "does not apt-install a second Node alongside the node feature (%s)",
     async (capability) => {
       const engine = new TemplateEngine();
@@ -231,6 +239,68 @@ describe("DevContainer Generation Tests", () => {
       );
     },
   );
+
+  it("reads apt-installed packages without tripping over comments or flags", () => {
+    const dockerfile = [
+      "FROM mcr.microsoft.com/devcontainers/python",
+      "# Node is NOT installed from apt here: Debian's nodejs is a trap.",
+      "RUN apt-get update \\",
+      "    && apt-get -y install --no-install-recommends git nodejs xclip \\",
+      "    && apt-get install -y doppler",
+    ].join("\n");
+
+    const packages = aptInstalledPackages(dockerfile);
+    expect(packages.has("nodejs")).toBe(true);
+    expect(packages.has("git")).toBe(true);
+    expect(packages.has("doppler")).toBe(true);
+    // Flags and shell noise are not package names.
+    expect(packages.has("--no-install-recommends")).toBe(false);
+    expect(packages.has("&&")).toBe(false);
+  });
+
+  it("refuses to generate a devcontainer that installs Node twice", () => {
+    const dockerfile = [
+      "FROM mcr.microsoft.com/devcontainers/python",
+      "RUN apt-get update && apt-get -y install --no-install-recommends git nodejs npm",
+    ].join("\n");
+    const devcontainerJson = JSON.stringify({
+      features: {
+        "ghcr.io/devcontainers/features/node:1": { version: "lts" },
+      },
+    });
+
+    expect(() =>
+      assertNoAptNodeWithNodeFeature(dockerfile, devcontainerJson),
+    ).toThrow(/installs Node twice/);
+  });
+
+  it("allows apt-installed Node when no node feature is declared", () => {
+    const dockerfile =
+      "RUN apt-get update && apt-get -y install --no-install-recommends nodejs npm";
+    const devcontainerJson = JSON.stringify({
+      features: {
+        "ghcr.io/devcontainers/extra/features/apt-packages:1": {
+          packages: "socat",
+        },
+      },
+    });
+
+    expect(() =>
+      assertNoAptNodeWithNodeFeature(dockerfile, devcontainerJson),
+    ).not.toThrow();
+  });
+
+  it("never apt-installs Node from the post-create agy setup", () => {
+    // This script runs as the container user *after* the node feature has
+    // installed Node. Its old "npm not found" fallback was
+    // `apt-get install -y nodejs npm`, which silently reintroduced Debian's
+    // corepack (the exact conflict that fails the image build) into a
+    // devcontainer that had just been fixed.
+    expect(AGY_SETUP_SCRIPT).not.toMatch(
+      /apt-get[^\n]*\bnodejs\b|apt-get[^\n]*\bnpm\b/,
+    );
+    expect(AGY_SETUP_SCRIPT).toContain("skipping the Specify CLI install");
+  });
 
   it("should generate valid Node devcontainer.json with node username and remoteUser", async () => {
     const engine = new TemplateEngine();

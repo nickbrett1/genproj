@@ -138,6 +138,26 @@ describe("the shell base", () => {
     );
   });
 
+  it("does not stack the node feature on the shell base's apt Node", async () => {
+    // The shell base deliberately carries no language runtime, so Node comes
+    // from Debian's apt packages. A toolbox capability (python/rust/java) asks
+    // for the devcontainers "node" feature, and installing both puts Debian's
+    // corepack underneath the feature's `corepack enable` - EACCES on
+    // /usr/bin/pnpm, and the image never builds. The base's apt Node wins, so
+    // the redundant feature has to leave the merge.
+    const { get } = await generate(["devcontainer-python"]);
+    const json = JSON.parse(get(".devcontainer/devcontainer.json").content);
+
+    expect(get(".devcontainer/Dockerfile").content).toMatch(
+      /apt-get[^\n]*\bnodejs\b/,
+    );
+    expect(
+      Object.keys(json.features).filter((id) =>
+        id.startsWith("ghcr.io/devcontainers/features/node"),
+      ),
+    ).toEqual([]);
+  });
+
   it("keeps the devcontainer out of the image build context", async () => {
     // The devcontainer's Dockerfile, .zshrc and .p10k.zsh are host-side tooling.
     // Without the exclusion `COPY . .` carries ~125 KB of editor config into

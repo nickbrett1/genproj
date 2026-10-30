@@ -589,12 +589,18 @@ echo "INFO: goose configuration complete."
 
 export const AGY_SETUP_SCRIPT = String.raw`
 echo "INFO: Installing Antigravity CLI and Specify CLI..."
+# Node NEVER comes from apt here, even as a last resort. Debian's nodejs ships
+# its own corepack at /usr/share/nodejs/corepack; once that is on PATH, the
+# devcontainers "node" feature's "corepack enable" resolves *that* copy instead
+# of the nvm-bundled one and dies with
+#   EACCES: permission denied, symlink '../share/nodejs/corepack/dist/pnpm.js' -> '/usr/bin/pnpm'
+# which fails the image build. If npm is missing, the devcontainer is simply not
+# getting the Specify CLI - say so and carry on instead of poisoning the image.
 if ! command -v npm &> /dev/null; then
-    echo "npm not found. Installing nodejs and npm..."
-    sudo apt-get update
-    sudo apt-get install -y nodejs npm
+    echo "WARN: npm not found; skipping the Specify CLI install. Add Node through the devcontainer 'node' feature instead of apt - Debian's nodejs ships an old corepack that breaks the node feature install." >&2
+else
+    sudo npm install -g @specifyapp/cli
 fi
-sudo npm install -g @specifyapp/cli
 curl -fsSL https://antigravity.google/cli/install.sh | bash
 echo "INFO: Antigravity CLI and Specify CLI installation complete."
 
@@ -1608,6 +1614,115 @@ function generateAndMergeDevcontainerJson(
   };
 }
 
+// --- Node install conflict guard -------------------------------------------
+//
+// A devcontainer gets Node from exactly one place. When devcontainer.json asks
+// the devcontainers "node" feature for it (nvm) *and* the Dockerfile also
+// apt-installs nodejs/npm, the image dies at build time: the apt package puts
+// Debian's corepack at /usr/share/nodejs/corepack, the feature's `corepack
+// enable` resolves that copy (Node 25+ no longer bundles corepack, so nothing
+// in the nvm bin shadows it) and tries to symlink into /usr/bin, which fails
+// with EACCES and aborts devcontainer-features-install.sh:
+//
+//   EACCES: permission denied, symlink '../share/nodejs/corepack/dist/pnpm.js'
+//     -> '/usr/bin/pnpm'
+//   ERROR: Feature "Node.js (via nvm), yarn and pnpm." failed to install!
+//
+// That is invisible until somebody builds the image, so fail at generation
+// time, where the fix (drop nodejs/npm from the apt line) is obvious.
+const APT_INSTALL_LINE = /apt-get[^#\n]*\binstall\b(.*)$/;
+const APT_NODE_PACKAGES = ["nodejs", "npm", "corepack", "node-corepack"];
+
+// Packages a Dockerfile installs via `apt-get ... install`. Comment lines are
+// skipped, so documentation about why Node is *not* installed cannot trip the
+// guard below.
+export function aptInstalledPackages(dockerfileContent) {
+  const packages = new Set();
+  for (const rawLine of (dockerfileContent || "").split("\n")) {
+    const line = rawLine.trim();
+    if (line.startsWith("#")) continue;
+    const match = line.match(APT_INSTALL_LINE);
+    if (!match) continue;
+    for (const token of match[1].split(/[\s\\]+/)) {
+      if (/^[a-z0-9][a-z0-9+.-]*$/i.test(token)) packages.add(token);
+    }
+  }
+  return packages;
+}
+
+export function assertNoAptNodeWithNodeFeature(
+  dockerfileContent,
+  devcontainerJsonContent,
+) {
+  let features;
+  try {
+    features = JSON.parse(devcontainerJsonContent)?.features ?? {};
+  } catch {
+    // Unparseable JSON is a different failure with a clearer owner: let the
+    // generator's own validation report it rather than raising a Node-conflict
+    // error for a file we could not read.
+    return;
+  }
+  const hasNodeFeature = Object.keys(features).some((id) =>
+    id.startsWith("ghcr.io/devcontainers/features/node"),
+  );
+  if (!hasNodeFeature) return;
+
+  const offenders = [...aptInstalledPackages(dockerfileContent)].filter(
+    (name) => APT_NODE_PACKAGES.includes(name),
+  );
+  if (offenders.length === 0) return;
+
+  throw new Error(
+    "Refusing to generate a devcontainer that installs Node twice: " +
+      'devcontainer.json requests the devcontainers "node" feature (nvm) ' +
+      `while the Dockerfile apt-installs ${offenders.join(", ")}. Debian's ` +
+      "nodejs ships an old corepack at /usr/share/nodejs/corepack which the " +
+      "node feature's `corepack enable` picks up, then fails with " +
+      "EACCES on /usr/bin/pnpm and aborts the image build. Remove " +
+      "nodejs/npm from the Dockerfile's apt-get install list and let the " +
+      "node feature provide Node.",
+  );
+}
+
+// A base that ships Node from apt (the shell base: no language runtime, so it
+// keeps Debian's nodejs) can absorb a toolbox capability that asks for the node
+// feature - devcontainer-python/rust/java all do. The feature would install a
+// *second* Node on top of Debian's corepack and fail the same way, so the apt
+// copy wins (it is the base image's own toolchain) and the redundant feature is
+// dropped from the merge. This is the one case where a to-be-reconciled
+// conflict is repaired instead of rejected.
+export function dropRedundantNodeFeature(
+  dockerfileContent,
+  devcontainerJsonContent,
+) {
+  const aptNode = [...aptInstalledPackages(dockerfileContent)].filter((name) =>
+    APT_NODE_PACKAGES.includes(name),
+  );
+  if (aptNode.length === 0) return devcontainerJsonContent;
+
+  let parsed;
+  try {
+    parsed = JSON.parse(devcontainerJsonContent);
+  } catch {
+    return devcontainerJsonContent;
+  }
+  const features = parsed?.features;
+  if (!features || typeof features !== "object") return devcontainerJsonContent;
+
+  const nodeFeatureIds = Object.keys(features).filter((id) =>
+    id.startsWith("ghcr.io/devcontainers/features/node"),
+  );
+  if (nodeFeatureIds.length === 0) return devcontainerJsonContent;
+
+  parsed.features = Object.fromEntries(
+    Object.entries(features).filter(
+      ([id]) => !id.startsWith("ghcr.io/devcontainers/features/node"),
+    ),
+  );
+  return `${JSON.stringify(parsed, undefined, 2)}\n`;
+}
+
 // Helper to generate and merge devcontainer files
 export function generateMergedDevelopmentContainerFiles(
   templateEngine,
@@ -1663,12 +1778,21 @@ export function generateMergedDevelopmentContainerFiles(
     },
   );
 
+  const devcontainerJson = generateAndMergeDevcontainerJson(
+    templateEngine,
+    context,
+    developmentContainerCapabilities,
+  );
+  // One source of Node per devcontainer, decided from the file that actually
+  // ships: the base Dockerfile's apt Node, or the node feature - never both.
+  devcontainerJson.content = dropRedundantNodeFeature(
+    dockerfileContent,
+    devcontainerJson.content,
+  );
+  assertNoAptNodeWithNodeFeature(dockerfileContent, devcontainerJson.content);
+
   files.push(
-    generateAndMergeDevcontainerJson(
-      templateEngine,
-      context,
-      developmentContainerCapabilities,
-    ),
+    devcontainerJson,
     {
       filePath: ".devcontainer/Dockerfile",
       content: dockerfileContent,
