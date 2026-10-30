@@ -1630,7 +1630,10 @@ function generateAndMergeDevcontainerJson(
 //
 // That is invisible until somebody builds the image, so fail at generation
 // time, where the fix (drop nodejs/npm from the apt line) is obvious.
-const APT_INSTALL_LINE = /apt-get[^#\n]*\binstall\b(.*)$/;
+// Lazy, so the *first* `install` in the command is the split point: a
+// `--no-install-recommends` flag also contains the word "install", and a
+// greedy match would start reading packages from inside that flag.
+const APT_INSTALL_LINE = /apt-get\b[^#\n]*?\binstall\b(.*)$/;
 const APT_NODE_PACKAGES = ["nodejs", "npm", "corepack", "node-corepack"];
 
 // Packages a Dockerfile installs via `apt-get ... install`. Comment lines are

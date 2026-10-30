@@ -256,6 +256,15 @@ describe("DevContainer Generation Tests", () => {
     // Flags and shell noise are not package names.
     expect(packages.has("--no-install-recommends")).toBe(false);
     expect(packages.has("&&")).toBe(false);
+
+    // A package listed *before* the --no-install-recommends flag still counts:
+    // the flag contains the word "install", and a greedy match would start
+    // reading packages from inside it.
+    expect(
+      aptInstalledPackages(
+        "RUN apt-get install nodejs --no-install-recommends",
+      ).has("nodejs"),
+    ).toBe(true);
   });
 
   it("refuses to generate a devcontainer that installs Node twice", () => {
