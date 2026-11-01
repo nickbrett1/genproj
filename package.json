@@ -43,7 +43,7 @@
     "prettier": "^3.9.10",
     "simple-git-hooks": "^2.13.1",
     "vitest": "^5.0.0",
-    "wrangler": "^4.152.0",
+    "wrangler": "^4.155.0",
     "yaml": "^2.9.1"
   },
   "dependencies": {
