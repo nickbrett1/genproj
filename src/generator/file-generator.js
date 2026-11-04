@@ -164,6 +164,7 @@ import {
 import {
   validateAgentPorts,
   validateDockerNetworks,
+  validateDockerUser,
   validateShellLanguage,
   validateFetchLaunch,
   validatePrimaryLanguage,
@@ -3868,6 +3869,7 @@ export async function generateAllFiles(context) {
   validateFetchLaunch(context);
   validateRequiredAny(context);
   validateDockerNetworks(context);
+  validateDockerUser(context);
   validateShellLanguage(context);
   validatePydanticAgent(context);
   validateAgentPorts(context);

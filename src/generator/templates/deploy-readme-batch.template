@@ -67,7 +67,7 @@ echo "$GHCR_READ_TOKEN" | docker login {{registryPrefix}} -u <github-user> --pas
 
 `dataMounts` in the genproj config produces the `-v` flags in the run command
 above and the `volumes:` block in `docker-compose.yml`. Mounts are read-only
-unless the entry sets `"readOnly": false`.
+unless the entry sets `"readOnly": false`.{{runtimeUserDocs}}
 
 ## 7. Environment variables
 

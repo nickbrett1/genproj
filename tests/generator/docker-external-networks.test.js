@@ -259,7 +259,7 @@ describe("docker-container externalNetworks: host-mode interaction", () => {
       },
     });
 
-    expect(data.networkModeLine).toContain("network_mode: host");
+    expect(data.composeServiceLines).toContain("network_mode: host");
     expect(data.composeNetworks).toBe("");
     expect(data.externalNetworksDocs).toBe("");
   });
