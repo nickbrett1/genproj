@@ -448,3 +448,83 @@ export function validateDockerNetworks(context) {
     );
   }
 }
+
+/**
+ * `docker-container.user` must be a numeric `uid:gid` for a non-root uid.
+ *
+ * The key exists for one job: run the container as the uid that owns a mounted
+ * host directory, because a `0700` parent directory gives EACCES to anyone
+ * else. Three shapes are refused rather than emitted:
+ *
+ * - **a bare uid** (`"1000"`): Docker accepts it and leaves the gid at 0, so
+ *   the process silently runs with root's group. That is the footgun the key
+ *   is supposed to remove, not move.
+ * - **uid 0** (`"0"`, `"0:0"`, `"0:1000"`): root is already the default, so
+ *   setting it can only look like it did something. Leave the key unset.
+ * - **a name** (`"nick:nick"`): valid Compose, resolved from the *image's*
+ *   `/etc/passwd` - which the generated base images do not have, so the
+ *   container dies at start with "unable to find user". genproj cannot verify
+ *   a name it did not create, so it does not accept one.
+ *
+ * The emit path (`resolveDockerUser`) independently returns `""` for anything
+ * that fails here, because a preview does not run these validators and a bad
+ * value must never reach a generated file.
+ *
+ * @param {Object} context - Generation context (capabilities, configuration)
+ * @throws {ValidationError} When `user` is set to anything but a non-zero uid:gid
+ */
+export function validateDockerUser(context) {
+  const capabilities = context?.capabilities || [];
+  if (!capabilities.includes("docker-container")) return;
+
+  const config = context?.configuration?.["docker-container"] || {};
+  if (config.user === undefined || config.user === null) return;
+  if (typeof config.user !== "string") {
+    throw new ValidationError(
+      `docker-container.user must be a string of the form "uid:gid" (e.g. ` +
+        `"1000:1000"), not a JSON ${typeof config.user}.`,
+      "user",
+    );
+  }
+
+  const raw = config.user.trim();
+  if (raw === "") return;
+
+  if (/^[0-9]+$/.test(raw)) {
+    throw new ValidationError(
+      `docker-container.user is "${raw}", a bare uid. Docker accepts that and ` +
+        `leaves the group at gid 0 (root), so the container would run with ` +
+        `root's group. Write both halves, e.g. "${raw}:${raw}".`,
+      "user",
+    );
+  }
+
+  if (!/^[0-9]+:[0-9]+$/.test(raw)) {
+    throw new ValidationError(
+      `docker-container.user is "${raw}", which is not a numeric uid:gid. ` +
+        `Use numeric IDs (e.g. "1000:1000"): a user or group *name* is ` +
+        `resolved from the image's /etc/passwd, and the generated base image ` +
+        `has no such user, so the container would fail at start with ` +
+        `"unable to find user".`,
+      "user",
+    );
+  }
+
+  const [uid, gid] = raw.split(":").map(Number);
+  if (uid === 0) {
+    throw new ValidationError(
+      `docker-container.user is "${raw}", which runs the container as root. ` +
+        `Root is already the image default, so this changes nothing: leave ` +
+        `docker-container.user unset. Set it only to run as a specific ` +
+        `non-root uid (e.g. "1000:1000").`,
+      "user",
+    );
+  }
+  if (uid > 4294967294 || gid > 4294967294) {
+    throw new ValidationError(
+      `docker-container.user is "${raw}", which is out of range. Docker ` +
+        `accepts uids and gids up to 4294967294.`,
+      "user",
+    );
+  }
+}

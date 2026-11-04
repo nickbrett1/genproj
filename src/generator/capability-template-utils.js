@@ -901,6 +901,39 @@ export function resolveDockerWorkload(context) {
   return config.workload === "batch" ? "batch" : "service";
 }
 
+// Numeric uid:gid, both halves required (spec 024). Names are rejected on
+// purpose: Docker resolves them from the image's `/etc/passwd`, and every base
+// image genproj emits has none of the project's users, so a name would render
+// a container that dies at start with "unable to find user". A bare uid is
+// rejected too - Docker accepts `user: 1000` and leaves the gid at 0, i.e. the
+// process runs with root's group.
+const DOCKER_USER_PATTERN = /^[0-9]+:[0-9]+$/;
+// Docker rejects anything above 2^32-2 for either half.
+const DOCKER_ID_MAX = 4294967294;
+
+/**
+ * The runtime uid:gid the container runs as, normalized, or `""` for "unset"
+ * (the image default, i.e. root).
+ *
+ * Returns `""` for a value that does not parse as well as for an absent one,
+ * because this function is also the emit path and the preview path does not run
+ * the project validators (the `externalNetworks` precedent): a bad value must
+ * never reach a generated Dockerfile or compose file. `validateDockerUser`
+ * turns the same input into a generation error for the real path.
+ *
+ * @param {Object} context - Generation context (capabilities, configuration)
+ * @returns {string} "uid:gid", or "" when unset/unusable
+ */
+export function resolveDockerUser(context) {
+  const config = context?.configuration?.["docker-container"] || {};
+  const raw = typeof config.user === "string" ? config.user.trim() : "";
+  if (!raw || !DOCKER_USER_PATTERN.test(raw)) return "";
+  const [uid, gid] = raw.split(":").map(Number);
+  if (!Number.isSafeInteger(uid) || !Number.isSafeInteger(gid)) return "";
+  if (uid === 0 || uid > DOCKER_ID_MAX || gid > DOCKER_ID_MAX) return "";
+  return `${uid}:${gid}`;
+}
+
 /**
  * The argument list that makes a batch image prove itself in CI.
  *
@@ -1639,6 +1672,11 @@ function getDockerContainerTemplateData(context) {
   // See specs/022-genproj-batch-job-container-images.
   const workload = resolveDockerWorkload(context);
   const isBatch = workload === "batch";
+  // Runtime identity (spec 024). Deliberately independent of `workload`: a batch
+  // job running as root is often correct, and a long-running service reading
+  // another service's 0700 appdata directory needs this just as much. Empty by
+  // default, so nothing below changes for a project that does not set it.
+  const user = resolveDockerUser(context);
   const watchtower = isBatch
     ? config.watchtower === true
     : config.watchtower !== false;
@@ -2065,12 +2103,46 @@ RUN cargo build --release`;
     // for a project that adds one). The frontend is static assets it serves.
     else dockerCommand = `CMD ["${rustBinName}"]`;
   }
-  const dockerRunCommand = [dockerScriptCopy, dockerEntrypoint, dockerCommand]
+  // `USER` MUST be the LAST instruction of the runtime stage, which is why it
+  // rides in `dockerRunCommand` (the last line of both Dockerfile templates)
+  // rather than sitting where a reader would expect it, next to `aptPackages`.
+  // `dockerRunCommand` carries the `RUN chmod +x /usr/local/bin/<script>` of the
+  // entrypoint copy: with `USER` emitted earlier, that chmod would run as the
+  // new uid against a root-owned file and fail the build with `Operation not
+  // permitted` - and a batch job always declares an entrypoint (the --dry-run
+  // smoke contract), so it would break the motivating shape first. Folding also
+  // keeps the unset case byte-identical: a `{{dockerUser}}` template line of its
+  // own would add a blank line to every existing render (spec 022's rule).
+  //
+  // No `USER` means the image default (root) exactly as before - the string is
+  // empty and `.filter(Boolean)` drops it.
+  const dockerUser = user ? `USER ${user}` : "";
+  const dockerRunCommand = [
+    dockerScriptCopy,
+    dockerEntrypoint,
+    dockerCommand,
+    dockerUser,
+  ]
     .filter(Boolean)
     .join("\n");
 
-  const networkModeLine =
-    networkMode === "host" ? "    network_mode: host" : "";
+  // compose `user:` is the same declaration as the Dockerfile `USER`, and it is
+  // load-bearing for `docker compose up`: an operator who overrides the image
+  // tag keeps the uid. Quoted on purpose (`user: "1000:1000"`) for the same
+  // reason `restart: "no"` is quoted - a bare numeric-looking YAML scalar is an
+  // ambiguity waiting to be "simplified".
+  //
+  // Folded into the placeholder that already exists rather than given a line of
+  // its own: `{{composeServiceLines}}` is the empty-collapsing line (it is what
+  // renders the blank line after `restart:`) and a second placeholder line
+  // would change every existing compose file by one newline.
+  const composeUserLine = user ? `    user: "${user}"` : "";
+  const composeServiceLines = [
+    networkMode === "host" ? "    network_mode: host" : "",
+    composeUserLine,
+  ]
+    .filter(Boolean)
+    .join("\n");
 
   // 3.4: publishPort controls the compose port binding. Default is
   // "<exposePort>:<exposePort>" (all interfaces). Bind to 127.0.0.1 (or a
@@ -2133,6 +2205,43 @@ RUN cargo build --release`;
         "hand is overwritten on regeneration. Declare external networks with " +
         "the `externalNetworks` configuration instead."
       : "";
+
+  // deploy/README.md note for a declared runtime user (spec 024). A suffix
+  // appended INSIDE the existing "Data mounts" paragraph, so an unset `user`
+  // leaves the runbook byte-identical (leading "\n\n", the
+  // `imageVisibilitySection` pattern). It is the operator-facing half of the
+  // feature: the failure a non-root uid hits is an EACCES on a *directory*, and
+  // the error names the mount, not the cause, so the runbook has to say it
+  // before the operator meets it.
+  const [uidPart, gidPart] = user ? user.split(":") : ["", ""];
+  const runtimeUserDocs = user
+    ? `
+
+**Runtime user.** The container runs as uid ${uidPart}, gid ${gidPart}
+(\`USER ${user}\` in the Dockerfile, \`user: "${user}"\` in
+\`docker-compose.yml\`). The uid is baked into the image, so \`docker run\` and
+\`docker compose\` both use it - no \`--user\` flag is needed.
+
+- A bind mount's host path must be **readable** by that uid (its directories
+  traversable), and **writable** when the mount sets \`"readOnly": false\`. The
+  container is not root and cannot \`chown\` the mount, so the ownership has to
+  be right on the host before it starts:
+
+  \`\`\`bash
+  install -d -o ${uidPart} -g ${gidPart} /srv/appdata/out
+  \`\`\`
+
+- If a host path does not exist, Compose creates it **as root**, mode \`0755\`.
+  A read-only mount then works, but the first write by uid ${uidPart} fails with
+  EACCES - create the directory as above first.
+- The image's working directory (\`/app\`) is created by root, so a process that
+  writes next to its own code (a sqlite file, a log) gets EACCES there. Write to
+  the mounted path, or add a writable directory for it in the Dockerfile.
+- The generated base images (e.g. \`python:3.12-slim\`) have no passwd entry for
+  uid ${uidPart}: \`$HOME\` is unset and tools that look the user up (\`git\`,
+  \`ssh\`) may warn. Set \`HOME\` in the container's environment if one of them
+  needs it.`
+    : "";
 
   // 3.3: dataMounts config -> compose volumes (read-only by default).
   const dataMounts = Array.isArray(config.dataMounts) ? config.dataMounts : [];
@@ -2303,10 +2412,13 @@ public — GHCR links the package to it, and the package follows.`
     dockerRuntimeCommands,
     dockerHealthcheck,
     dockerRunCommand,
+    dockerUser,
+    composeUserLine,
+    runtimeUserDocs,
     exposePort: String(exposePort),
     hostPort: String(hostPort),
     networkMode,
-    networkModeLine,
+    composeServiceLines,
     portsConfig,
     composeNetworks,
     externalNetworksDocs,

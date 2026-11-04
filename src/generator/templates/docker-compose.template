@@ -12,7 +12,7 @@ services:
     image: {{registryPrefix}}/{{registryNamespace}}/{{projectName}}:latest
     container_name: {{projectName}}
     restart: {{restartPolicy}}
-{{networkModeLine}}
+{{composeServiceLines}}
 {{portsConfig}}
 {{volumesConfig}}
 {{composeEnvironment}}

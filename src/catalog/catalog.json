@@ -1437,6 +1437,10 @@
             "enum": ["python", "node", "java", "rust", "shell"],
             "description": "Project language override. Normally derived from the selected devcontainer-* capability; set this only to override it. `shell` produces a single-stage image and requires a declared entrypoint or command (there is no binary to guess)."
           },
+          "user": {
+            "type": "string",
+            "description": "uid:gid the container runs as, e.g. \"1000:1000\". Emitted as compose `user:` AND as `USER` in the Dockerfile runtime stage, so `docker run` and the deployed stack run as the same uid. Empty by default (the image default, i.e. root). Set this when a mounted host directory is not world-traversable: a 0700 appdata directory owned by another uid gives EACCES on the directory even when the files inside are world-readable. Numeric uid:gid only (a name cannot be verified against the generated base image); a uid of 0 and a bare uid are rejected."
+          },
           "watchtower": {
             "type": "boolean",
             "default": true
