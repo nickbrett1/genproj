@@ -104,6 +104,27 @@ describe("docker-container watchtowerScope: resolution", () => {
     );
   });
 
+  it("treats a non-string value as 'no scope label', not as a literal", () => {
+    // The emit path is what a preview uses, and a preview runs no validators -
+    // so this branch must not fall through to `String(raw)`, which would
+    // silently emit `scope=42` into the compose labels.
+    expect(resolveWatchtowerScope({ watchtowerScope: 42 })).toBe("");
+    expect(resolveWatchtowerScope({ watchtowerScope: true })).toBe("");
+    expect(resolveWatchtowerScope({ watchtowerScope: {} })).toBe("");
+    expect(resolveWatchtowerScope({ watchtowerScope: [] })).toBe("");
+    expect(resolveWatchtowerScope({ watchtowerScope: 0 })).toBe("");
+  });
+
+  it("distinguishes ABSENT (null/undefined) from a non-string value", () => {
+    // The subtlest branch in the resolver: absent means "use the default
+    // instance", so it resolves to "nick"; a present-but-wrong-type value is
+    // an explicit "no scope", so it resolves to "". Collapsing these two would
+    // either drop the default scope or silently scope to the wrong instance.
+    expect(resolveWatchtowerScope({ watchtowerScope: null })).toBe("nick");
+    expect(resolveWatchtowerScope({ watchtowerScope: undefined })).toBe("nick");
+    expect(resolveWatchtowerScope({})).toBe("nick");
+  });
+
   it("treats empty, whitespace and unsafe values as 'no scope label'", () => {
     // The emit path must never let a bad value reach a file: a preview does
     // not run the project validators.
