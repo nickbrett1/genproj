@@ -1445,6 +1445,11 @@
             "type": "boolean",
             "default": true
           },
+          "watchtowerScope": {
+            "type": "string",
+            "default": "nick",
+            "description": "Watchtower scope, emitted as the com.centurylinklabs.watchtower.scope=<value> label next to the enable label. The label is ONLY honoured by a Watchtower instance whose own WATCHTOWER_SCOPE matches: an unscoped instance ignores a scoped container entirely, so a scope value that no running instance serves means the container is NEVER updated - and nothing logs an error, because the unscoped instance silently filters it out. Defaults to \"nick\", the scope of this host's watchtower-nick instance (WATCHTOWER_SCOPE=nick, 60s poll), so a generated project updates in the poll interval instead of the nightly unscoped sweep. Set it to \"\" to omit the scope label and fall back to any unscoped Watchtower instance. Only a single token ([A-Za-z0-9][A-Za-z0-9_.-]*) is accepted; it must match the WATCHTOWER_SCOPE of an instance that actually runs on the host."
+          },
           "homepage": {
             "type": "boolean",
             "default": true,

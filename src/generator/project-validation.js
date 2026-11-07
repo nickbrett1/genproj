@@ -528,3 +528,81 @@ export function validateDockerUser(context) {
     );
   }
 }
+
+/**
+ * `docker-container.watchtowerScope` must be a single label-safe token.
+ *
+ * The value is emitted as `com.centurylinklabs.watchtower.scope=<value>` inside
+ * a quoted YAML scalar, so it has to survive both the label grammar and YAML:
+ *
+ * - **whitespace** (including newlines and tabs) would break the quoted scalar
+ *   and the label value;
+ * - **`:`** would split the label's `key=value` pair, so the scope would never
+ *   match an instance's `WATCHTOWER_SCOPE`;
+ * - **`#`** starts a YAML comment, silently truncating the value (or the label);
+ * - anything else outside `[A-Za-z0-9_.-]` (quotes included) is not a token any
+ *   Watchtower instance will be running with.
+ *
+ * An **empty string is valid**: it is the documented opt-out (emit no scope
+ * label and let an unscoped instance manage the container), so it must not be
+ * rejected. An ABSENT key is also valid - it resolves to the default scope in
+ * the emit path.
+ *
+ * The emit path (`resolveWatchtowerScope`) independently returns `""` for a bad
+ * value, because a preview does not run these validators and a corrupt label
+ * must never reach a generated file.
+ *
+ * @param {Object} context - Generation context (capabilities, configuration)
+ * @throws {ValidationError} When `watchtowerScope` is not a label-safe token
+ */
+export function validateDockerWatchtowerScope(context) {
+  const capabilities = context?.capabilities || [];
+  if (!capabilities.includes("docker-container")) return;
+
+  const config = context?.configuration?.["docker-container"] || {};
+  const value = config.watchtowerScope;
+  if (value === undefined || value === null) return;
+  if (typeof value !== "string") {
+    throw new ValidationError(
+      `docker-container.watchtowerScope must be a string (e.g. "nick"), not ` +
+        `a JSON ${typeof value}. Set it to "" to emit no scope label.`,
+      "watchtowerScope",
+    );
+  }
+
+  // `""` is the documented escape hatch: no label, an unscoped instance picks
+  // the container up. Rejecting it would remove the only opt-out.
+  if (value === "") return;
+
+  if (/\s/.test(value)) {
+    throw new ValidationError(
+      `docker-container.watchtowerScope is "${value}", which contains ` +
+        `whitespace. A scope is a single token: it becomes the label value ` +
+        `com.centurylinklabs.watchtower.scope=<value>, and whitespace breaks ` +
+        `the quoted YAML scalar. Remove the whitespace (e.g. "nick"), or set ` +
+        `it to "" to emit no scope label.`,
+      "watchtowerScope",
+    );
+  }
+
+  if (value.includes(":")) {
+    throw new ValidationError(
+      `docker-container.watchtowerScope is "${value}", which contains ':'. ` +
+        `A label is a key=value pair, so a colon in the value means the scope ` +
+        `never matches a Watchtower instance's WATCHTOWER_SCOPE. Use a single ` +
+        `token such as "nick", or set it to "" to emit no scope label.`,
+      "watchtowerScope",
+    );
+  }
+
+  if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(value)) {
+    throw new ValidationError(
+      `docker-container.watchtowerScope is "${value}", which is not a valid ` +
+        `Watchtower scope. Use letters, digits, "_", "." and "-", starting ` +
+        `with a letter or digit (e.g. "nick"); quotes, '#', '=' and similar ` +
+        `characters would corrupt the label or its YAML. Set it to "" to emit ` +
+        `no scope label.`,
+      "watchtowerScope",
+    );
+  }
+}

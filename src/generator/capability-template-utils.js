@@ -934,6 +934,49 @@ export function resolveDockerUser(context) {
   return `${uid}:${gid}`;
 }
 
+// A Watchtower scope is a single token: it travels inside a compose label
+// value, and a colon would split the `key=value` pair, a `#` would start a YAML
+// comment, and whitespace/newlines would break the quoted scalar. Refusing
+// anything else here is deliberate - the value names a Watchtower instance's
+// own WATCHTOWER_SCOPE, so an exotic value is far more likely to be a typo than
+// a scope someone is actually running.
+const DOCKER_WATCHTOWER_SCOPE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
+
+// The scope this host's Watchtower instances are organised around: the
+// `watchtower-nick` service runs `WATCHTOWER_SCOPE=nick` with a 60s poll, next
+// to an unscoped `watchtower` on the nightly `SCHEDULE`. A project with no
+// scope label is picked up by the nightly instance, which looks broken to its
+// author; `nick` routes a new project to the fast one. Anyone deploying
+// elsewhere must set their own scope (or "" to opt out).
+export const DEFAULT_WATCHTOWER_SCOPE = "nick";
+
+/**
+ * The Watchtower scope label value for a docker-container config, or `""` for
+ * "emit no scope label".
+ *
+ * Defaults to `DEFAULT_WATCHTOWER_SCOPE` when the key is ABSENT (not when it is
+ * explicitly empty): `watchtowerScope: ""` is the documented opt-out, and it
+ * must stay distinct from "not configured". The catalog's `default` cannot do
+ * this job - compose rendering passes the raw configuration, so catalog
+ * defaults never reach it (`file-generator.js` `collectSingleTemplateFile`).
+ *
+ * Returns `""` for anything that is not a safe single token, because this is
+ * also the emit path and a preview does not run the project validators (the
+ * `externalNetworks`/`resolveDockerUser` precedent): a bad value must never
+ * reach a generated file. `validateDockerWatchtowerScope` turns the same input
+ * into a generation error for the real path.
+ *
+ * @param {Object} config - The `docker-container` configuration block
+ * @returns {string} A single-token scope, or "" for none
+ */
+export function resolveWatchtowerScope(config) {
+  const raw = config?.watchtowerScope;
+  if (raw === undefined || raw === null) return DEFAULT_WATCHTOWER_SCOPE;
+  if (typeof raw !== "string") return "";
+  const trimmed = raw.trim();
+  return DOCKER_WATCHTOWER_SCOPE_PATTERN.test(trimmed) ? trimmed : "";
+}
+
 /**
  * The argument list that makes a batch image prove itself in CI.
  *
@@ -1680,6 +1723,12 @@ function getDockerContainerTemplateData(context) {
   const watchtower = isBatch
     ? config.watchtower === true
     : config.watchtower !== false;
+  // The scope label is emitted ONLY where the enable label is (spec 025): a
+  // scoped container is ignored by an unscoped Watchtower, so a scope label on
+  // a container that opted out of Watchtower would be noise at best. Derived
+  // from `watchtower`, not from `workload`, so an explicit `watchtower: true`
+  // on a batch job gets both labels.
+  const watchtowerScope = watchtower ? resolveWatchtowerScope(config) : "";
   const homepage = isBatch
     ? config.homepage === true
     : config.homepage !== false;
@@ -2292,8 +2341,14 @@ ${composeEnvVars}`
 
   const labels = [];
   if (watchtower || homepage) labels.push("    labels:");
-  if (watchtower)
+  if (watchtower) {
     labels.push('      - "com.centurylinklabs.watchtower.enable=true"');
+    if (watchtowerScope) {
+      labels.push(
+        `      - "com.centurylinklabs.watchtower.scope=${watchtowerScope}"`,
+      );
+    }
+  }
   if (homepage) {
     labels.push(
       '      - "homepage.group=Services"',
@@ -2360,6 +2415,36 @@ credential is a separate \`write:packages\` token and must not be shipped to the
 NAS. If you would rather the host need no credential at all, make the repository
 public — GHCR links the package to it, and the package follows.`
       : "";
+
+  // ---- Watchtower scope (spec 025). Appended INSIDE the section-3 intro line
+  // and the header comment, so `watchtowerScope: ""` keeps the runbook
+  // byte-identical to the pre-scope render (the `imageVisibilitySection`
+  // pattern). Default-on means the DEFAULT runbook does change: a scope that
+  // silently routes the project to the nightly sweep instead of the fast poll
+  // would make a correct project look broken.
+  const watchtowerScopeHeader = watchtowerScope
+    ? `, watchtower scope=${watchtowerScope}`
+    : "";
+  const watchtowerScopeBullet = watchtowerScope
+    ? ` and the \`com.centurylinklabs.watchtower.scope=${watchtowerScope}\` label`
+    : "";
+  const watchtowerScopeSection = watchtowerScope
+    ? `
+
+This project is **scoped** to \`${watchtowerScope}\`: \`docker-compose.yml\`
+carries \`com.centurylinklabs.watchtower.scope=${watchtowerScope}\` alongside
+\`com.centurylinklabs.watchtower.enable=true\`. Only the Watchtower instance
+running with \`WATCHTOWER_SCOPE=${watchtowerScope}\` manages it, and that
+instance **polls**, so an update lands within its poll interval — not in a
+nightly sweep.
+
+> **Trap:** if no Watchtower instance on this host runs with
+> \`WATCHTOWER_SCOPE=${watchtowerScope}\`, this container is **never** updated
+> and nothing logs an error: an unscoped instance filters a scoped container
+> out. Start a scoped instance (e.g. \`watchtower-nick\`), set
+> \`docker-container.watchtowerScope\` to a scope that is actually running, or
+> set it to \`""\` to omit the label and fall back to the unscoped instance.`
+    : "";
 
   // ---- Workload-shape artifacts (see resolveDockerWorkload).
   // `EXPOSE` documents a listening port; a batch image is run with
@@ -2431,6 +2516,10 @@ public — GHCR links the package to it, and the package follows.`
     homepageDashboard,
     hostname,
     watchtower: String(watchtower),
+    watchtowerScope,
+    watchtowerScopeHeader,
+    watchtowerScopeBullet,
+    watchtowerScopeSection,
     homepage: String(homepage),
     imageVisibility,
     armBuilds,

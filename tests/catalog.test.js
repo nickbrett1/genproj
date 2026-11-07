@@ -172,6 +172,21 @@ describe("catalog metadata", () => {
     });
   });
 
+  it("declares the Watchtower scope a docker-container is routed to", () => {
+    // Spec 025: a scope label is only honoured by the Watchtower instance whose
+    // WATCHTOWER_SCOPE matches, so the descriptor must carry the default and
+    // the description that spells out the "never updated" trap.
+    const dockerContainer = getCapabilityById("docker-container");
+    const watchtowerScope =
+      dockerContainer.configurationSchema.properties.watchtowerScope;
+    expect(watchtowerScope).toMatchObject({
+      type: "string",
+      default: "nick",
+    });
+    expect(watchtowerScope.description).toMatch(/WATCHTOWER_SCOPE/);
+    expect(watchtowerScope.description).toMatch(/never/i);
+  });
+
   it("requires doppler, so the release token never comes from the fleet env", () => {
     // The release step resolves GITHUB_RELEASE_TOKEN through Doppler. Without
     // the capability it would fall back to a GH_TOKEN in the agent's
