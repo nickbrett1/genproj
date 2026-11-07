@@ -115,8 +115,9 @@ An empty string is **not** rejected: it is the documented opt-out.
 
 Section 3 ("Auto-updates with Watchtower (poll model)") of
 `deploy-readme.template` now names **both** labels and states that the project
-is scoped to `{{watchtowerScope}}`, that the matching instance polls (so updates
-land within the poll interval, not the nightly sweep), and the trap plainly: if
+is scoped to `{{watchtowerScope}}`, that the matching instance polls every 60
+seconds (so an update lands within about a minute, not in the nightly sweep),
+and the trap plainly: if
 no instance on the host runs with `WATCHTOWER_SCOPE=<scope>`, the container is
 never updated and nothing logs an error because the unscoped instance filters it
 out. The header comment gains `watchtower scope=<scope>`.

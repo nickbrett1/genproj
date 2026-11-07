@@ -2435,8 +2435,8 @@ This project is **scoped** to \`${watchtowerScope}\`: \`docker-compose.yml\`
 carries \`com.centurylinklabs.watchtower.scope=${watchtowerScope}\` alongside
 \`com.centurylinklabs.watchtower.enable=true\`. Only the Watchtower instance
 running with \`WATCHTOWER_SCOPE=${watchtowerScope}\` manages it, and that
-instance **polls**, so an update lands within its poll interval — not in a
-nightly sweep.
+instance **polls every 60 seconds**, so an update lands within about a minute —
+not in a nightly sweep.
 
 > **Trap:** if no Watchtower instance on this host runs with
 > \`WATCHTOWER_SCOPE=${watchtowerScope}\`, this container is **never** updated
