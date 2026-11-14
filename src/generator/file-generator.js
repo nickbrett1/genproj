@@ -3906,11 +3906,11 @@ export const NB_REGISTRY_PLACEHOLDER_URL = "https://registry.invalid";
  * a new version - pin the one whose shape the CLI supports. Kept in lockstep
  * with the catalog's `themeVersion` default by a test, not by memory.
  */
-export const NB_THEME_DEFAULT_VERSION = "1.10.1";
+export const NB_THEME_DEFAULT_VERSION = "1.11.0";
 
 /**
  * The eleven blocks the registry publishes at the same version as the theme
- * (`ui-registry` v1.10.1). Whitelisted rather than free text: a typo in a block
+ * (`ui-registry` v1.11.0). Whitelisted rather than free text: a typo in a block
  * name must not become a silent no-op in a generated project's instructions,
  * and the list is what the catalogue's multi-select offers.
  *

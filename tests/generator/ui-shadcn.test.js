@@ -136,10 +136,12 @@ describe("ui-shadcn: components.json", () => {
     //
     // The patch matters as much as the minor: a version index is a *snapshot*
     // of the whole catalogue (ui-registry's lesson), so 1.10.0 and 1.10.1 were
-    // only usable once every item was published into them. 1.10.1 also carries
-    // app-shell's sticky-inset fix, which is why it is the floor rather than
-    // 1.10.0.
-    expect(catalogDefault).toBe("1.10.1");
+    // only usable once every item was published into them - 1.11.0 included,
+    // which shipped as an app-shell-only index and would have answered
+    // "Registry item 'theme' does not exist" until the release filled it.
+    // 1.10.1 carries app-shell's sticky-inset fix, so it is the floor; 1.11.0
+    // adds `embedded`, which is what makes the blocks safe to use in a card.
+    expect(catalogDefault).toBe("1.11.0");
   });
 
   it("resolves the base from Doppler when no registry URL is given", async () => {
@@ -304,10 +306,10 @@ describe("ui-shadcn: blocks are opt-in and pinned like the theme", () => {
     // The same base as the theme: the version segment is the pin, and blocks
     // are published at that version rather than floating on latest.
     expect(rules).toContain(
-      `COMPONENTS_REGISTRY_URL=${BASE_URL}/v1.10.1 npx shadcn-svelte@1.8.1 add app-shell --yes --overwrite`,
+      `COMPONENTS_REGISTRY_URL=${BASE_URL}/v1.11.0 npx shadcn-svelte@1.8.1 add app-shell --yes --overwrite`,
     );
     expect(rules).toContain(
-      `COMPONENTS_REGISTRY_URL=${BASE_URL}/v1.10.1 npx shadcn-svelte@1.8.1 add result-list --yes --overwrite`,
+      `COMPONENTS_REGISTRY_URL=${BASE_URL}/v1.11.0 npx shadcn-svelte@1.8.1 add result-list --yes --overwrite`,
     );
     // --yes is not a substitute for --overwrite: without it the CLI exits 0
     // having written nothing.
@@ -400,12 +402,12 @@ describe("ui-shadcn: browsing the catalogue is part of selecting from it", () =>
     // carries the `title`/`description` that make it a catalogue rather than a
     // list of file names.
     expect(rules).toContain("## Finding a block");
-    expect(rules).toContain(`curl -s ${BASE_URL}/v1.10.1/index.json`);
+    expect(rules).toContain(`curl -s ${BASE_URL}/v1.11.0/index.json`);
     expect(rules).toContain('item["name"]');
     // Select: the same command as a requested block, with the name to be
     // chosen from the index.
     expect(rules).toContain(
-      `COMPONENTS_REGISTRY_URL=${BASE_URL}/v1.10.1 npx shadcn-svelte@1.8.1 add <name> --yes --overwrite`,
+      `COMPONENTS_REGISTRY_URL=${BASE_URL}/v1.11.0 npx shadcn-svelte@1.8.1 add <name> --yes --overwrite`,
     );
     // And the honest instruction for a genuine gap, because "install the
     // nearest block" is how a design system becomes a tax.
