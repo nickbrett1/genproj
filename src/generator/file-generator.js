@@ -3951,7 +3951,13 @@ export function buildUiShadcnFiles(context) {
   // specs/026 and the registry's README.
   const componentsJson = {
     $schema: "https://shadcn-svelte.com/schema.json",
-    style: "new-york",
+    // A style this CLI actually knows. `new-york` is shadcn/ui (React)
+    // vocabulary: shadcn-svelte warns "Unsupported style ... Using nova
+    // instead" and silently substitutes, so the file said one thing and the
+    // install did another. `vega` is the style the registry's contract test
+    // exercises. The theme item itself is style-independent - it is `cssVars`
+    // + `css` - so this value affects the primitives, not the tokens.
+    style: "vega",
     tailwind: { css: "src/app.css", baseColor: "slate" },
     aliases: {
       components: "$lib/components",
@@ -3978,6 +3984,44 @@ export function buildUiShadcnFiles(context) {
   // second stylesheet, a comment telling a human to wire one up - would be a
   // lie about where the theme lives.
   const appCss = `@import "tailwindcss";\n`;
+
+  // Nothing in a generated SvelteKit app imports a stylesheet on its own, and
+  // SvelteKit does not: `src/app.css` was emitted and referenced by nothing, so
+  // the tokens (and Tailwind) were installed and invisible. Found by building a
+  // generated project and reading computed styles - the CSS was all there, the
+  // page was unstyled.
+  const layoutSvelte = `<script>
+	import "../app.css";
+	let { children } = $props();
+</script>
+
+{@render children()}
+`;
+
+  // `components.json` declares \`typescript: true\`, and the CLI refuses outright
+  // without a tsconfig: "Failed to find a tsconfig.json file". The SvelteKit
+  // scaffold is JavaScript, so this file has to be self-contained (no `extends
+  // ./.svelte-kit/tsconfig.json`, which does not exist until kit has run) and
+  // must carry the `$lib` alias, which is what the CLI resolves to knowing
+  // where to write a component.
+  const tsconfigJson = {
+    compilerOptions: {
+      target: "ES2022",
+      module: "ESNext",
+      moduleResolution: "bundler",
+      resolveJsonModule: true,
+      allowJs: true,
+      checkJs: true,
+      strict: true,
+      skipLibCheck: true,
+      esModuleInterop: true,
+      forceConsistentCasingInFileNames: true,
+      sourceMap: true,
+      baseUrl: ".",
+      paths: { $lib: ["./src/lib"], "$lib/*": ["./src/lib/*"] },
+    },
+    include: ["src/**/*.d.ts", "src/**/*.ts", "src/**/*.js", "src/**/*.svelte"],
+  };
 
   const utilsTs = `import { type ClassValue, clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
@@ -4012,6 +4056,9 @@ This project uses the house design system through the \`@nb\` shadcn registry.
 
   A token sheet pasted into the project is the drift this capability exists to
   stop.
+- **\`src/routes/+layout.svelte\` imports \`src/app.css\`.** SvelteKit imports no
+  stylesheet by itself: remove that line and the app loses every token and all
+  of Tailwind at once, silently, while still building.
 - **\`--overwrite\` is required, and \`--yes\` is not a substitute.** \`add\` asks a
   second question - "Updates to your src/app.css are required. Existing CSS
   variables may be overwritten. Continue?" - that \`--yes\` does not answer. Run
@@ -4043,6 +4090,11 @@ ${
       content: `${JSON.stringify(componentsJson, null, 2)}\n`,
     },
     { filePath: `${prefix}src/app.css`, content: appCss },
+    { filePath: `${prefix}src/routes/+layout.svelte`, content: layoutSvelte },
+    {
+      filePath: `${prefix}tsconfig.json`,
+      content: `${JSON.stringify(tsconfigJson, null, 2)}\n`,
+    },
     { filePath: `${prefix}src/lib/utils.ts`, content: utilsTs },
     { filePath: ".agents/.rules/styling_guidelines.md", content: stylingRules },
   ];

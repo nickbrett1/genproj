@@ -47,6 +47,8 @@ directory (`web/`) when the primary language is not node:
 | `package.json`                         | `+ tailwindcss`, `@tailwindcss/vite`, `clsx`, `tailwind-merge`, `tailwind-variants`, `shadcn-svelte` |
 | `vite.config.js`                       | `+ tailwindcss()` — Tailwind v4 is a Vite plugin, not a PostCSS config                               |
 | `src/app.css`                          | `@import "tailwindcss";` and nothing else                                                            |
+| `src/routes/+layout.svelte`            | imports `../app.css` — SvelteKit imports no stylesheet by itself                                     |
+| `tsconfig.json`                        | self-contained, with the `$lib` alias the CLI resolves to place a component                          |
 | `components.json`                      | `style`, `tailwind.css`, `aliases`, `typescript` — and **no `registries` block**                     |
 | `src/lib/utils.ts`                     | `cn()` over `clsx` + `tailwind-merge`                                                                |
 | `.agents/.rules/styling_guidelines.md` | the agent-facing rules (semantic tokens only, compose, pin)                                          |
@@ -56,6 +58,23 @@ has no install path: its payload is `cssVars` and `css`, which the CLI merges
 into the consumer's own stylesheet. `src/app.css` is therefore the bare
 Tailwind v4 entry — exactly the state `shadcn add @nb/theme` expects to merge
 into.
+
+Three more corrections came from the same exercise — generating a project,
+installing the theme into it and building it:
+
+- **Nothing imported `src/app.css`.** SvelteKit imports no stylesheet by itself,
+  so the theme installed perfectly into a file nothing loaded: the build passed
+  and the page was unstyled. The capability now emits
+  `src/routes/+layout.svelte` with `import "../app.css";`.
+- **There was no `tsconfig.json`** while `components.json` said
+  `typescript: true`, and the CLI refuses outright: "Failed to find a
+  tsconfig.json file". The file is emitted self-contained (not `extends
+./.svelte-kit/tsconfig.json`, which does not exist until kit has run) and
+  carries the `$lib` path alias, which is what the CLI resolves.
+- **`style: "new-york"` is unsupported.** That is React-CLI vocabulary; the
+  Svelte CLI warns "Unsupported style ... Using nova instead" and substitutes,
+  so the file claimed a style the install did not use. It now emits `vega`, the
+  style the registry's contract test exercises.
 
 **`components.json` carries no registry block, and that is the correction this
 spec needed.** Earlier revisions specified

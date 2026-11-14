@@ -52,6 +52,8 @@ describe("ui-shadcn: absent unless selected", () => {
 
     expect(find("components.json")).toBeUndefined();
     expect(find("src/app.css")).toBeUndefined();
+    expect(find("tsconfig.json")).toBeUndefined();
+    expect(find("src/routes/+layout.svelte")).toBeUndefined();
     expect(find("src/nb-theme.css")).toBeUndefined();
     expect(find("src/lib/utils.ts")).toBeUndefined();
 
@@ -79,6 +81,10 @@ describe("ui-shadcn: components.json", () => {
     expect(components.typescript).toBe(true);
     expect(components.tailwind.css).toBe("src/app.css");
     expect(components.aliases.components).toBe("$lib/components");
+    // `new-york` is React-CLI vocabulary: the Svelte CLI prints "Unsupported
+    // style ... Using nova instead" and substitutes, so the file claimed one
+    // style and the install used another.
+    expect(components.style).toBe("vega");
   });
 
   it("spells out the contract-tested install command when a URL is configured", async () => {
@@ -171,6 +177,45 @@ describe("ui-shadcn: the theme is merged, not copied", () => {
     expect(files.some((f) => f.filePath.includes("nb-theme"))).toBe(false);
     // And no emitted file may smuggle a token literal into the project.
     expect(files.map((f) => f.content).join("\n")).not.toContain("#0f172a");
+  });
+
+  it("emits the tsconfig the CLI requires, with the $lib alias it resolves", async () => {
+    const { find } = await render([...BASE, "ui-shadcn"]);
+
+    const tsconfig = JSON.parse(find("tsconfig.json"));
+    // Without this file `add theme` dies with "Failed to find a tsconfig.json
+    // file" - `components.json` says typescript: true, and the SvelteKit
+    // scaffold genproj emits is JavaScript.
+    expect(tsconfig.compilerOptions.paths["$lib"]).toEqual(["./src/lib"]);
+    expect(tsconfig.compilerOptions.paths["$lib/*"]).toEqual(["./src/lib/*"]);
+    // Self-contained on purpose: `extends ./.svelte-kit/tsconfig.json` does not
+    // exist until kit has run, and the CLI reads this before any build.
+    expect(find("tsconfig.json")).not.toContain(".svelte-kit/tsconfig.json");
+    expect(tsconfig.compilerOptions.allowJs).toBe(true);
+  });
+
+  it("imports the stylesheet from a layout, because SvelteKit imports none", async () => {
+    const { find } = await render([...BASE, "ui-shadcn"]);
+
+    const layout = find("src/routes/+layout.svelte");
+    // Emitted and unreferenced `src/app.css` was the bug: the tokens installed
+    // correctly and the built page was unstyled, because nothing imported it.
+    expect(layout).toContain('import "../app.css";');
+    expect(layout).toContain("{@render children()}");
+  });
+
+  it("relocates the layout and tsconfig with a non-node frontend", async () => {
+    const { find } = await render(
+      ["devcontainer-rust", "sveltekit", "ui-shadcn"],
+      {},
+      "rust-demo",
+    );
+
+    expect(find("web/tsconfig.json")).toBeDefined();
+    expect(find("web/src/routes/+layout.svelte")).toContain(
+      'import "../app.css";',
+    );
+    expect(find("tsconfig.json")).toBeUndefined();
   });
 
   it("ships the cn() helper the primitives import", async () => {
