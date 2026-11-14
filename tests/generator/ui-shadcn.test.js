@@ -127,11 +127,13 @@ describe("ui-shadcn: components.json", () => {
     expect(rules).toContain(`/v${catalogDefault} npx shadcn-svelte@`);
 
     // 1.2.0 is the first version published as `cssVars` + `css` with no
-    // `files[]`: what `shadcn-svelte@1.8.1` merges into src/app.css. 1.1.0
-    // carried `target: src/nb-theme.css`, which the CLI resolved against the
-    // basename of app.css used as a directory and wrote into a folder named
-    // `app.css`; 1.0.0 targeted src/app.css.
-    expect(catalogDefault).toBe("1.2.0");
+    // `files[]`: what `shadcn-svelte@1.8.1` merges into src/app.css. 1.3.0 is
+    // where the nine blocks live, at the same version as the theme, so a
+    // project that installs blocks must not pin 1.2.0 - that base 404s on
+    // `add app-shell`. 1.1.0 carried `target: src/nb-theme.css`, which the CLI
+    // resolved against the basename of app.css used as a directory and wrote
+    // into a folder named `app.css`; 1.0.0 targeted src/app.css.
+    expect(catalogDefault).toBe("1.3.0");
   });
 
   it("resolves the base from Doppler when no registry URL is given", async () => {
@@ -280,5 +282,72 @@ describe("ui-shadcn: dependencies and build wiring", () => {
     expect(
       files.find((f) => f.filePath === ".agents/.rules/styling_guidelines.md"),
     ).toBeDefined();
+  });
+});
+
+describe("ui-shadcn: blocks are opt-in and pinned like the theme", () => {
+  const BASE_URL = "http://ryzen:3012/r";
+
+  it("emits one pinned add command per requested block", async () => {
+    const { find } = await render([...BASE, "ui-shadcn"], {
+      registryUrl: BASE_URL,
+      blocks: ["app-shell", "result-list"],
+    });
+
+    const rules = find(".agents/.rules/styling_guidelines.md");
+    // The same base as the theme: the version segment is the pin, and blocks
+    // are published at that version rather than floating on latest.
+    expect(rules).toContain(
+      `COMPONENTS_REGISTRY_URL=${BASE_URL}/v1.3.0 npx shadcn-svelte@1.8.1 add app-shell --yes --overwrite`,
+    );
+    expect(rules).toContain(
+      `COMPONENTS_REGISTRY_URL=${BASE_URL}/v1.3.0 npx shadcn-svelte@1.8.1 add result-list --yes --overwrite`,
+    );
+    // --yes is not a substitute for --overwrite: without it the CLI exits 0
+    // having written nothing.
+    expect(rules).toContain("add app-shell --yes --overwrite");
+    // And the install target is alias-relative, which is the one thing the
+    // registry's contract test had to teach us by running the CLI.
+    expect(rules).toContain("$lib/components/nb/<Name>.svelte");
+    // The wrong form appears only as the documented counter-example, never as
+    // a command.
+    expect(rules).not.toContain("add src/lib/components/nb/");
+  });
+
+  it("says nothing about blocks when none were requested", async () => {
+    const { find } = await render([...BASE, "ui-shadcn"], {
+      registryUrl: BASE_URL,
+    });
+
+    const rules = find(".agents/.rules/styling_guidelines.md");
+    expect(rules).not.toContain("## Blocks");
+    expect(rules).not.toContain("add app-shell");
+  });
+
+  it("drops an unknown block name and says which", async () => {
+    const { find } = await render([...BASE, "ui-shadcn"], {
+      registryUrl: BASE_URL,
+      blocks: ["app-shell", "hero-banner"],
+    });
+
+    const rules = find(".agents/.rules/styling_guidelines.md");
+    expect(rules).toContain("add app-shell --yes --overwrite");
+    // An instruction to install a block that does not exist fails at the end
+    // of a scaffold instead of at the start, so nothing is emitted for it.
+    expect(rules).not.toContain("add hero-banner");
+    expect(rules).toContain("`hero-banner`");
+    expect(rules).toContain("dropped");
+  });
+
+  it("resolves the block base from Doppler when no registry URL is given", async () => {
+    const { find } = await render([...BASE, "ui-shadcn"], {
+      blocks: ["app-shell"],
+    });
+
+    const rules = find(".agents/.rules/styling_guidelines.md");
+    expect(rules).toContain(
+      'COMPONENTS_REGISTRY_URL="$(doppler secrets get COMPONENTS_REGISTRY_URL --project common --config dev --plain)" npx shadcn-svelte@1.8.1 add app-shell --yes --overwrite',
+    );
+    expect(rules).not.toContain("registry.invalid");
   });
 });

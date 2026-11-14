@@ -42,16 +42,16 @@ capability is opt-in; the registry repo does not select it.
 For a `sveltekit + ui-shadcn` project at the repository root, under the Svelte
 directory (`web/`) when the primary language is not node:
 
-| File                                   | Contents                                                                                             |
-| -------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `package.json`                         | `+ tailwindcss`, `@tailwindcss/vite`, `clsx`, `tailwind-merge`, `tailwind-variants`, `shadcn-svelte` |
-| `vite.config.js`                       | `+ tailwindcss()` — Tailwind v4 is a Vite plugin, not a PostCSS config                               |
-| `src/app.css`                          | `@import "tailwindcss";` and nothing else                                                            |
-| `src/routes/+layout.svelte`            | imports `../app.css` — SvelteKit imports no stylesheet by itself                                     |
-| `tsconfig.json`                        | self-contained, with the `$lib` alias the CLI resolves to place a component                          |
-| `components.json`                      | `style`, `tailwind.css`, `aliases`, `typescript` — and **no `registries` block**                     |
-| `src/lib/utils.ts`                     | `cn()` over `clsx` + `tailwind-merge`                                                                |
-| `.agents/.rules/styling_guidelines.md` | the agent-facing rules (semantic tokens only, compose, pin)                                          |
+| File                                   | Contents                                                                                                      |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `package.json`                         | `+ tailwindcss`, `@tailwindcss/vite`, `clsx`, `tailwind-merge`, `tailwind-variants`, `shadcn-svelte`          |
+| `vite.config.js`                       | `+ tailwindcss()` — Tailwind v4 is a Vite plugin, not a PostCSS config                                        |
+| `src/app.css`                          | `@import "tailwindcss";` and nothing else                                                                     |
+| `src/routes/+layout.svelte`            | imports `../app.css` — SvelteKit imports no stylesheet by itself                                              |
+| `tsconfig.json`                        | self-contained, with the `$lib` alias the CLI resolves to place a component                                   |
+| `components.json`                      | `style`, `tailwind.css`, `aliases`, `typescript` — and **no `registries` block**                              |
+| `src/lib/utils.ts`                     | `cn()` over `clsx` + `tailwind-merge`                                                                         |
+| `.agents/.rules/styling_guidelines.md` | the agent-facing rules (semantic tokens only, compose, pin) plus one pinned `add` command per requested block |
 
 There is no `src/nb-theme.css` and no import of one. A `registry:theme` item
 has no install path: its payload is `cssVars` and `css`, which the CLI merges
@@ -154,10 +154,65 @@ src/app.css`) and v1.1.0 (`target: src/nb-theme.css`) are frozen and still
 served — registry items are immutable — so the capability pins **1.2.0**, the
 first version published in the merged shape.
 
+## Blocks are opt-in, and pinned to the same version as the theme
+
+`blocks` is an array of block names on the `ui-shadcn`
+capability, defaulting to empty. Each name is validated against the nine the
+registry publishes at the same version as the theme
+(`NB_BLOCKS` in `file-generator.js`, mirrored by the catalog's `items.enum`):
+
+| Block            | What it is                                                      |
+| ---------------- | --------------------------------------------------------------- |
+| `app-shell`      | sticky blurred top bar, wordmark, back pill, 68rem main, footer |
+| `stat-strip`     | KPI row of label / big tabular value / sub-line                 |
+| `result-list`    | ranked rows with a fold (`Show N more…`)                        |
+| `filter-panel`   | facet card on desktop, chip row + bottom sheet on mobile        |
+| `empty-state`    | cause-aware zero results (filters / query / error / empty)      |
+| `status-view`    | status lanes as cards, count per lane, empty lane handled       |
+| `detail-panel`   | record header, metadata grid, prose body, back button           |
+| `burst-timeline` | interval bars plus a timestamp / event / value / explains table |
+| `request-form`   | schema-driven form with per-constraint error notices            |
+
+What a selected block produces is one line in
+`.agents/.rules/styling_guidelines.md`, under a `## Blocks` heading:
+
+```
+COMPONENTS_REGISTRY_URL=<base>/v1.3.0 npx shadcn-svelte@1.8.1 add app-shell --yes --overwrite
+```
+
+Four properties of that line matter, and each has a test:
+
+- **The base is the theme's base.** Blocks are published at the same version as
+  the theme, so the version segment is the pin for both. `themeVersion` moved
+  from `1.2.0` to `1.3.0` for exactly this reason: a project that installs
+  blocks must not pin a version that does not publish them, or `add app-shell`
+  404s at the end of a scaffold. The catalog default and
+  `NB_THEME_DEFAULT_VERSION` are kept in lockstep by a test.
+- **`--overwrite`, not `--yes`.** `add` asks a second question about overwriting
+  existing CSS variables; non-interactively without the flag it prints the
+  question and exits 0 having written nothing.
+- **A block's install target is alias-relative.** The item says
+  `nb/AppShell.svelte`, and the CLI resolves that against
+  `aliases.components`, so it lands at `$lib/components/nb/AppShell.svelte`.
+  The first published items said `src/lib/components/nb/AppShell.svelte` and
+  installed themselves at
+  `src/lib/components/src/lib/components/nb/AppShell.svelte` — found by running
+  the consumer contract test, not by reading. The rules state the correct form.
+- **Unknown names are dropped, and named.** A typo must not become an
+  instruction to install a block that does not exist: nothing is emitted for
+  it, and the rules list what was dropped. An empty or absent list emits no
+  `## Blocks` section at all — a heading telling a project to install zero
+  blocks is noise.
+
+Nothing is installed at generation time, because the generator never runs
+`npm` or `npx`. The capability writes instructions, and the e2e is what proves
+those instructions work.
+
 ## What it does not do
 
-- **No `blocks` multi-select.** Zero blocks are published; an enum of names
-  that do not exist is a form control that lies. It arrives with the blocks.
+- **No block content in the project at generation time.** Blocks are installed
+  by the CLI from the registry, never emitted by the generator: same rule as
+  the theme, for the same reason.
 - **No generation-time registry fetch.** See above.
 - **No preview output.** `preview-generator.js` reuses
   `generateViteConfigFile`, so a preview shows the Tailwind plugin, but the
@@ -186,7 +241,11 @@ first version published in the merged shape.
 - the manifest and Vite plugin are wired, and `resolveDependencies` pulls in
   `sveltekit` and `doppler`;
 - a non-node frontend relocates the whole set under `web/` while the agent rules
-  stay at the repository root.
+  stay at the repository root;
+- blocks: one pinned `add <name> --yes --overwrite` per requested block, at the
+  same base as the theme; no `## Blocks` section when none were requested; an
+  unknown name is dropped and named; with no `registryUrl` the block command
+  resolves the base from Doppler too.
 
 All 1029 tests pass; the coverage gate is unchanged.
 

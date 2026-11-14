@@ -413,10 +413,29 @@
             "default": "",
             "description": "Base URL of the house @nb registry, WITHOUT the version segment, e.g. http://ryzen:3012/r. Free text and empty by default, and NOT guessed: genproj cannot know the registry's real address, and a plausible-looking wrong default is a silent misconfiguration that only shows up as a 404 in a generated project. It is used to spell out the install command in the project's styling rules as <registryUrl>/v<themeVersion>; when empty, that command resolves the base from Doppler (COMPONENTS_REGISTRY_URL) instead, so nothing points at a guessed host. It is deliberately NOT written into components.json: shadcn-svelte has no registries map, and that block is React-CLI syntax that reads as a working pin while doing nothing."
           },
+          "blocks": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "app-shell",
+                "stat-strip",
+                "result-list",
+                "filter-panel",
+                "empty-state",
+                "status-view",
+                "detail-panel",
+                "burst-timeline",
+                "request-form"
+              ]
+            },
+            "default": [],
+            "description": "Which of the nine house blocks to install, opt-in and multi-select. The blocks are @nb layouts built from the three shipping UIs' shared shapes - app-shell (frame), stat-strip (KPI row), result-list (ranked rows with a fold), filter-panel (facets, a bottom sheet on mobile), empty-state (cause-aware zero results), status-view (status lanes), detail-panel (record header + metadata grid), burst-timeline (interval bars + history), request-form (schema-driven form). Each one installs from the same pinned base as the theme, with the same `add <name> --yes --overwrite` command written into the project's styling rules; nothing is installed at generation time, because the generator never runs npm. Unknown names are dropped rather than emitted - an instruction to install a block that does not exist fails at the end of a scaffold instead of at the start - and the rules name what was dropped."
+          },
           "themeVersion": {
             "type": "string",
-            "default": "1.2.0",
-            "description": "The @nb/theme version to pin. The theme is a `registry:theme` item whose `cssVars` and `css` the shadcn-svelte CLI merges into the project's own src/app.css, so `shadcn add` installs no extra stylesheet and adds no `@import` line. Published registry items are immutable, so pinning the version is what keeps a project's look fixed: a default moves with a new released version, deliberately - bump it to a released version, never to \"latest\". 1.2.0 is the first version published in that merged shape; 1.1.0 (`files[].target = src/nb-theme.css`) and 1.0.0 (`src/app.css`) predate it and are kept only as frozen history."
+            "default": "1.3.0",
+            "description": "The @nb/theme version to pin. The theme is a `registry:theme` item whose `cssVars` and `css` the shadcn-svelte CLI merges into the project's own src/app.css, so `shadcn add` installs no extra stylesheet and adds no `@import` line. Published registry items are immutable, so pinning the version is what keeps a project's look fixed: a default moves with a new released version, deliberately - bump it to a released version, never to \"latest\". 1.2.0 is the first version published in that merged shape; 1.3.0 adds the nine house blocks at the same version, which is why the default moved - a project that installs blocks must pin a version that publishes them, or `add app-shell` 404s. 1.1.0 (`files[].target = src/nb-theme.css`) and 1.0.0 (`src/app.css`) predate the merged shape and are kept only as frozen history."
           }
         }
       },

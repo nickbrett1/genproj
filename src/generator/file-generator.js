@@ -3906,7 +3906,98 @@ export const NB_REGISTRY_PLACEHOLDER_URL = "https://registry.invalid";
  * a new version - pin the one whose shape the CLI supports. Kept in lockstep
  * with the catalog's `themeVersion` default by a test, not by memory.
  */
-export const NB_THEME_DEFAULT_VERSION = "1.2.0";
+export const NB_THEME_DEFAULT_VERSION = "1.3.0";
+
+/**
+ * The nine blocks the registry publishes at the same version as the theme
+ * (`ui-registry` v1.3.0). Whitelisted rather than free text: a typo in a block
+ * name must not become a silent no-op in a generated project's instructions,
+ * and the list is what the catalogue's multi-select offers.
+ */
+export const NB_BLOCKS = [
+  "app-shell",
+  "stat-strip",
+  "result-list",
+  "filter-panel",
+  "empty-state",
+  "status-view",
+  "detail-panel",
+  "burst-timeline",
+  "request-form",
+];
+
+/**
+ * The block install instructions appended to a generated project's styling
+ * rules. Blocks are opt-in, so a project that requested none gets no section
+ * at all rather than an empty heading telling it to install nothing.
+ *
+ * Every command carries the same pinned base as the theme: the version segment
+ * of `COMPONENTS_REGISTRY_URL` is what makes a block install reproducible, and
+ * blocks live at the same version as the theme, so one base serves both.
+ * `baseFn` is a thunk because the base is either a literal (configured at
+ * generation time) or a Doppler lookup that must stay shell-quoted.
+ */
+function renderBlocksSection(blocks, unknownBlocks, baseFn) {
+  if (blocks.length === 0 && unknownBlocks.length === 0) return "";
+
+  const base = baseFn();
+  const quoted = (names) => names.map((name) => "`" + name + "`").join(", ");
+  const installs = blocks
+    .map(
+      (name) =>
+        "  COMPONENTS_REGISTRY_URL=" +
+        base +
+        " npx shadcn-svelte@" +
+        SHADCN_CLI_VERSION +
+        " add " +
+        name +
+        " --yes --overwrite",
+    )
+    .join("\n");
+
+  const lines = [];
+  if (blocks.length > 0) {
+    const count = blocks.length === 1 ? "one block" : blocks.length + " blocks";
+    lines.push(
+      "- **Blocks are opt-in and pinned like the theme.** This project requested " +
+        count +
+        ": " +
+        quoted(blocks) +
+        ". Install them after the theme, with the same base:",
+      "",
+      "  ```bash",
+      installs,
+      "  ```",
+      "",
+      "  A block installs to `$lib/components/nb/<Name>.svelte`; the target is",
+      "  relative to the components alias, so it is `nb/AppShell.svelte` in the",
+      "  item and never `src/lib/components/nb/AppShell.svelte`.",
+      "",
+    );
+  }
+  if (unknownBlocks.length > 0) {
+    const single = unknownBlocks.length === 1;
+    const heading = single
+      ? "One requested block does not exist"
+      : unknownBlocks.length + " requested blocks do not exist";
+    lines.push(
+      "- **" +
+        heading +
+        " and " +
+        (single ? "was" : "were") +
+        " dropped:** " +
+        quoted(unknownBlocks) +
+        ". The registry publishes nine blocks - " +
+        quoted(NB_BLOCKS) +
+        " - and installing one that does not exist fails at the end of a scaffold instead of at the start, so nothing was emitted for " +
+        (single ? "it" : "them") +
+        ".",
+      "",
+    );
+  }
+
+  return "\n## Blocks\n\n" + lines.join("\n");
+}
 
 /**
  * The `ui-shadcn` capability's files: Tailwind's entry stylesheet, a
@@ -3941,6 +4032,18 @@ export function buildUiShadcnFiles(context) {
   const registryVersionedBase = registryConfigured
     ? `${registryBase}/v${themeVersion}`
     : "";
+
+  // Blocks are opt-in and validated against the published list. Unknown names
+  // are dropped rather than emitted: an instruction to install a block that
+  // does not exist is worse than no instruction, because it fails at the end of
+  // a scaffold instead of at the start.
+  const requestedBlocks = Array.isArray(config.blocks)
+    ? config.blocks.map(String)
+    : [];
+  const blocks = requestedBlocks.filter((name) => NB_BLOCKS.includes(name));
+  const unknownBlocks = requestedBlocks.filter(
+    (name) => !NB_BLOCKS.includes(name),
+  );
 
   // Deliberately NO `registries` block. That block is shadcn/ui (React) syntax:
   // `shadcn-svelte@1.8.1` implements no `registries` map, no `headers`, no
@@ -3978,6 +4081,12 @@ export function buildUiShadcnFiles(context) {
   const installCommand = registryConfigured
     ? `COMPONENTS_REGISTRY_URL=${registryVersionedBase} npx shadcn-svelte@${SHADCN_CLI_VERSION} add theme --yes --overwrite`
     : `COMPONENTS_REGISTRY_URL="$(doppler secrets get COMPONENTS_REGISTRY_URL --project common --config dev --plain)" npx shadcn-svelte@${SHADCN_CLI_VERSION} add theme --yes --overwrite`;
+
+  // The base the block commands carry. Same pin as the theme: blocks are
+  // published at the theme's version, so one base installs both.
+  const blocksBase = registryConfigured
+    ? registryVersionedBase
+    : `"$(doppler secrets get COMPONENTS_REGISTRY_URL --project common --config dev --plain)"`;
 
   // The bare Tailwind v4 entry. `shadcn add @nb/theme` merges the item's
   // `cssVars` and `css` into this file, so anything else here - an import of a
@@ -4082,6 +4191,7 @@ ${
   present in \`dev\`, \`stg\` and \`prd\`). Nothing here points at a guessed host.
 `
 }
+${renderBlocksSection(blocks, unknownBlocks, () => blocksBase)}
 `;
 
   return [
