@@ -95,10 +95,11 @@ function fail(message) {
 function check(ok, description, detail) {
   if (ok) {
     console.log(`  PASS  ${description}`);
-  } else {
-    console.log(`  FAIL  ${description}${detail ? `\n        ${detail}` : ""}`);
-    failures.push(description);
+    return;
   }
+  const suffix = detail ? `\n        ${detail}` : "";
+  console.log(`  FAIL  ${description}${suffix}`);
+  failures.push(description);
 }
 
 function run(label, command, args, options = {}) {
@@ -111,13 +112,10 @@ function run(label, command, args, options = {}) {
       // waits on it forever. A timed-out run must fail rather than wedge CI.
       stdio: ["ignore", "inherit", "inherit"],
     });
-    const timer = setTimeout(
-      () => {
-        console.error(`\n✗ ${label}: timed out`);
-        child.kill("SIGKILL");
-      },
-      options.timeoutMs ?? 600_000,
-    );
+    const timer = setTimeout(() => {
+      console.error(`\n✗ ${label}: timed out`);
+      child.kill("SIGKILL");
+    }, options.timeoutMs ?? 600_000);
     child.on("close", (code) => {
       clearTimeout(timer);
       if (code !== 0) fail(`${label}: exited ${code}`);
@@ -184,12 +182,21 @@ async function main() {
 
   const rules = read(".agents/.rules/styling_guidelines.md");
   check(
-    rules.includes(`${registryUrl} npx shadcn-svelte@${SHADCN_CLI_VERSION} add theme --yes --overwrite`),
+    rules.includes(
+      `${registryUrl} npx shadcn-svelte@${SHADCN_CLI_VERSION} add theme --yes --overwrite`,
+    ),
     "the styling rules carry the versioned, pinned, --overwrite install command",
   );
 
   // --- install, install the theme, build -----------------------------------
-  if (!(await run("npm install", "npm", ["install", "--no-audit", "--no-fund", "--loglevel=error"])))
+  if (
+    !(await run("npm install", "npm", [
+      "install",
+      "--no-audit",
+      "--no-fund",
+      "--loglevel=error",
+    ]))
+  )
     return;
 
   const before = read("src/app.css");
@@ -205,7 +212,10 @@ async function main() {
       "--overwrite",
       "--no-deps-install",
     ],
-    { env: { COMPONENTS_REGISTRY_URL: registryUrl, NO_COLOR: "1" }, timeoutMs: 300_000 },
+    {
+      env: { COMPONENTS_REGISTRY_URL: registryUrl, NO_COLOR: "1" },
+      timeoutMs: 300_000,
+    },
   );
   const after = read("src/app.css");
   check(installed, "add theme exits 0");
@@ -231,7 +241,10 @@ async function main() {
   const outputDir = path.join(workDir, ".svelte-kit", "output");
   const cssFiles = walk(outputDir).filter((f) => f.endsWith(".css"));
   const bundle = cssFiles.map((f) => fs.readFileSync(f, "utf8")).join("\n");
-  check(cssFiles.length > 0, `the build emitted CSS (${cssFiles.length} files)`);
+  check(
+    cssFiles.length > 0,
+    `the build emitted CSS (${cssFiles.length} files)`,
+  );
   check(
     /--bg:\s*#[0-9a-f]{6}/i.test(bundle),
     "the built bundle carries the theme's --bg token",
@@ -279,7 +292,8 @@ async function main() {
     });
     console.log(`  note  ${JSON.stringify(computed)}`);
     check(
-      computed.background !== "rgba(0, 0, 0, 0)" && computed.background === computed.resolved,
+      computed.background !== "rgba(0, 0, 0, 0)" &&
+        computed.background === computed.resolved,
       `body renders --bg (${computed.token} -> ${computed.background})`,
       "transparent means the token is defined but never applied",
     );
@@ -288,7 +302,8 @@ async function main() {
       `.card renders a radius (${computed.cardRadius})`,
     );
     check(
-      computed.pillColour !== computed.background && computed.pillColour !== "rgb(0, 0, 0)",
+      computed.pillColour !== computed.background &&
+        computed.pillColour !== "rgb(0, 0, 0)",
       `.pill.ok renders its own colour (${computed.pillColour})`,
     );
   } finally {
