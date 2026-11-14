@@ -113,6 +113,22 @@ generated Dockerfile, compose file and Homepage widget stay consistent:
   first command.
 - `aptPackages`: Debian packages installed in the runtime image via apt
   (e.g. `["iproute2", "curl"]`).
+- `runtimeFiles`: committed paths the RUNTIME image must carry
+  (e.g. `["registry/", "registry.json"]`). The runtime stage copies only the
+  build output, so anything your app reads from disk at request time has to be
+  named here or it is simply absent from the image — it works in dev and in
+  tests (both run against the repo) and answers 404 in production. Each entry
+  becomes `COPY --from=build /app/<path> ./<path>`; python and shell images
+  already copy the whole tree, so the key only matters for node/java/rust.
+  Do not list `node_modules`, `.git` or tests: the runtime stage copies from the
+  build stage, so `.dockerignore` does not protect you.
+- `smokePaths`: paths CI must see answer before the image is published
+  (e.g. `["/health", "/r/registry.json"]`, or
+  `[{ "path": "/health", "expect": 200 }]`). The smoke step already polls the
+  healthcheck, but a generated `/health` is a static `ok` that touches nothing,
+  so it cannot notice a directory missing from the image. Without `expect`, any
+  1xx-4xx status counts as answering; a 5xx or a refused connection fails the
+  build. Unauthenticated paths only.
 - `command` / `entrypoint`: override the container CMD/ENTRYPOINT (exec form,
   e.g. `"command": ["/usr/local/bin/entrypoint.sh"]`). When the value points at
   `/usr/local/bin/<script>`, genproj copies `scripts/<script>` from your repo

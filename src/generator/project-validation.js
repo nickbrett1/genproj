@@ -15,6 +15,7 @@ import {
 } from "../catalog/index.js";
 import { ValidationError } from "./genproj-errors.js";
 import {
+  isSafeRuntimeFilePath,
   resolveAgentListenPort,
   resolveProjectLanguage,
 } from "./capability-template-utils.js";
@@ -526,5 +527,100 @@ export function validateDockerUser(context) {
         `accepts uids and gids up to 4294967294.`,
       "user",
     );
+  }
+}
+
+/**
+ * `docker-container.runtimeFiles` and `smokePaths` must be emittable as written.
+ *
+ * Both keys exist because the runtime image carries only BUILD output, so a
+ * committed file the app reads at request time is silently absent: it works in
+ * dev, works in tests, and answers 404 in production. The failure mode is a
+ * missing directory in an image, which is only discoverable after a deploy -
+ * exactly what a typo in a path would produce. So a path that cannot be emitted
+ * (absolute, `..`, "copy everything", or a character that would change the
+ * meaning of the `COPY`/`curl` line) fails the GENERATION instead, the same way
+ * `command`/`entrypoint` fail loudly rather than producing an image that cannot
+ * start.
+ *
+ * `smokePaths` is checked for shape only: a path must start with `/` and an
+ * `expect`, when given, must be an HTTP status. Nothing here can know whether
+ * the app actually serves it - that is the point of the assertion.
+ *
+ * @param {Object} context - Generation context (capabilities, configuration)
+ * @throws {ValidationError} When either key holds an unemittable entry
+ */
+export function validateDockerRuntimeFiles(context) {
+  const capabilities = context?.capabilities || [];
+  if (!capabilities.includes("docker-container")) return;
+
+  const config = context?.configuration?.["docker-container"] || {};
+  validateRuntimeFilePaths(config);
+  validateSmokePathEntries(config);
+}
+
+/**
+ * The `runtimeFiles` half of {@link validateDockerRuntimeFiles}.
+ * @param {Object} config - The `docker-container` capability configuration
+ * @throws {ValidationError} When an entry cannot be emitted as a COPY
+ */
+function validateRuntimeFilePaths(config) {
+  for (const entry of Array.isArray(config.runtimeFiles)
+    ? config.runtimeFiles
+    : []) {
+    if (isSafeRuntimeFilePath(entry)) continue;
+    const shown = typeof entry === "string" ? entry : JSON.stringify(entry);
+    throw new ValidationError(
+      `docker-container.runtimeFiles contains ${shown}, which cannot be ` +
+        `emitted as a COPY line. Use a path relative to the repository root ` +
+        `(e.g. "registry/" or "registry.json"): absolute paths and ".." do ` +
+        `not address the build stage, and "." would copy the whole tree ` +
+        `(node_modules, .git, tests) into the runtime image. Quotes, spaces, ` +
+        `"$", "\\" and glob characters are refused too - the entry is written ` +
+        `into the Dockerfile verbatim.`,
+      "runtimeFiles",
+    );
+  }
+}
+
+/**
+ * The `smokePaths` half of {@link validateDockerRuntimeFiles}.
+ * @param {Object} config - The `docker-container` capability configuration
+ * @throws {ValidationError} When an entry is not a requestable path/status
+ */
+function validateSmokePathEntries(config) {
+  for (const entry of Array.isArray(config.smokePaths)
+    ? config.smokePaths
+    : []) {
+    const candidate =
+      typeof entry === "string"
+        ? { path: entry }
+        : entry && typeof entry === "object" && !Array.isArray(entry)
+          ? entry
+          : null;
+    const path =
+      candidate && typeof candidate.path === "string"
+        ? candidate.path.trim()
+        : "";
+    if (!candidate || !path.startsWith("/")) {
+      throw new ValidationError(
+        `docker-container.smokePaths contains ${JSON.stringify(entry)}, which ` +
+          `is not a path the smoke gate can request. Use "/<path>" (or ` +
+          `{ "path": "/<path>", "expect": 200 }) - the value is appended to ` +
+          `http://127.0.0.1:<port>, so it must be absolute.`,
+        "smokePaths",
+      );
+    }
+    if (candidate.expect === undefined || candidate.expect === null) continue;
+    const status = Number(candidate.expect);
+    if (!Number.isInteger(status) || status < 100 || status > 599) {
+      throw new ValidationError(
+        `docker-container.smokePaths declares expect: ` +
+          `${JSON.stringify(candidate.expect)} for "${path}", which is not an ` +
+          `HTTP status code (100-599). Leave expect out to require only that ` +
+          `the path answers (any non-5xx).`,
+        "smokePaths",
+      );
+    }
   }
 }

@@ -1392,6 +1392,41 @@
             },
             "default": []
           },
+          "runtimeFiles": {
+            "type": "array",
+            "description": "Committed paths the RUNTIME image must carry, e.g. [\"registry/\", \"registry.json\"]. The runtime stage copies only the build output, so a file the app reads at request time is absent from the image: it works in `npm run dev` and in tests (both run against the repo) and answers 404 in production, silently, because the health endpoint touches nothing. Each entry is emitted as `COPY --from=build /app/<path> ./<path>`. Paths are repo-relative (absolute, \"..\" and \".\" are rejected at generation, and are matched to a real committed file only by your own repo). Python and shell images already copy the whole tree, so the key is a no-op there - it exists for node/java/rust. Complement it with `smokePaths`, or a missing directory is discovered after a deploy rather than by CI.",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          },
+          "smokePaths": {
+            "type": "array",
+            "description": "Paths the CI smoke gate must see answer, e.g. [\"/health\", \"/r/registry.json\"] or [{ \"path\": \"/health\", \"expect\": 200 }]. The gate already polls the declared healthcheck, but a generated /health is a static ok that proves nothing about the image's contents; these assertions are the only end-to-end check that what the app reads is actually in the image. Without `expect`, \"answers\" means any 1xx-4xx status (a 5xx or no connection fails). Unauthenticated paths only in v1. Empty by default: the smoke step is byte-identical to not setting this key.",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "type": "string"
+                    },
+                    "expect": {
+                      "type": "integer",
+                      "minimum": 100,
+                      "maximum": 599
+                    }
+                  },
+                  "required": ["path"],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "default": []
+          },
           "envVars": {
             "type": "array",
             "description": "Environment variables emitted into the compose environment and .env.example, e.g. [\"MCP_PORT=3001\"] (a bare key like \"MCP_PORT\" is filled from .env).",

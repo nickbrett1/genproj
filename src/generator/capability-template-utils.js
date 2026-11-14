@@ -934,6 +934,126 @@ export function resolveDockerUser(context) {
   return `${uid}:${gid}`;
 }
 
+// A `runtimeFiles` entry is written INTO a Dockerfile `COPY` line verbatim, so
+// the charset is restricted to what cannot be re-read as shell/Docker syntax:
+// no spaces (the line is not JSON form), no quotes, no `$`, no `*`/`?` (a glob
+// would make "which files arrived" unanswerable), no backslash.
+const RUNTIME_FILE_PATH_PATTERN = /^[A-Za-z0-9._@+][A-Za-z0-9._@+/-]*$/;
+
+/**
+ * Whether a `runtimeFiles` entry is a path that may be emitted into a `COPY`.
+ *
+ * Three refusals on top of the charset, each for a reason that is about the
+ * image, not about tidiness:
+ *
+ * - **absolute** (`/etc/foo`): the source of the `COPY` is `/app/<entry>` in the
+ *   build stage, so an absolute entry either escapes the app tree or silently
+ *   addresses nothing.
+ * - **`..`**: the same escape, written relatively.
+ * - **`.` / `./` / a bare `/`**: "copy the whole tree", which is the alternative
+ *   this key exists to reject - it drags `node_modules`, `.git`, tests and the
+ *   devcontainer into a production image, and `.dockerignore` does not help
+ *   because the runtime stage copies from the BUILD STAGE, not the context.
+ *
+ * @param {*} value - A candidate `runtimeFiles` entry
+ * @returns {boolean} True when the entry can be emitted safely
+ */
+export function isSafeRuntimeFilePath(value) {
+  if (typeof value !== "string") return false;
+  const raw = value.trim();
+  if (raw === "" || raw.startsWith("/")) return false;
+  if (!RUNTIME_FILE_PATH_PATTERN.test(raw)) return false;
+  const segments = raw.split("/").filter((segment) => segment !== "");
+  if (segments.length === 0) return false;
+  if (segments.includes("..") || segments.includes(".")) return false;
+  return true;
+}
+
+/**
+ * The committed paths the runtime image must carry, normalized, for
+ * `docker-container.runtimeFiles`.
+ *
+ * The gap this closes: the runtime stage copies only the BUILD output, so a
+ * committed file the app reads at request time (`registry.json`, a prompt file,
+ * a seed fixture) never reaches the image. It works in `npm run dev` and in
+ * `npm test` - both run against the repo - and 404s in production. Python only
+ * escapes this by accident, because its branch does `COPY . .`.
+ *
+ * Emitted as one `COPY --from=build /app/<path> ./<path>` per entry. Normalized
+ * here (leading `./` and trailing `/` stripped) so the emitted line and the
+ * build-stage source address the same thing. Entries that fail
+ * {@link isSafeRuntimeFilePath} are dropped rather than emitted: this function is
+ * also the emit path, which a preview reaches without running the validators
+ * (`validateDockerRuntimeFiles` turns the same input into a generation error on
+ * the real path - the `externalNetworks` precedent).
+ *
+ * @param {Object} context - Generation context (capabilities, configuration)
+ * @returns {string[]} Repo-relative paths, in declared order
+ */
+export function resolveRuntimeFiles(context) {
+  const config = context?.configuration?.["docker-container"] || {};
+  const entries = Array.isArray(config.runtimeFiles) ? config.runtimeFiles : [];
+  const out = [];
+  for (const entry of entries) {
+    if (!isSafeRuntimeFilePath(entry)) continue;
+    const normalized = entry.trim().replace(/^\.\//, "").replace(/\/+$/, "");
+    if (normalized && !out.includes(normalized)) out.push(normalized);
+  }
+  return out;
+}
+
+/**
+ * The paths the CI smoke gate must see answer, for `docker-container.smokePaths`.
+ *
+ * The gap this closes: `docker_smoke` polls the DECLARED healthcheck, and in a
+ * generated repo `/health` is a static `{"status":"ok"}` that touches nothing.
+ * So a repo whose every real route reads a file the image does not contain
+ * passes CI, publishes and deploys - green at every step. `runtimeFiles` says
+ * what should be in the image; this is the only assertion in the estate about
+ * what actually is.
+ *
+ * An entry is either a bare path (`"/r/registry.json"`) or `{path, expect}`.
+ * Without `expect` the requirement is "answers at all" - a 1xx-4xx status; a 5xx
+ * or no connection is a failure. `expect` pins one status exactly (e.g. `200`,
+ * or `404` from a path that must exist and not be served).
+ *
+ * Only unauthenticated paths are supported in v1, deliberately: a path behind a
+ * token needs a header, which needs the secret in CI, and quietly shipping a
+ * half-working assertion is worse than saying so. Invalid entries are dropped
+ * (see {@link resolveRuntimeFiles} for why the emit path filters).
+ *
+ * @param {Object} context - Generation context (capabilities, configuration)
+ * @returns {{path: string, expect: number|null}[]} Normalized assertions
+ */
+export function resolveSmokePaths(context) {
+  const config = context?.configuration?.["docker-container"] || {};
+  const entries = Array.isArray(config.smokePaths) ? config.smokePaths : [];
+  const out = [];
+  for (const entry of entries) {
+    const candidate =
+      typeof entry === "string"
+        ? { path: entry }
+        : entry && typeof entry === "object" && !Array.isArray(entry)
+          ? entry
+          : null;
+    if (!candidate) continue;
+    const path =
+      typeof candidate.path === "string" ? candidate.path.trim() : "";
+    if (!path.startsWith("/")) continue;
+    if (/[\s"'`$\\*?]/.test(path)) continue;
+    const expect =
+      candidate.expect === undefined || candidate.expect === null
+        ? null
+        : Number(candidate.expect);
+    out.push({
+      path,
+      expect:
+        Number.isInteger(expect) && expect > 99 && expect < 600 ? expect : null,
+    });
+  }
+  return out;
+}
+
 /**
  * The argument list that makes a batch image prove itself in CI.
  *
@@ -1995,6 +2115,20 @@ RUN cargo build --release`;
   } else {
     dockerRuntimeCommands = `COPY --from=build /app/target/release/${rustBinName} /usr/local/bin/${rustBinName}`;
   }
+  // Config-driven committed content (memo: genproj-capability-gap-runtime-
+  // image-contents). The branches above answer "what does the server need to
+  // START"; this answers "what does the server READ". Only node/java/rust need
+  // the lines: python's branch is `COPY . .` and a shell image is single-stage,
+  // so both already carry the whole tree - emitting a duplicate there would be
+  // harmless but noise, hence the guard rather than a per-language feature.
+  const runtimeFiles = resolveRuntimeFiles(context);
+  if (runtimeFiles.length > 0 && !isPython && !isShell) {
+    const copies = runtimeFiles
+      .map((path) => `COPY --from=build /app/${path} ./${path}`)
+      .join("\n");
+    dockerRuntimeCommands += `\n${copies}`;
+  }
+
   // A non-node project keeps node out of the runtime image entirely: the
   // frontend was built to static assets in the `frontend` stage, and the
   // language's own server serves them. The built assets are a runtime asset
@@ -3846,6 +3980,68 @@ ${syncSecrets("preview")}`);
       smokeHasHealthcheck &&
       (smokeServesByDefault || smokeDeclaresEntrypoint);
     const smokeTimeoutChecks = 30;
+    // --- smokePaths (memo: genproj-capability-gap-runtime-image-contents) ---
+    // The health poll above proves the process STARTED. It cannot prove the
+    // image contains what the app READS: `/health` in a generated repo is a
+    // static `{"status":"ok"}` that touches nothing, so a route reading a file
+    // the runtime stage never copied answers 404 while every step stays green.
+    // These assertions run only when the key is declared, so an existing
+    // project's step is byte-identical.
+    const smokePaths = resolveSmokePaths(context);
+    const smokeNetworkMode = dcConfig.networkMode || "bridge";
+    const smokeExposePort =
+      dcConfig.exposePort ?? resolveAgentListenPort(context) ?? 3000;
+    // Publish the container port on a random loopback host port and probe from
+    // the AGENT with curl, not from inside the image: the image may carry
+    // neither curl nor node (curl is only auto-added for an `http:` healthcheck,
+    // and a java/rust image has no node), and a probe that depends on what the
+    // image happens to contain is wrong about the one thing it is checking.
+    // Host networking has no port mapping to read - the container is on the
+    // host's stack, so its port is addressed directly.
+    const smokePublishFlag =
+      smokePaths.length > 0 && smokeNetworkMode !== "host"
+        ? ` -p "127.0.0.1::${smokeExposePort}"`
+        : "";
+    const smokeHostAddress =
+      smokeNetworkMode === "host"
+        ? `            HOST_ADDRESS="127.0.0.1:${smokeExposePort}"`
+        : `            HOST_PORT="$$(docker port "$$CONTAINER" ${smokeExposePort}/tcp | head -n1 | sed 's/.*://')"
+            if [ -z "$$HOST_PORT" ]; then
+              echo "docker reported no published port for ${smokeExposePort}/tcp" >&2
+              docker logs "$$CONTAINER" >&2 || true
+              exit 1
+            fi
+            HOST_ADDRESS="127.0.0.1:$$HOST_PORT"`;
+    const smokePathChecks =
+      smokePaths.length === 0
+        ? ""
+        : `
+${smokeHostAddress}
+            assert_smoke_path() {
+              path="$$1"; expect="$$2"; i=0
+              while [ "$$i" -lt 15 ]; do
+                code="$$(curl -sS -o /dev/null -m 5 -w '%{http_code}' "http://$$HOST_ADDRESS$$path" || true)"
+                [ -n "$$code" ] || code=000
+                i=$$((i + 1))
+                if [ -z "$$expect" ]; then
+                  # No expectation: "answers at all" is 1xx-4xx. A 5xx is the
+                  # failure this key exists to catch; so is no connection.
+                  case "$$code" in 1??|2??|3??|4??) echo "smokePath $$path -> $$code"; return 0 ;; esac
+                elif [ "$$code" = "$$expect" ]; then
+                  echo "smokePath $$path -> $$code"; return 0
+                fi
+                sleep 2
+              done
+              echo "smokePath $$path did not answer as required (last status $$code)" >&2
+              docker logs "$$CONTAINER" >&2 || true
+              return 1
+            }
+${smokePaths
+  .map(
+    (entry) =>
+      `            assert_smoke_path "${entry.path}" "${entry.expect ?? ""}"`,
+  )
+  .join("\n")}`;
     if (emitsSmokeGate)
       steps.push(`
   - label: ":male-doctor: Smoke test image (starts and serves HTTP)"
@@ -3863,7 +4059,7 @@ ${buildDependencies}${_bkAgents(queue)}    env:
         # each on mac-studio (2026-09-23: 39 images).
         trap 'exit 143' TERM INT
         trap 'docker rm -f "$$CONTAINER" >/dev/null 2>&1 || true; docker rmi "$$SMOKE_IMAGE:$$BUILDKITE_COMMIT" >/dev/null 2>&1 || true' EXIT
-        docker run -d --name "$$CONTAINER" "$$SMOKE_IMAGE:$$BUILDKITE_COMMIT" >/dev/null
+        docker run -d${smokePublishFlag} --name "$$CONTAINER" "$$SMOKE_IMAGE:$$BUILDKITE_COMMIT" >/dev/null
         # Poll the DECLARED healthcheck. A container that exits (the old rust
         # stub restart-looped) is a failure, so running is checked as well as
         # health: "not running" is reported with its logs, never mistaken for a
@@ -3872,7 +4068,7 @@ ${buildDependencies}${_bkAgents(queue)}    env:
           RUNNING="$$(docker inspect -f '{{.State.Running}}' "$$CONTAINER" 2>/dev/null || echo false)"
           HEALTH="$$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$$CONTAINER" 2>/dev/null || echo unknown)"
           echo "attempt $$i: running=$$RUNNING health=$$HEALTH"
-          if [ "$$HEALTH" = "healthy" ]; then
+          if [ "$$HEALTH" = "healthy" ]; then${smokePathChecks}
             echo "image starts and serves HTTP (healthcheck passed)"
             exit 0
           fi
