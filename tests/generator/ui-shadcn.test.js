@@ -99,7 +99,7 @@ describe("ui-shadcn: components.json", () => {
     // `?version=`. The pinned CLI and `--overwrite` are part of the command,
     // not advice around it: `--yes` alone exits 0 having written nothing.
     expect(rules).toContain(
-      "COMPONENTS_REGISTRY_URL=http://ryzen:3012/r/v1.2.3 npx shadcn-svelte@1.8.1 add theme --yes --overwrite",
+      'COMPONENTS_REGISTRY_URL="http://ryzen:3012/r/v1.2.3" npx shadcn-svelte@1.8.1 add theme --yes --overwrite',
     );
     expect(rules).toContain("registry items are immutable");
     expect(rules).not.toContain("@latest");
@@ -124,7 +124,7 @@ describe("ui-shadcn: components.json", () => {
       registryUrl: "http://ryzen:3012/r",
     });
     const rules = find(".agents/.rules/styling_guidelines.md");
-    expect(rules).toContain(`/v${catalogDefault} npx shadcn-svelte@`);
+    expect(rules).toContain(`/v${catalogDefault}" npx shadcn-svelte@`);
 
     // 1.2.0 is the first version published as `cssVars` + `css` with no
     // `files[]`: what `shadcn-svelte@1.8.1` merges into src/app.css. 1.10.1 is
@@ -149,15 +149,39 @@ describe("ui-shadcn: components.json", () => {
 
     const rules = find(".agents/.rules/styling_guidelines.md");
     // Not a guessed host and not an `.invalid` placeholder written into a config
-    // file: the same variable a human reads, resolved at run time.
+    // file: the same variable a human reads, resolved at run time -- with the
+    // pin appended here rather than stored there.
     expect(rules).toContain(
-      'COMPONENTS_REGISTRY_URL="$(doppler secrets get COMPONENTS_REGISTRY_URL --project common --config dev --plain)" npx shadcn-svelte@1.8.1 add theme --yes --overwrite',
+      'COMPONENTS_REGISTRY_URL="$(doppler secrets get COMPONENTS_REGISTRY_URL --project common --config dev --plain)/v1.11.0" npx shadcn-svelte@1.8.1 add theme --yes --overwrite',
     );
     expect(rules).toContain(
       "`ui-shadcn.registryUrl` was empty at generation time",
     );
     expect(rules).not.toContain("registry.invalid");
     expect(rules).not.toContain("NB_REGISTRY_TOKEN");
+  });
+
+  it("treats the Doppler secret as a host, so the version is named once", async () => {
+    // The regression this guards is a *shape*, not a string: a version inside
+    // the secret would be a second copy of the pin, and the first one was moved
+    // by hand twice in a day. The pin is appended outside the substitution, so
+    // replacing the secret with a versioned URL cannot silently double it --
+    // it produces `/v1.11.0/v1.11.0`, which 404s on the first install rather
+    // than drifting out of step.
+    const { find } = await render([...BASE, "ui-shadcn"], {
+      blocks: ["app-shell"],
+    });
+    const rules = find(".agents/.rules/styling_guidelines.md");
+
+    const substitutions = rules.match(/\$\(doppler secrets get[^)]*\)/g) || [];
+    expect(substitutions.length).toBeGreaterThan(0);
+    for (const substitution of substitutions) {
+      expect(substitution).not.toMatch(/\/v\d+\.\d+\.\d+/);
+    }
+    // …and every command that uses one appends the pin immediately after it.
+    for (const substitution of substitutions) {
+      expect(rules).toContain(`${substitution}/v1.11.0`);
+    }
   });
 
   it("says the same thing when a URL is configured", async () => {
@@ -306,10 +330,10 @@ describe("ui-shadcn: blocks are opt-in and pinned like the theme", () => {
     // The same base as the theme: the version segment is the pin, and blocks
     // are published at that version rather than floating on latest.
     expect(rules).toContain(
-      `COMPONENTS_REGISTRY_URL=${BASE_URL}/v1.11.0 npx shadcn-svelte@1.8.1 add app-shell --yes --overwrite`,
+      `COMPONENTS_REGISTRY_URL="${BASE_URL}/v1.11.0" npx shadcn-svelte@1.8.1 add app-shell --yes --overwrite`,
     );
     expect(rules).toContain(
-      `COMPONENTS_REGISTRY_URL=${BASE_URL}/v1.11.0 npx shadcn-svelte@1.8.1 add result-list --yes --overwrite`,
+      `COMPONENTS_REGISTRY_URL="${BASE_URL}/v1.11.0" npx shadcn-svelte@1.8.1 add result-list --yes --overwrite`,
     );
     // --yes is not a substitute for --overwrite: without it the CLI exits 0
     // having written nothing.
@@ -354,7 +378,7 @@ describe("ui-shadcn: blocks are opt-in and pinned like the theme", () => {
 
     const rules = find(".agents/.rules/styling_guidelines.md");
     expect(rules).toContain(
-      'COMPONENTS_REGISTRY_URL="$(doppler secrets get COMPONENTS_REGISTRY_URL --project common --config dev --plain)" npx shadcn-svelte@1.8.1 add app-shell --yes --overwrite',
+      'COMPONENTS_REGISTRY_URL="$(doppler secrets get COMPONENTS_REGISTRY_URL --project common --config dev --plain)/v1.11.0" npx shadcn-svelte@1.8.1 add app-shell --yes --overwrite',
     );
     expect(rules).not.toContain("registry.invalid");
   });
@@ -402,12 +426,12 @@ describe("ui-shadcn: browsing the catalogue is part of selecting from it", () =>
     // carries the `title`/`description` that make it a catalogue rather than a
     // list of file names.
     expect(rules).toContain("## Finding a block");
-    expect(rules).toContain(`curl -s ${BASE_URL}/v1.11.0/index.json`);
+    expect(rules).toContain(`curl -s "${BASE_URL}/v1.11.0/index.json"`);
     expect(rules).toContain('item["name"]');
     // Select: the same command as a requested block, with the name to be
     // chosen from the index.
     expect(rules).toContain(
-      `COMPONENTS_REGISTRY_URL=${BASE_URL}/v1.11.0 npx shadcn-svelte@1.8.1 add <name> --yes --overwrite`,
+      `COMPONENTS_REGISTRY_URL="${BASE_URL}/v1.11.0" npx shadcn-svelte@1.8.1 add <name> --yes --overwrite`,
     );
     // And the honest instruction for a genuine gap, because "install the
     // nearest block" is how a design system becomes a tax.

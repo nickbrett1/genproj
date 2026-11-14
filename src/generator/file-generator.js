@@ -3995,7 +3995,7 @@ the CLI fetches before it installs anything. Every item carries a \`title\` and 
 and "which one is this page":
 
 \`\`\`bash
-curl -s ${base}/index.json | python3 -c 'import json,sys
+curl -s "${base}/index.json" | python3 -c 'import json,sys
 for item in json.load(sys.stdin): print(item["name"], "--", item.get("description", ""))'
 \`\`\`
 
@@ -4007,7 +4007,7 @@ for item in json.load(sys.stdin): print(item["name"], "--", item.get("descriptio
   installs the same way the blocks above do:
 
   \`\`\`bash
-  COMPONENTS_REGISTRY_URL=${base} npx shadcn-svelte@${SHADCN_CLI_VERSION} add <name> --yes --overwrite
+  COMPONENTS_REGISTRY_URL="${base}" npx shadcn-svelte@${SHADCN_CLI_VERSION} add <name> --yes --overwrite
   \`\`\`
 
 - **If the block is not there, say so and build it.** A near-miss block
@@ -4026,8 +4026,9 @@ function renderBlocksSection(blocks, unknownBlocks, baseFn) {
   const installs = blocks
     .map(
       (name) =>
-        "  COMPONENTS_REGISTRY_URL=" +
+        '  COMPONENTS_REGISTRY_URL="' +
         base +
+        '"' +
         " npx shadcn-svelte@" +
         SHADCN_CLI_VERSION +
         " add " +
@@ -4109,12 +4110,30 @@ export function buildUiShadcnFiles(context) {
   const registryUrl = String(config.registryUrl ?? "").trim();
   const registryConfigured = registryUrl.length > 0;
   const registryBase = registryUrl.replace(/\/+$/, "");
-  // The base a consumer points the CLI at: a version, not "latest". This is the
-  // same value that lives in Doppler as COMPONENTS_REGISTRY_URL, composed from
-  // the two config keys so the documented command and the generated pin agree.
+  // The base a consumer points the CLI at: a version, not "latest".
+  //
+  // `themeVersion` is the ONLY place this project names a version. When a
+  // registry URL is configured the pin is composed from it; when it is not, the
+  // pin is composed onto the Doppler value at run time. Doppler holds the
+  // versionless base (`http://ryzen:3012/r`) for the same reason the catalog's
+  // `registryUrl` does: a second copy of the version in an environment variable
+  // is a second thing to keep in step, and nothing checked it.
+  //
+  // This is safe only because the CLI appends nothing to the base it is given,
+  // so the composition is visible: `"$(doppler ...)/v1.11.0"` is a command
+  // substitution followed by a literal, not a placeholder someone has to know
+  // about.
   const registryVersionedBase = registryConfigured
     ? `${registryBase}/v${themeVersion}`
     : "";
+  // Unquoted on purpose: every use site wraps the base in double quotes, so a
+  // command substitution inside it is protected wherever it lands (and a plain
+  // URL is merely quoted exactly as before).
+  const dopplerLookup =
+    "$(doppler secrets get COMPONENTS_REGISTRY_URL --project common --config dev --plain)";
+  const resolvedBase = registryConfigured
+    ? registryVersionedBase
+    : `${dopplerLookup}/v${themeVersion}`;
 
   // Blocks are opt-in and validated against the published list. Unknown names
   // are dropped rather than emitted: an instruction to install a block that
@@ -4161,15 +4180,11 @@ export function buildUiShadcnFiles(context) {
   // overwriting existing CSS variables that `--yes` does not answer, and
   // non-interactively it prints that question and exits 0 having written
   // nothing - a green exit and no theme.
-  const installCommand = registryConfigured
-    ? `COMPONENTS_REGISTRY_URL=${registryVersionedBase} npx shadcn-svelte@${SHADCN_CLI_VERSION} add theme --yes --overwrite`
-    : `COMPONENTS_REGISTRY_URL="$(doppler secrets get COMPONENTS_REGISTRY_URL --project common --config dev --plain)" npx shadcn-svelte@${SHADCN_CLI_VERSION} add theme --yes --overwrite`;
+  const installCommand = `COMPONENTS_REGISTRY_URL="${resolvedBase}" npx shadcn-svelte@${SHADCN_CLI_VERSION} add theme --yes --overwrite`;
 
   // The base the block commands carry. Same pin as the theme: blocks are
   // published at the theme's version, so one base installs both.
-  const blocksBase = registryConfigured
-    ? registryVersionedBase
-    : `"$(doppler secrets get COMPONENTS_REGISTRY_URL --project common --config dev --plain)"`;
+  const blocksBase = resolvedBase;
 
   // The bare Tailwind v4 entry. `shadcn add @nb/theme` merges the item's
   // `cssVars` and `css` into this file, so anything else here - an import of a
@@ -4271,7 +4286,10 @@ ${
     ? ""
     : `- **\`ui-shadcn.registryUrl\` was empty at generation time**, so the command
   above resolves the base from Doppler (\`common\`: \`COMPONENTS_REGISTRY_URL\`,
-  present in \`dev\`, \`stg\` and \`prd\`). Nothing here points at a guessed host.
+  present in \`dev\`, \`stg\` and \`prd\`) and appends \`/v${themeVersion}\`. The
+  secret is the *host* -- versionless, like \`ui-shadcn.registryUrl\` -- so the
+  version is named once, here, and a version in that secret cannot drift from
+  the pin in this file. Nothing here points at a guessed host.
 `
 }
 ${renderBlocksSection(blocks, unknownBlocks, () => blocksBase)}${renderBrowseSection(() => blocksBase, themeVersion)}
