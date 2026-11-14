@@ -30,6 +30,7 @@ const EXPECTED_IDS = [
   "devcontainer-node",
   "svelte",
   "sveltekit",
+  "ui-shadcn",
   "dagster",
   "pydantic-agent",
   "devcontainer-python",

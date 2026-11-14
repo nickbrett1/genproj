@@ -392,6 +392,44 @@
       "website": "https://kit.svelte.dev/"
     },
     {
+      "id": "ui-shadcn",
+      "name": "shadcn-svelte Design System",
+      "description": "Installs Tailwind and the shadcn-svelte base, writes components.json with the house @nb registry pre-configured and pinned, and leaves the theme install one command away so a new Svelte project is styled by the design system rather than by hand.",
+      "category": "frameworks",
+      "icon": "globe",
+      "iconColor": "purple",
+      "selectedByDefault": false,
+      "provides": [],
+      "dependencies": ["sveltekit", "doppler"],
+      "conflicts": [],
+      "requiresAuth": [],
+      "authServices": [],
+      "externalServices": [],
+      "configurationSchema": {
+        "type": "object",
+        "properties": {
+          "registryUrl": {
+            "type": "string",
+            "default": "",
+            "description": "Base URL of the house @nb registry, e.g. https://<host>/r. Free text and empty by default, and NOT guessed: genproj cannot know the registry's real address, and a plausible-looking wrong default is a silent misconfiguration that only shows up as a 404 in a generated project. Empty writes the registry block with a placeholder, and the project says so, rather than lying."
+          },
+          "themeVersion": {
+            "type": "string",
+            "default": "1.0.0",
+            "description": "The @nb/theme version to pin. Published versions are immutable, so a project that pins 1.0.0 keeps exactly the token sheet it was generated with; bump it deliberately, never to \"latest\"."
+          }
+        }
+      },
+      "vscodeExtensions": ["bradlc.vscode-tailwindcss"],
+      "benefits": [
+        "Tailwind and the shadcn-svelte base without a second scaffold step",
+        "components.json is wired to @nb so `shadcn add` works in the generated repo",
+        "The theme is a versioned registry item, not a copied CSS file"
+      ],
+      "links": [],
+      "website": "https://shadcn-svelte.com/"
+    },
+    {
       "id": "dagster",
       "name": "Dagster",
       "description": "Configures a Dagster project for data orchestration.",

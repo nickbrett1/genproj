@@ -2015,6 +2015,15 @@ function _getFrameworkConfig(context) {
     typeField = "module";
   }
 
+  // `ui-shadcn` installs the house design system's foundation: Tailwind v4
+  // through its Vite plugin, plus the three utilities the shadcn-svelte
+  // primitives import. Nothing here is a CLI call - the generator emits files,
+  // it never runs `npm`/`npx`/`shadcn add` (see spec 026).
+  if (context.capabilities.includes("ui-shadcn")) {
+    devDependencies +=
+      ',\n    "@tailwindcss/vite": "^4.1.14",\n    "tailwindcss": "^4.1.14",\n    "clsx": "^2.1.1",\n    "tailwind-merge": "^3.3.1",\n    "tailwind-variants": "^3.1.1"';
+  }
+
   return { typeField, scripts, devDependencies, overrides };
 }
 
@@ -3861,6 +3870,149 @@ export function normalizeYamlBlankLines(content) {
     .replace(/\n+$/, "\n");
 }
 
+/**
+ * The placeholder the `@nb` block carries when `ui-shadcn.registryUrl` is
+ * empty. An `.invalid` TLD (RFC 2606) can never resolve, so an unconfigured
+ * project fails loudly at `shadcn add` time instead of quietly fetching from
+ * something that does not exist. It is deliberately not `ryzen:3012`: a
+ * capability that bakes in one host's nickname looks correct on exactly one
+ * machine.
+ */
+export const NB_REGISTRY_PLACEHOLDER_URL =
+  "https://registry.invalid/r/{name}.json";
+
+/**
+ * The `ui-shadcn` capability's files: Tailwind's entry stylesheet, a
+ * `components.json` wired to the house `@nb` registry, the `cn()` helper the
+ * shadcn-svelte primitives import, and the agent-facing styling rules.
+ *
+ * What is deliberately absent is the theme's *content*. The token sheet has one
+ * authority - the versioned registry item - and copying it into a template is
+ * the drift problem wearing a capability's clothes (spec 026). So the generated
+ * `src/nb-theme.css` is an honest placeholder that names the command which
+ * replaces it, and `src/app.css` imports it so the project builds either way.
+ * @param {Object} context - Generation context
+ * @returns {Array<{filePath: string, content: string}>} Files to emit
+ */
+export function buildUiShadcnFiles(context) {
+  if (!context.capabilities.includes("ui-shadcn")) {
+    return [];
+  }
+
+  const prefix = sveltePrefix(context);
+  const config = context.configuration?.["ui-shadcn"] || {};
+  const themeVersion = String(config.themeVersion ?? "").trim() || "1.0.0";
+  const registryUrl = String(config.registryUrl ?? "").trim();
+  const registryConfigured = registryUrl.length > 0;
+  const registryBase = registryConfigured
+    ? registryUrl.replace(/\/+$/, "")
+    : "https://registry.invalid";
+
+  const componentsJson = {
+    $schema: "https://shadcn-svelte.com/schema.json",
+    style: "new-york",
+    tailwind: { css: "src/app.css", baseColor: "slate" },
+    aliases: {
+      components: "$lib/components",
+      utils: "$lib/utils",
+      ui: "$lib/components/ui",
+      hooks: "$lib/hooks",
+      lib: "$lib",
+    },
+    typescript: true,
+    registries: {
+      "@nb": {
+        // `{name}.json` plus `params.version` is the only shape the registry
+        // answers for an item: `/r/theme.json?version=1.0.0`. An unversioned
+        // request is a 400 by design (spec 025 of the registry, §3.6.9), so a
+        // capability that omitted `params.version` would produce a project
+        // that cannot install anything.
+        url: registryConfigured
+          ? `${registryBase}/{name}.json`
+          : NB_REGISTRY_PLACEHOLDER_URL,
+        headers: { Authorization: "Bearer ${NB_REGISTRY_TOKEN}" },
+        params: { version: themeVersion },
+      },
+    },
+  };
+
+  const installCommand = registryConfigured
+    ? `npx shadcn-svelte@latest add @nb/theme`
+    : `npx shadcn-svelte@latest add @nb/theme   # after setting ui-shadcn.registryUrl`;
+
+  const appCss = `@import "tailwindcss";
+/* House theme (@nb/theme v${themeVersion}).
+   The token sheet has exactly one authority - the immutable registry item - so
+   it is NOT copied in here. ${installCommand}
+   replaces src/nb-theme.css with the published bytes. Until then this project
+   builds with Tailwind's defaults and is unstyled; see
+   .agents/.rules/styling_guidelines.md. */
+@import "./nb-theme.css";
+`;
+
+  const nbThemeCss = `/*
+ * Placeholder for @nb/theme v${themeVersion} - NOT the design system.
+ *
+ * Nothing in this file is a token. Install the real one with:
+ *
+ *   ${installCommand}
+ *
+ * ${registryConfigured ? `The @nb registry URL is configured in components.json (${registryBase}).` : `components.json carries an unresolvable placeholder URL because ui-shadcn.registryUrl is empty. Set it in the project's generation configuration and regenerate, or edit components.json by hand.`}
+ *
+ * Do not hand-edit this file into a theme: a token sheet copied into a project
+ * is the drift this capability exists to stop.
+ */
+`;
+
+  const utilsTs = `import { type ClassValue, clsx } from "clsx";
+import { twMerge } from "tailwind-merge";
+
+/**
+ * Merges class lists the way the shadcn-svelte components expect: conditional
+ * classes via clsx, then Tailwind-aware conflict resolution via tailwind-merge.
+ */
+export function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs));
+}
+`;
+
+  const stylingRules = `# Styling Rules
+
+This project uses the house design system through the \`@nb\` shadcn registry.
+
+- **Semantic tokens only, never a raw colour literal.** Read \`var(--bg)\`,
+  \`var(--ink)\`, \`var(--accent)\`, … from \`src/nb-theme.css\` (installed from the
+  registry). A hex value in a component is a bug.
+- **Compose, do not re-implement.** Import primitives from \`$lib/components/ui\`;
+  do not hand-write a button, card, input or badge.
+- **Install blocks, do not invent layouts.** If a named \`@nb/blocks\` pattern
+  exists for the page you are writing, \`shadcn add\` it instead of writing one.
+- **The theme is pinned, not floating.** \`components.json\` pins
+  \`@nb/theme\` at \`${themeVersion}\`. A bump is a deliberate change with a diff,
+  never \`latest\`.
+${
+  registryConfigured
+    ? ""
+    : `- **The registry block is inert.** \`ui-shadcn.registryUrl\` was empty when this
+  project was generated, so \`components.json\` points at an \`.invalid\`
+  placeholder. Set the URL (and \`NB_REGISTRY_TOKEN\` in Doppler) before running
+  \`shadcn add\`.
+`
+}
+`;
+
+  return [
+    {
+      filePath: `${prefix}components.json`,
+      content: `${JSON.stringify(componentsJson, null, 2)}\n`,
+    },
+    { filePath: `${prefix}src/app.css`, content: appCss },
+    { filePath: `${prefix}src/nb-theme.css`, content: nbThemeCss },
+    { filePath: `${prefix}src/lib/utils.ts`, content: utilsTs },
+    { filePath: ".agents/.rules/styling_guidelines.md", content: stylingRules },
+  ];
+}
+
 export async function generateAllFiles(context) {
   // Fail before emitting anything: a project that silently resolves order-
   // dependently is worse than one that refuses to generate, and a build matrix
@@ -3937,6 +4089,7 @@ export async function generateAllFiles(context) {
     ...cloudLoginFiles,
     ...otherFiles,
     ...generateAgentRulesFiles(),
+    ...buildUiShadcnFiles(context),
   ];
 
   // Svelte-in-a-non-node-project relocates the whole frontend into its own
@@ -4186,6 +4339,9 @@ describe("generated app smoke test", () => {
 export function generateViteConfigFile(context) {
   const hasSvelteKit = context.capabilities.includes("sveltekit");
   const hasSvelte = hasFrontend(context) && !hasSvelteKit;
+  // Tailwind arrives as a Vite plugin (v4), not a PostCSS config: the same
+  // plugin is what compiles `@import "tailwindcss"` in src/app.css.
+  const hasUiShadcn = context.capabilities.includes("ui-shadcn");
 
   // Coverage is reported (lcov feeds SonarCloud) and thresholds ARE enforced:
   // generated SvelteKit projects ship a smoke test that satisfies them (see
@@ -4229,10 +4385,10 @@ ${coverageConfig}
   if (hasSvelteKit) {
     content = `import { sveltekit } from "@sveltejs/kit/vite";
 import { svelteTesting } from "@testing-library/svelte/vite";
-import { defineConfig } from "vite";
+${hasUiShadcn ? 'import tailwindcss from "@tailwindcss/vite";\n' : ""}import { defineConfig } from "vite";
 
 export default defineConfig({
-  plugins: [sveltekit(), svelteTesting()],
+  plugins: [sveltekit(), svelteTesting()${hasUiShadcn ? ", tailwindcss()" : ""}],
 ${testConfigSvelte}
 });
 `;
