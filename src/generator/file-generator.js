@@ -3895,43 +3895,43 @@ export const SHADCN_CLI_VERSION = "1.8.1";
 export const NB_REGISTRY_PLACEHOLDER_URL = "https://registry.invalid";
 
 /**
- * The `@nb/theme` version `ui-shadcn` pins when the configuration does not
- * name one. v1.2.0 is the first version published as a theme item of the only
- * shape `shadcn-svelte` installs: `cssVars.theme` (the custom properties) plus
- * `css` (rules keyed by selector), which the CLI merges into the consumer's own
- * stylesheet. Older versions carried `files[].target`; the CLI resolves that
- * against the basename of the tailwind CSS file used as a directory, so
- * `add theme` created `<cwd>/app.css/src/nb-theme.css` and left `src/app.css`
- * untouched. Registry items are immutable, so a correction only ever arrives as
- * a new version - pin the one whose shape the CLI supports. Kept in lockstep
- * with the catalog's `themeVersion` default by a test, not by memory.
+ * The `ui-shadcn` capability, looked up once. The two values below are derived
+ * from it rather than restated: they were copies of catalog data, and a copy of
+ * a value that only a human keeps in step is wrong eventually - this one was
+ * moved by hand three times in a single day.
  */
-export const NB_THEME_DEFAULT_VERSION = "1.11.0";
+const uiShadcnCatalogEntry = capabilities.find((c) => c.id === "ui-shadcn");
+const uiShadcnConfig = uiShadcnCatalogEntry.configurationSchema.properties;
 
 /**
- * The eleven blocks the registry publishes at the same version as the theme
- * (`ui-registry` v1.11.0). Whitelisted rather than free text: a typo in a block
- * name must not become a silent no-op in a generated project's instructions,
- * and the list is what the catalogue's multi-select offers.
- *
- * Order is the registry's catalogue order, so this list and the served index can
- * be compared by eye. `bar-series` (1.9.0) and `data-table` (1.8.0) were added
- * when a second consumer needed the same geometry with its own words - a
- * labelled value axis, and columns with aligned numerics.
+ * The `@nb/theme` version `ui-shadcn` pins when the configuration does not
+ * name one - the catalog's `themeVersion` default, not a second copy of it, so
+ * a version bump is a catalog edit and nothing else. The prose that used to sit
+ * here is now where it belongs, on that default's description; the shape it
+ * describes survives as the reason the floor is a version and not a branch:
+ * v1.2.0 is the first version published as a theme item of the only shape
+ * `shadcn-svelte` installs (`cssVars.theme` plus `css`, which the CLI merges
+ * into the consumer's own stylesheet). Older versions carried `files[].target`;
+ * the CLI resolves that against the basename of the tailwind CSS file used as a
+ * directory, so `add theme` created `<cwd>/app.css/src/nb-theme.css` and left
+ * `src/app.css` untouched. Registry items are immutable, so a correction only
+ * ever arrives as a new version - pin the one whose shape the CLI supports.
  */
-export const NB_BLOCKS = [
-  "app-shell",
-  "stat-strip",
-  "result-list",
-  "filter-panel",
-  "empty-state",
-  "status-view",
-  "detail-panel",
-  "burst-timeline",
-  "bar-series",
-  "data-table",
-  "request-form",
-];
+export const NB_THEME_DEFAULT_VERSION = uiShadcnConfig.themeVersion.default;
+
+/**
+ * The blocks `ui-shadcn` may install - the catalog's `blocks` enum, in the
+ * catalog's order, which is the registry's catalogue order. Derived, because
+ * the list already existed twice (the multi-select's enum and this whitelist)
+ * and the second copy could only drift: a block added to the registry and the
+ * catalog but not here became a silently dropped request.
+ *
+ * Whitelisted rather than free text: a typo in a block name must not become a
+ * silent no-op in a generated project's instructions. Frozen because it is the
+ * catalog's own array, not a copy - a caller that pushed to it would edit the
+ * catalog for every later consumer in the process.
+ */
+export const NB_BLOCKS = Object.freeze(uiShadcnConfig.blocks.items.enum);
 
 /**
  * The block install instructions appended to a generated project's styling

@@ -29,7 +29,12 @@
 
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { generateAllFiles } from "../../src/generator/file-generator.js";
+import {
+  generateAllFiles,
+  NB_BLOCKS,
+  NB_THEME_DEFAULT_VERSION,
+} from "../../src/generator/file-generator.js";
+import { capabilities } from "../../src/catalog/index.js";
 import { resolveDependencies } from "../../src/generator/capability-resolver.js";
 
 async function render(capabilities, ui = {}, projectName = "demo") {
@@ -105,43 +110,40 @@ describe("ui-shadcn: components.json", () => {
     expect(rules).not.toContain("@latest");
   });
 
-  it("pins the catalog's default version and says so in the rules", async () => {
-    const catalog = JSON.parse(
-      readFileSync(
-        new URL("../../src/catalog/catalog.json", import.meta.url),
-        "utf8",
-      ),
-    );
-    const entry = catalog.capabilities.find((c) => c.id === "ui-shadcn");
-    const catalogDefault =
-      entry.configurationSchema.properties.themeVersion.default;
+  it("takes the pin and the block list from the catalog, never from a copy", async () => {
+    const entry = capabilities.find((c) => c.id === "ui-shadcn");
+    const properties = entry.configurationSchema.properties;
 
-    // The version the rules name and the catalog default are one decision.
-    // When they drift a project silently pins a version whose item shape this
-    // scaffold does not target - it installs, and nothing says why the theme
-    // landed somewhere else.
+    // Identity, not equality: this list must *be* the catalog's enum. A copy
+    // that happens to match today is the defect - the whitelist and the
+    // multi-select were the same list twice, and a block added to one was
+    // silently dropped by the other. Three hand-edits in one day is what a
+    // passing equality test looked like right up until the fourth.
+    expect(NB_BLOCKS).toBe(properties.blocks.items.enum);
+
+    // A string has no identity to assert, so the derivation is stated by its
+    // absence: no literal may be assigned to the constant.
+    const source = readFileSync(
+      new URL("../../src/generator/file-generator.js", import.meta.url),
+      "utf8",
+    );
+    expect(source).not.toMatch(/NB_THEME_DEFAULT_VERSION\s*=\s*["'`\d]/);
+    expect(NB_THEME_DEFAULT_VERSION).toBe(properties.themeVersion.default);
+
+    // And the derived values are what the generated rules actually carry: the
+    // render goes through the generator, so a default nobody can install (a
+    // version that predates the blocks, or an index that was never filled)
+    // still shows up as a command that 404s at the end of a scaffold.
     const { find } = await render([...BASE, "ui-shadcn"], {
       registryUrl: "http://ryzen:3012/r",
+      blocks: [NB_BLOCKS[0]],
     });
     const rules = find(".agents/.rules/styling_guidelines.md");
-    expect(rules).toContain(`/v${catalogDefault}" npx shadcn-svelte@`);
-
-    // 1.2.0 is the first version published as `cssVars` + `css` with no
-    // `files[]`: what `shadcn-svelte@1.8.1` merges into src/app.css. 1.10.1 is
-    // where all eleven blocks live, at the same version as the theme, so a
-    // project that installs blocks must not pin 1.2.0 - that base 404s on
-    // `add app-shell`. 1.1.0 carried `target: src/nb-theme.css`, which the CLI
-    // resolved against the basename of app.css used as a directory and wrote
-    // into a folder named `app.css`; 1.0.0 targeted src/app.css.
-    //
-    // The patch matters as much as the minor: a version index is a *snapshot*
-    // of the whole catalogue (ui-registry's lesson), so 1.10.0 and 1.10.1 were
-    // only usable once every item was published into them - 1.11.0 included,
-    // which shipped as an app-shell-only index and would have answered
-    // "Registry item 'theme' does not exist" until the release filled it.
-    // 1.10.1 carries app-shell's sticky-inset fix, so it is the floor; 1.11.0
-    // adds `embedded`, which is what makes the blocks safe to use in a card.
-    expect(catalogDefault).toBe("1.11.0");
+    expect(rules).toContain(
+      `/v${properties.themeVersion.default}" npx shadcn-svelte@`,
+    );
+    expect(rules).toContain(`add ${NB_BLOCKS[0]} --yes --overwrite`);
+    expect(rules).not.toContain("does not exist");
   });
 
   it("resolves the base from Doppler when no registry URL is given", async () => {
@@ -388,19 +390,9 @@ describe("ui-shadcn: browsing the catalogue is part of selecting from it", () =>
   const BASE_URL = "http://ryzen:3012/r";
 
   it("accepts every published block, including the chart and the table", async () => {
-    const blocks = [
-      "app-shell",
-      "stat-strip",
-      "result-list",
-      "filter-panel",
-      "empty-state",
-      "status-view",
-      "detail-panel",
-      "burst-timeline",
-      "bar-series",
-      "data-table",
-      "request-form",
-    ];
+    // The catalog's own list, not a third copy of it: the point is that
+    // nothing the multi-select can offer is dropped on the way to the rules.
+    const blocks = [...NB_BLOCKS];
     const { find } = await render([...BASE, "ui-shadcn"], {
       registryUrl: BASE_URL,
       blocks,

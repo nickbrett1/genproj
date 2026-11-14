@@ -156,6 +156,25 @@ vi.mock("../../src/catalog/index.js", () => ({
       name: "Python DevContainer",
       templates: [],
     },
+    // The generator derives its theme pin and block whitelist from this
+    // entry at module load, so the mock has to carry it even though these
+    // tests never select `ui-shadcn`.
+    {
+      id: "ui-shadcn",
+      name: "UI (shadcn-svelte)",
+      configurationSchema: {
+        type: "object",
+        properties: {
+          registryUrl: { type: "string", default: "" },
+          blocks: {
+            type: "array",
+            items: { type: "string", enum: ["app-shell"] },
+            default: [],
+          },
+          themeVersion: { type: "string", default: "1.11.0" },
+        },
+      },
+    },
   ],
 }));
 
