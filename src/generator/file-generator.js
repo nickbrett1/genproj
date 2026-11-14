@@ -2019,9 +2019,14 @@ function _getFrameworkConfig(context) {
   // through its Vite plugin, plus the three utilities the shadcn-svelte
   // primitives import. Nothing here is a CLI call - the generator emits files,
   // it never runs `npm`/`npx`/`shadcn add` (see spec 026).
+  //
+  // `shadcn-svelte` itself is a dependency, not just a tool used once: the
+  // install of `@nb/theme` merges in `@import "shadcn-svelte/tailwind.css";`,
+  // so a project that installs the theme and lacks the package fails its next
+  // build on a missing import. Found by installing the theme in a generated
+  // project and building it, not by reading the registry item.
   if (context.capabilities.includes("ui-shadcn")) {
-    devDependencies +=
-      ',\n    "@tailwindcss/vite": "^4.1.14",\n    "tailwindcss": "^4.1.14",\n    "clsx": "^2.1.1",\n    "tailwind-merge": "^3.3.1",\n    "tailwind-variants": "^3.1.1"';
+    devDependencies += `,\n    "@tailwindcss/vite": "^4.1.14",\n    "tailwindcss": "^4.1.14",\n    "clsx": "^2.1.1",\n    "tailwind-merge": "^3.3.1",\n    "tailwind-variants": "^3.1.1",\n    "shadcn-svelte": "^${SHADCN_CLI_VERSION}"`;
   }
 
   return { typeField, scripts, devDependencies, overrides };
@@ -3871,15 +3876,23 @@ export function normalizeYamlBlankLines(content) {
 }
 
 /**
- * The placeholder the `@nb` block carries when `ui-shadcn.registryUrl` is
- * empty. An `.invalid` TLD (RFC 2606) can never resolve, so an unconfigured
- * project fails loudly at `shadcn add` time instead of quietly fetching from
- * something that does not exist. It is deliberately not `ryzen:3012`: a
- * capability that bakes in one host's nickname looks correct on exactly one
- * machine.
+ * The pinned `shadcn-svelte` CLI version, the one the registry's own contract
+ * test executes (`scripts/cli-contract.js` in `ui-registry`). Pinned, not
+ * `@latest`: the flags the documented install command depends on
+ * (`--overwrite` answering the CSS-variable confirm) and the registry shapes
+ * this capability emits were verified against this exact version, and `@latest`
+ * would make a generated project's install depend on the day it ran.
  */
-export const NB_REGISTRY_PLACEHOLDER_URL =
-  "https://registry.invalid/r/{name}.json";
+export const SHADCN_CLI_VERSION = "1.8.1";
+
+/**
+ * Retained as a name for "there is no registry URL here", used only in prose.
+ * The `components.json` `registries` block that once carried it is gone: that
+ * block is shadcn/ui (React) syntax, and `shadcn-svelte` reads its base from
+ * `COMPONENTS_REGISTRY_URL` instead. An `.invalid` TLD (RFC 2606) can never
+ * resolve, so prose that names it stays honest.
+ */
+export const NB_REGISTRY_PLACEHOLDER_URL = "https://registry.invalid";
 
 /**
  * The `@nb/theme` version `ui-shadcn` pins when the configuration does not
@@ -3921,10 +3934,21 @@ export function buildUiShadcnFiles(context) {
     String(config.themeVersion ?? "").trim() || NB_THEME_DEFAULT_VERSION;
   const registryUrl = String(config.registryUrl ?? "").trim();
   const registryConfigured = registryUrl.length > 0;
-  const registryBase = registryConfigured
-    ? registryUrl.replace(/\/+$/, "")
-    : "https://registry.invalid";
+  const registryBase = registryUrl.replace(/\/+$/, "");
+  // The base a consumer points the CLI at: a version, not "latest". This is the
+  // same value that lives in Doppler as COMPONENTS_REGISTRY_URL, composed from
+  // the two config keys so the documented command and the generated pin agree.
+  const registryVersionedBase = registryConfigured
+    ? `${registryBase}/v${themeVersion}`
+    : "";
 
+  // Deliberately NO `registries` block. That block is shadcn/ui (React) syntax:
+  // `shadcn-svelte@1.8.1` implements no `registries` map, no `headers`, no
+  // `{name}` template and no `params.version`, so emitting it would be dead
+  // config that reads as a working pin. This CLI takes its base from
+  // COMPONENTS_REGISTRY_URL, used verbatim (it does not append
+  // `/styles/<style>/` to it), so the version belongs in that URL. See
+  // specs/026 and the registry's README.
   const componentsJson = {
     $schema: "https://shadcn-svelte.com/schema.json",
     style: "new-york",
@@ -3937,25 +3961,17 @@ export function buildUiShadcnFiles(context) {
       lib: "$lib",
     },
     typescript: true,
-    registries: {
-      "@nb": {
-        // `{name}.json` plus `params.version` is the only shape the registry
-        // answers for an item: `/r/theme.json?version=1.2.0`. An unversioned
-        // request is a 400 by design (spec 025 of the registry, §3.6.9), so a
-        // capability that omitted `params.version` would produce a project
-        // that cannot install anything.
-        url: registryConfigured
-          ? `${registryBase}/{name}.json`
-          : NB_REGISTRY_PLACEHOLDER_URL,
-        headers: { Authorization: "Bearer ${NB_REGISTRY_TOKEN}" },
-        params: { version: themeVersion },
-      },
-    },
   };
 
+  // Exactly the command the registry's contract test proves, with the base
+  // spelled out when one was configured and resolved from Doppler when it was
+  // not. `--overwrite` is not tidiness: `add` asks a second question about
+  // overwriting existing CSS variables that `--yes` does not answer, and
+  // non-interactively it prints that question and exits 0 having written
+  // nothing - a green exit and no theme.
   const installCommand = registryConfigured
-    ? `npx shadcn-svelte@latest add @nb/theme`
-    : `npx shadcn-svelte@latest add @nb/theme   # after setting ui-shadcn.registryUrl`;
+    ? `COMPONENTS_REGISTRY_URL=${registryVersionedBase} npx shadcn-svelte@${SHADCN_CLI_VERSION} add theme --yes --overwrite`
+    : `COMPONENTS_REGISTRY_URL="$(doppler secrets get COMPONENTS_REGISTRY_URL --project common --config dev --plain)" npx shadcn-svelte@${SHADCN_CLI_VERSION} add theme --yes --overwrite`;
 
   // The bare Tailwind v4 entry. `shadcn add @nb/theme` merges the item's
   // `cssVars` and `css` into this file, so anything else here - an import of a
@@ -3988,19 +4004,35 @@ This project uses the house design system through the \`@nb\` shadcn registry.
   exists for the page you are writing, \`shadcn add\` it instead of writing one.
 - **Install the theme with the CLI, do not copy it.** The theme is a
   \`registry:theme\` item whose \`cssVars\` and \`css\` are merged into
-  \`src/app.css\`, so there is no separate stylesheet to import. Run
-  \`${installCommand}\`; a token sheet pasted into the project is the drift this
-  capability exists to stop.
-- **The theme is pinned, not floating.** \`components.json\` pins
-  \`@nb/theme\` at \`${themeVersion}\`. A bump is a deliberate change with a diff,
-  never \`latest\`.
+  \`src/app.css\`, so there is no separate stylesheet to import. Run:
+
+  \`\`\`bash
+  ${installCommand}
+  \`\`\`
+
+  A token sheet pasted into the project is the drift this capability exists to
+  stop.
+- **\`--overwrite\` is required, and \`--yes\` is not a substitute.** \`add\` asks a
+  second question - "Updates to your src/app.css are required. Existing CSS
+  variables may be overwritten. Continue?" - that \`--yes\` does not answer. Run
+  non-interactively without \`--overwrite\` and the CLI prints that question and
+  **exits 0 having written nothing**: a success exit and no theme. Do not "fix"
+  a missing theme by copying one in; check the flag.
+- **The merge pulls in \`@import "shadcn-svelte/tailwind.css";\`**, so
+  \`shadcn-svelte\` must stay a dependency of this project. It comes from the
+  install path, not from the item, so it is not visible in the registry.
+- **The theme is pinned, not floating.** The pin is the version segment of
+  \`COMPONENTS_REGISTRY_URL\` - \`${registryConfigured ? registryVersionedBase : "<registry base>/v" + themeVersion}\` -
+  and registry items are immutable, so a bump is a deliberate edit with a diff,
+  never \`latest\`. \`components.json\` carries no registry block on purpose: this
+  CLI has no \`registries\` map, so a block there would read as a working pin and
+  do nothing.
 ${
   registryConfigured
     ? ""
-    : `- **The registry block is inert.** \`ui-shadcn.registryUrl\` was empty when this
-  project was generated, so \`components.json\` points at an \`.invalid\`
-  placeholder. Set the URL (and \`NB_REGISTRY_TOKEN\` in Doppler) before running
-  \`shadcn add\`.
+    : `- **\`ui-shadcn.registryUrl\` was empty at generation time**, so the command
+  above resolves the base from Doppler (\`common\`: \`COMPONENTS_REGISTRY_URL\`,
+  present in \`dev\`, \`stg\` and \`prd\`). Nothing here points at a guessed host.
 `
 }
 `;
