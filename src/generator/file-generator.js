@@ -3883,25 +3883,30 @@ export const NB_REGISTRY_PLACEHOLDER_URL =
 
 /**
  * The `@nb/theme` version `ui-shadcn` pins when the configuration does not
- * name one. It must be a version whose item `target` is `src/nb-theme.css`,
- * because that is the path the emitted `src/app.css` imports - registry items
- * are immutable, so a corrected target only ever arrives as a new version.
- * v1.1.0 is that version; v1.0.0 targets `src/app.css` and would overwrite the
- * project's own `@import "tailwindcss"`. Kept in lockstep with the catalog's
- * `themeVersion` default by a test, not by memory.
+ * name one. v1.2.0 is the first version published as a theme item of the only
+ * shape `shadcn-svelte` installs: `cssVars.theme` (the custom properties) plus
+ * `css` (rules keyed by selector), which the CLI merges into the consumer's own
+ * stylesheet. Older versions carried `files[].target`; the CLI resolves that
+ * against the basename of the tailwind CSS file used as a directory, so
+ * `add theme` created `<cwd>/app.css/src/nb-theme.css` and left `src/app.css`
+ * untouched. Registry items are immutable, so a correction only ever arrives as
+ * a new version - pin the one whose shape the CLI supports. Kept in lockstep
+ * with the catalog's `themeVersion` default by a test, not by memory.
  */
-export const NB_THEME_DEFAULT_VERSION = "1.1.0";
+export const NB_THEME_DEFAULT_VERSION = "1.2.0";
 
 /**
  * The `ui-shadcn` capability's files: Tailwind's entry stylesheet, a
  * `components.json` wired to the house `@nb` registry, the `cn()` helper the
  * shadcn-svelte primitives import, and the agent-facing styling rules.
  *
- * What is deliberately absent is the theme's *content*. The token sheet has one
- * authority - the versioned registry item - and copying it into a template is
- * the drift problem wearing a capability's clothes (spec 026). So the generated
- * `src/nb-theme.css` is an honest placeholder that names the command which
- * replaces it, and `src/app.css` imports it so the project builds either way.
+ * What is deliberately absent is the theme itself, in either form. The token
+ * sheet has one authority - the versioned registry item - and copying it into
+ * a template is the drift problem wearing a capability's clothes (spec 026).
+ * Nor is a placeholder emitted: a `registry:theme` item's payload is `cssVars`
+ * and `css`, which `shadcn add` merges into `src/app.css`, so the scaffold must
+ * leave that file as the bare `@import "tailwindcss";` entry the merge expects
+ * - no second stylesheet, no `@import` line naming one.
  * @param {Object} context - Generation context
  * @returns {Array<{filePath: string, content: string}>} Files to emit
  */
@@ -3935,7 +3940,7 @@ export function buildUiShadcnFiles(context) {
     registries: {
       "@nb": {
         // `{name}.json` plus `params.version` is the only shape the registry
-        // answers for an item: `/r/theme.json?version=1.1.0`. An unversioned
+        // answers for an item: `/r/theme.json?version=1.2.0`. An unversioned
         // request is a 400 by design (spec 025 of the registry, §3.6.9), so a
         // capability that omitted `params.version` would produce a project
         // that cannot install anything.
@@ -3952,29 +3957,11 @@ export function buildUiShadcnFiles(context) {
     ? `npx shadcn-svelte@latest add @nb/theme`
     : `npx shadcn-svelte@latest add @nb/theme   # after setting ui-shadcn.registryUrl`;
 
-  const appCss = `@import "tailwindcss";
-/* House theme (@nb/theme v${themeVersion}).
-   The token sheet has exactly one authority - the immutable registry item - so
-   it is NOT copied in here. ${installCommand}
-   replaces src/nb-theme.css with the published bytes. Until then this project
-   builds with Tailwind's defaults and is unstyled; see
-   .agents/.rules/styling_guidelines.md. */
-@import "./nb-theme.css";
-`;
-
-  const nbThemeCss = `/*
- * Placeholder for @nb/theme v${themeVersion} - NOT the design system.
- *
- * Nothing in this file is a token. Install the real one with:
- *
- *   ${installCommand}
- *
- * ${registryConfigured ? `The @nb registry URL is configured in components.json (${registryBase}).` : `components.json carries an unresolvable placeholder URL because ui-shadcn.registryUrl is empty. Set it in the project's generation configuration and regenerate, or edit components.json by hand.`}
- *
- * Do not hand-edit this file into a theme: a token sheet copied into a project
- * is the drift this capability exists to stop.
- */
-`;
+  // The bare Tailwind v4 entry. `shadcn add @nb/theme` merges the item's
+  // `cssVars` and `css` into this file, so anything else here - an import of a
+  // second stylesheet, a comment telling a human to wire one up - would be a
+  // lie about where the theme lives.
+  const appCss = `@import "tailwindcss";\n`;
 
   const utilsTs = `import { type ClassValue, clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
@@ -3993,12 +3980,17 @@ export function cn(...inputs: ClassValue[]) {
 This project uses the house design system through the \`@nb\` shadcn registry.
 
 - **Semantic tokens only, never a raw colour literal.** Read \`var(--bg)\`,
-  \`var(--ink)\`, \`var(--accent)\`, … from \`src/nb-theme.css\` (installed from the
-  registry). A hex value in a component is a bug.
+  \`var(--ink)\`, \`var(--accent)\`, … which \`@nb/theme\` defines in
+  \`src/app.css\`. A hex value in a component is a bug.
 - **Compose, do not re-implement.** Import primitives from \`$lib/components/ui\`;
   do not hand-write a button, card, input or badge.
 - **Install blocks, do not invent layouts.** If a named \`@nb/blocks\` pattern
   exists for the page you are writing, \`shadcn add\` it instead of writing one.
+- **Install the theme with the CLI, do not copy it.** The theme is a
+  \`registry:theme\` item whose \`cssVars\` and \`css\` are merged into
+  \`src/app.css\`, so there is no separate stylesheet to import. Run
+  \`${installCommand}\`; a token sheet pasted into the project is the drift this
+  capability exists to stop.
 - **The theme is pinned, not floating.** \`components.json\` pins
   \`@nb/theme\` at \`${themeVersion}\`. A bump is a deliberate change with a diff,
   never \`latest\`.
@@ -4019,7 +4011,6 @@ ${
       content: `${JSON.stringify(componentsJson, null, 2)}\n`,
     },
     { filePath: `${prefix}src/app.css`, content: appCss },
-    { filePath: `${prefix}src/nb-theme.css`, content: nbThemeCss },
     { filePath: `${prefix}src/lib/utils.ts`, content: utilsTs },
     { filePath: ".agents/.rules/styling_guidelines.md", content: stylingRules },
   ];

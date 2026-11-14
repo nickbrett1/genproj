@@ -1,5 +1,11 @@
 # ui-shadcn: bump the default `themeVersion` pin to 1.1.0
 
+> **Superseded (2026-11-14).** The `src/nb-theme.css` target described here is
+> not a shape the CLI installs: `shadcn-svelte@1.8.1` resolves a theme item's
+> `files[].target` against the basename of the consumer's stylesheet used as a
+> directory. The capability now pins `1.2.0` (`cssVars` + `css`, no `files`)
+> and emits no theme stylesheet at all — see `NOTE-ui-shadcn-cssvars.md`.
+
 Date: 2026-11-14
 Scope: version-pin correction only. No generation-time registry fetch, no theme
 CSS copied into a template (mechanism B, placeholder `src/nb-theme.css` stands).

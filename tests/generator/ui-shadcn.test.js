@@ -12,9 +12,11 @@
  *    primitives' `cn()` helper, `components.json` pinned to a version that the
  *    registry serves, and the token literal `${NB_REGISTRY_TOKEN}` left for the
  *    CLI to expand (never a secret written into git).
- * 3. The theme's CONTENT is absent on purpose. `src/nb-theme.css` is a
- *    placeholder, so `npm run build` succeeds and the project does not carry a
- *    hand-copied token sheet - the drift this capability exists to end.
+ * 3. The theme's CONTENT is absent on purpose, and there is no placeholder
+ *    file either. `@nb/theme` is a `registry:theme` item whose `cssVars` and
+ *    `css` the CLI merges into the project's own `src/app.css`, so the
+ *    scaffold emits no `nb-theme.css` and no import of one - the drift this
+ *    capability exists to end.
  * 4. An empty `registryUrl` produces an honest, unresolvable placeholder plus a
  *    documented "the block is inert" statement, not a guessed host.
  */
@@ -62,7 +64,7 @@ describe("ui-shadcn: components.json", () => {
     const components = JSON.parse(find("components.json"));
     const registry = components.registries["@nb"];
 
-    expect(registry.params).toEqual({ version: "1.1.0" });
+    expect(registry.params).toEqual({ version: "1.2.0" });
     // A literal, not a resolved value: `${VAR}` expansion is the CLI's job at
     // `shadcn add` time. Interpolating it here would put a live token in git.
     expect(registry.headers.Authorization).toBe("Bearer ${NB_REGISTRY_TOKEN}");
@@ -85,18 +87,20 @@ describe("ui-shadcn: components.json", () => {
       entry.configurationSchema.properties.themeVersion.default;
 
     // The emitted pin and the catalog default are one decision. When they drift
-    // a project silently pins a version whose item target is not the path this
-    // capability imports - it builds, looks unstyled, and nothing says why.
+    // a project silently pins a version whose item shape this scaffold does not
+    // target - it installs, and nothing says why the theme landed elsewhere.
     const { find } = await render([...BASE, "ui-shadcn"]);
     const registry = JSON.parse(find("components.json")).registries["@nb"];
     expect(registry.params.version).toBe(catalogDefault);
 
-    // 1.1.0 is the first version whose item targets `src/nb-theme.css`, the
-    // path the emitted `src/app.css` imports. 1.0.0 targeted `src/app.css` and
-    // overwrote the project's own `@import "tailwindcss"`.
-    expect(catalogDefault).toBe("1.1.0");
+    // 1.2.0 is the first version published as `cssVars` + `css` with no
+    // `files[]`: what `shadcn-svelte@1.8.1` merges into src/app.css. 1.1.0
+    // carried `target: src/nb-theme.css`, which the CLI resolved against the
+    // basename of app.css used as a directory and wrote into a folder named
+    // `app.css`; 1.0.0 targeted src/app.css.
+    expect(catalogDefault).toBe("1.2.0");
     expect(find(".agents/.rules/styling_guidelines.md")).toContain(
-      "`@nb/theme` at `1.1.0`",
+      "`@nb/theme` at `1.2.0`",
     );
   });
 
@@ -121,38 +125,42 @@ describe("ui-shadcn: components.json", () => {
   });
 
   it("documents that the block is inert when the URL is unset", async () => {
-    const { find } = await render([...BASE, "ui-shadcn"]);
+    const { files, find } = await render([...BASE, "ui-shadcn"]);
 
     const rules = find(".agents/.rules/styling_guidelines.md");
     expect(rules).toContain("registry block is inert");
-    expect(find("src/nb-theme.css")).toContain("placeholder URL");
+    // Inverted from the file-and-import model: there is no placeholder to
+    // carry the warning, because a theme item has no install path at all.
+    expect(files.some((f) => f.filePath.includes("nb-theme"))).toBe(false);
   });
 
   it("does not claim the block is inert once a URL is configured", async () => {
-    const { find } = await render([...BASE, "ui-shadcn"], {
+    const { files, find } = await render([...BASE, "ui-shadcn"], {
       registryUrl: "http://ryzen:3012/r",
     });
 
     const rules = find(".agents/.rules/styling_guidelines.md");
     expect(rules).not.toContain("registry block is inert");
-    expect(find("src/nb-theme.css")).not.toContain("placeholder URL");
+    expect(files.some((f) => f.filePath.includes("nb-theme"))).toBe(false);
   });
 });
 
-describe("ui-shadcn: the theme is installed, not copied", () => {
-  it("imports Tailwind and the theme without carrying any token", async () => {
-    const { find } = await render([...BASE, "ui-shadcn"]);
+describe("ui-shadcn: the theme is merged, not copied", () => {
+  it("emits the bare Tailwind entry and no theme stylesheet at all", async () => {
+    const { files, find } = await render([...BASE, "ui-shadcn"]);
 
     const appCss = find("src/app.css");
-    expect(appCss).toContain('@import "tailwindcss";');
-    expect(appCss).toContain('@import "./nb-theme.css";');
+    // Exactly the state `shadcn add @nb/theme` merges into: one import, no
+    // second stylesheet, no import line naming one.
+    expect(appCss).toBe('@import "tailwindcss";\n');
+    expect(appCss).not.toContain("nb-theme");
 
-    // The placeholder must not define the house tokens. A template copy of the
-    // token sheet is exactly the drift the capability exists to stop.
-    const placeholder = find("src/nb-theme.css");
-    expect(placeholder).toContain("NOT the design system");
-    expect(placeholder).not.toContain("--bg");
-    expect(placeholder).not.toContain("#0f172a");
+    // The placeholder is gone: v1.2.0's item carries `cssVars` + `css`, so
+    // emitting a file at all would be a path the CLI never writes.
+    expect(find("src/nb-theme.css")).toBeUndefined();
+    expect(files.some((f) => f.filePath.includes("nb-theme"))).toBe(false);
+    // And no emitted file may smuggle a token literal into the project.
+    expect(files.map((f) => f.content).join("\n")).not.toContain("#0f172a");
   });
 
   it("ships the cn() helper the primitives import", async () => {
@@ -204,7 +212,8 @@ describe("ui-shadcn: dependencies and build wiring", () => {
     // read by nothing.
     expect(find("web/components.json")).toBeDefined();
     expect(find("web/src/app.css")).toBeDefined();
-    expect(find("web/src/nb-theme.css")).toBeDefined();
+    // No theme stylesheet relocates, because none is emitted at all.
+    expect(find("web/src/nb-theme.css")).toBeUndefined();
     expect(find("web/src/lib/utils.ts")).toBeDefined();
     expect(find("components.json")).toBeUndefined();
     // Agent rules are repo-level, not frontend-level.
