@@ -127,13 +127,13 @@ describe("ui-shadcn: components.json", () => {
     expect(rules).toContain(`/v${catalogDefault} npx shadcn-svelte@`);
 
     // 1.2.0 is the first version published as `cssVars` + `css` with no
-    // `files[]`: what `shadcn-svelte@1.8.1` merges into src/app.css. 1.6.0 is
+    // `files[]`: what `shadcn-svelte@1.8.1` merges into src/app.css. 1.6.1 is
     // where the nine blocks live, at the same version as the theme, so a
     // project that installs blocks must not pin 1.2.0 - that base 404s on
     // `add app-shell`. 1.1.0 carried `target: src/nb-theme.css`, which the CLI
     // resolved against the basename of app.css used as a directory and wrote
     // into a folder named `app.css`; 1.0.0 targeted src/app.css.
-    expect(catalogDefault).toBe("1.6.0");
+    expect(catalogDefault).toBe("1.6.1");
   });
 
   it("resolves the base from Doppler when no registry URL is given", async () => {
@@ -298,10 +298,10 @@ describe("ui-shadcn: blocks are opt-in and pinned like the theme", () => {
     // The same base as the theme: the version segment is the pin, and blocks
     // are published at that version rather than floating on latest.
     expect(rules).toContain(
-      `COMPONENTS_REGISTRY_URL=${BASE_URL}/v1.6.0 npx shadcn-svelte@1.8.1 add app-shell --yes --overwrite`,
+      `COMPONENTS_REGISTRY_URL=${BASE_URL}/v1.6.1 npx shadcn-svelte@1.8.1 add app-shell --yes --overwrite`,
     );
     expect(rules).toContain(
-      `COMPONENTS_REGISTRY_URL=${BASE_URL}/v1.6.0 npx shadcn-svelte@1.8.1 add result-list --yes --overwrite`,
+      `COMPONENTS_REGISTRY_URL=${BASE_URL}/v1.6.1 npx shadcn-svelte@1.8.1 add result-list --yes --overwrite`,
     );
     // --yes is not a substitute for --overwrite: without it the CLI exits 0
     // having written nothing.

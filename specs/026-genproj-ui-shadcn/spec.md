@@ -177,7 +177,7 @@ What a selected block produces is one line in
 `.agents/.rules/styling_guidelines.md`, under a `## Blocks` heading:
 
 ```
-COMPONENTS_REGISTRY_URL=<base>/v1.6.0 npx shadcn-svelte@1.8.1 add app-shell --yes --overwrite
+COMPONENTS_REGISTRY_URL=<base>/v1.6.1 npx shadcn-svelte@1.8.1 add app-shell --yes --overwrite
 ```
 
 Four properties of that line matter, and each has a test:
@@ -185,7 +185,7 @@ Four properties of that line matter, and each has a test:
 - **The base is the theme's base.** Blocks are published at the same version as
   the theme, so the version segment is the pin for both. `themeVersion` moved
   from `1.2.0` to `1.3.0` (blocks first published) and then to `1.4.0` and
-  `1.6.0` (the props the stratechery-search conversion needed) for exactly this
+  `1.6.1` (the props the stratechery-search conversion needed) for exactly this
   reason: a
   project that installs blocks must not pin a version that does not publish
   them, or `add app-shell` 404s at the end of a scaffold. The catalog default and
