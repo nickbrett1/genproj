@@ -188,4 +188,36 @@ first version published in the merged shape.
 - a non-node frontend relocates the whole set under `web/` while the agent rules
   stay at the repository root.
 
-All 1027 tests pass; the coverage gate is unchanged.
+All 1029 tests pass; the coverage gate is unchanged.
+
+## The end-to-end check
+
+Unit tests cannot see the defects this capability actually shipped. Every one of
+them appeared only when a _generated_ project was built and rendered: a
+`components.json` the Svelte CLI ignores, an install command that prints success
+and writes nothing, a dependency the merge injects but the project never
+declared, no `tsconfig.json` while `components.json` says `typescript: true`,
+and — the expensive one — nothing importing `src/app.css`, so the build was
+green and every page was unstyled.
+
+`scripts/verify-generated-ui-shadcn-e2e.mjs` therefore asserts the seam, and is
+wired into `.buildkite/pipeline.yml` as the `generated_e2e` step:
+
+- generates the fixture with `generateAllFiles()` and checks the _emitted
+  shape_ (no `registries`, a style the Svelte CLI has, a self-contained
+  tsconfig with the `$lib` alias, a layout that imports `../app.css`, a bare
+  `src/app.css`, rules carrying the pinned `--overwrite` command);
+- runs `npm install` (a generated project has no lockfile, so `npm ci` cannot);
+- runs the pinned CLI **against the deployed registry**, with stdin closed and a
+  timeout — the CLI blocks forever on its CSS-overwrite prompt if stdin is left
+  open, and `--yes` alone answers a different question;
+- builds, then asserts the _built bundle_ carries the theme tokens and rules;
+- launches chromium and asserts a **computed style**: `body` renders `--bg` and
+  the value equals the resolved token, `.card` renders a non-zero radius,
+  `.pill.ok` renders its own colour. Transparent `--bg` means the token is
+  defined and never applied.
+
+`COMPONENTS_REGISTRY_URL` comes from Doppler (`common`), not the repository, so
+the check consumes the same value a generated project documents. The render
+check is on by default and must stay on in CI: it is the only assertion that
+distinguishes "token present" from "token applied".

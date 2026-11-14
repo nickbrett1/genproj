@@ -34,6 +34,52 @@ steps:
           echo "No test script (or the npm placeholder) - skipping tests."
         fi
 
+  # The one check that would have caught every ui-shadcn defect. Each of them
+  # was invisible to a green unit suite because it only appears when a
+  # *generated* project is built and rendered: a components.json the Svelte CLI
+  # ignores, an install command that exits 0 having written nothing, a missing
+  # dependency the merge injects, no tsconfig, and — the expensive one —
+  # nothing importing src/app.css, so the build passed and every page was
+  # unstyled. The last check here reads a computed style, because that is the
+  # only thing that can tell "token present" from "token applied".
+  - label: ":test_tube: Generated project e2e (sveltekit + ui-shadcn, computed style)"
+    key: generated_e2e
+    depends_on:
+      - build
+    timeout_in_minutes: 25
+    agents:
+      queue: mac-studio-linux
+    plugins:
+      - docker#v5.13.0:
+          image: "node:22-bookworm"
+          platform: linux/arm64
+          workdir: /workdir
+          environment:
+            - DOPPLER_TOKEN
+    commands:
+      - |
+        PINNED="$$(node -p "require('./package.json').packageManager || ''" | sed -e 's/^npm@//')"
+        if [ -n "$$PINNED" ]; then npm install -g "npm@$$PINNED"; fi
+      - if [ -f package-lock.json ]; then npm ci --no-audit --no-fund --prefer-offline; else npm install --no-audit --no-fund; fi
+      - |
+        # Playwright is installed outside the project: the e2e is a script, not
+        # a dependency of genproj, so --no-save keeps package.json honest. The
+        # browser needs its shared library set, hence --with-deps.
+        npm install --no-save --no-audit --no-fund playwright
+        npx playwright install --with-deps chromium
+      - |
+        # The registry URL is a Doppler secret, not a repo value: no generated
+        # project carries a hostname, and re-pointing the estate is one edit.
+        # Resolved here and exported, so the e2e consumes exactly the value a
+        # generated project documents.
+        if ! command -v doppler >/dev/null 2>&1; then
+          apt-get update && apt-get install -y --no-install-recommends curl ca-certificates
+          curl -Ls --tlsv1.2 --proto "=https" --retry 3 https://cli.doppler.com/install.sh | sh
+        fi
+        export COMPONENTS_REGISTRY_URL="$$(doppler secrets get COMPONENTS_REGISTRY_URL --project common --config dev --plain)"
+        echo "registry: $$COMPONENTS_REGISTRY_URL"
+        node scripts/verify-generated-ui-shadcn-e2e.mjs
+
   - label: ":rocket: Deploy (production)"
     key: deploy
     depends_on:
