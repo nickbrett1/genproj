@@ -30,10 +30,12 @@
  *   node scripts/verify-generated-ui-shadcn-e2e.mjs
  *
  * Environment:
- *   COMPONENTS_REGISTRY_URL   required. The versioned base a consumer pins,
- *                             e.g. http://ryzen:3012/r/v1.2.0. It is the same
- *                             variable a generated project documents, so the
- *                             check consumes the value it ships.
+ *   COMPONENTS_REGISTRY_URL   required. The registry HOST, without a version:
+ *                             e.g. http://ryzen:3012/r. It is the same variable
+ *                             a generated project documents, and that variable
+ *                             is versionless on purpose (spec 028) -- the pin
+ *                             is composed onto it, here from the catalog
+ *                             default, exactly as the emitted command does.
  *   GENPROJ_E2E_SKIP_RENDER=1 skip the headless computed-style check (the
  *                             compiled-CSS assertions still run). CI must not
  *                             set this: the render check is the one that
@@ -47,12 +49,15 @@ import os from "node:os";
 import path from "node:path";
 
 import { generateAllFiles } from "../src/generator/file-generator.js";
-import { SHADCN_CLI_VERSION } from "../src/generator/file-generator.js";
+import {
+  NB_THEME_DEFAULT_VERSION,
+  SHADCN_CLI_VERSION,
+} from "../src/generator/file-generator.js";
 
 const registryUrl = (process.env.COMPONENTS_REGISTRY_URL || "").trim();
 if (!registryUrl) {
   console.error(
-    "\n✗ COMPONENTS_REGISTRY_URL is required (the versioned base, e.g. http://ryzen:3012/r/v1.2.0).",
+    "\n✗ COMPONENTS_REGISTRY_URL is required (the registry host, e.g. http://ryzen:3012/r).",
   );
   console.error(
     "  Resolve it the way a consumer does: doppler secrets get COMPONENTS_REGISTRY_URL --project common --config dev --plain",
@@ -60,19 +65,25 @@ if (!registryUrl) {
   process.exit(1);
 }
 
-// The generator's `registryUrl` config is the base WITHOUT a version; the
-// documented install command composes `<base>/v<themeVersion>`. Splitting the
-// pinned URL keeps the fixture and the emitted command in agreement, and fails
-// loudly if the value in Doppler ever stops naming a version — an unversioned
-// base is a 400 from the registry by design, not a floating "latest".
-const versionedMatch = registryUrl.match(/^(.*)\/v(\d+\.\d+\.\d+)$/);
-if (!versionedMatch) {
+// The secret is the registry HOST. The pin is composed onto it here from the
+// catalog default, which is exactly what the emitted install command does
+// (`"$(doppler ...)/v1.11.0"`) -- so this check exercises the composition a
+// consumer runs, not a differently-shaped value that happens to work.
+//
+// A version inside the secret used to be required (the base was used verbatim).
+// Now it is refused: appending the pin to a versioned host yields
+// `/v1.11.0/v1.11.0`, and a secret that carries a version is a second copy of a
+// pin that nothing checks (spec 028).
+const versionedMatch = registryUrl.match(/\/v(\d+\.\d+\.\d+)\/?$/);
+if (versionedMatch) {
   console.error(
-    `\n✗ COMPONENTS_REGISTRY_URL must name a version (…/v1.2.0); got ${registryUrl}`,
+    `\n✗ COMPONENTS_REGISTRY_URL must be the host, not a pin — drop the /v${versionedMatch[1]} (spec 028); got ${registryUrl}`,
   );
   process.exit(1);
 }
-const [, registryBase, themeVersion] = versionedMatch;
+const registryBase = registryUrl.replace(/\/+$/, "");
+const themeVersion = NB_THEME_DEFAULT_VERSION;
+const pinnedBase = `${registryBase}/v${themeVersion}`;
 
 const context = {
   projectName: "genproj-e2e-ui-shadcn",
@@ -140,6 +151,7 @@ function walk(dir, found = []) {
 
 async function main() {
   console.log(`Registry: ${registryBase} (theme ${themeVersion})`);
+  console.log(`Composed base: ${pinnedBase}`);
   console.log(`Generating a sveltekit + ui-shadcn project into ${workDir} ...`);
 
   const files = await generateAllFiles(context);
@@ -183,9 +195,16 @@ async function main() {
   const rules = read(".agents/.rules/styling_guidelines.md");
   check(
     rules.includes(
-      `${registryUrl} npx shadcn-svelte@${SHADCN_CLI_VERSION} add theme --yes --overwrite`,
+      `COMPONENTS_REGISTRY_URL="${pinnedBase}" npx shadcn-svelte@${SHADCN_CLI_VERSION} add theme --yes --overwrite`,
     ),
     "the styling rules carry the versioned, pinned, --overwrite install command",
+  );
+  // The rules and this check must agree on the composed base -- the whole
+  // point is that the pin is composed, so a rule naming a different base would
+  // mean the composition drifted from the catalog default.
+  check(
+    rules.includes(`${pinnedBase}`),
+    `the rules name the composed base (${pinnedBase})`,
   );
 
   // --- install, install the theme, build -----------------------------------
@@ -213,7 +232,7 @@ async function main() {
       "--no-deps-install",
     ],
     {
-      env: { COMPONENTS_REGISTRY_URL: registryUrl, NO_COLOR: "1" },
+      env: { COMPONENTS_REGISTRY_URL: pinnedBase, NO_COLOR: "1" },
       timeoutMs: 300_000,
     },
   );
