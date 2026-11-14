@@ -3906,13 +3906,18 @@ export const NB_REGISTRY_PLACEHOLDER_URL = "https://registry.invalid";
  * a new version - pin the one whose shape the CLI supports. Kept in lockstep
  * with the catalog's `themeVersion` default by a test, not by memory.
  */
-export const NB_THEME_DEFAULT_VERSION = "1.8.0";
+export const NB_THEME_DEFAULT_VERSION = "1.10.1";
 
 /**
- * The nine blocks the registry publishes at the same version as the theme
- * (`ui-registry` v1.8.0). Whitelisted rather than free text: a typo in a block
+ * The eleven blocks the registry publishes at the same version as the theme
+ * (`ui-registry` v1.10.1). Whitelisted rather than free text: a typo in a block
  * name must not become a silent no-op in a generated project's instructions,
  * and the list is what the catalogue's multi-select offers.
+ *
+ * Order is the registry's catalogue order, so this list and the served index can
+ * be compared by eye. `bar-series` (1.9.0) and `data-table` (1.8.0) were added
+ * when a second consumer needed the same geometry with its own words - a
+ * labelled value axis, and columns with aligned numerics.
  */
 export const NB_BLOCKS = [
   "app-shell",
@@ -3923,6 +3928,8 @@ export const NB_BLOCKS = [
   "status-view",
   "detail-panel",
   "burst-timeline",
+  "bar-series",
+  "data-table",
   "request-form",
 ];
 
@@ -3937,6 +3944,80 @@ export const NB_BLOCKS = [
  * `baseFn` is a thunk because the base is either a literal (configured at
  * generation time) or a Doppler lookup that must stay shell-quoted.
  */
+const capitalise = (word) => word.charAt(0).toUpperCase() + word.slice(1);
+
+/** "eleven" is worth the twelve words: a count written as a numeral reads as a version. */
+function countWord(count) {
+  const words = [
+    "zero",
+    "one",
+    "two",
+    "three",
+    "four",
+    "five",
+    "six",
+    "seven",
+    "eight",
+    "nine",
+    "ten",
+    "eleven",
+    "twelve",
+  ];
+  return words[count] ?? String(count);
+}
+
+/**
+ * How to *find* a block, as opposed to how to install one this project already
+ * chose. Phase 3b's second half: "browse and select work; an agent installs a
+ * block rather than writing one".
+ *
+ * The browse surface is the registry's own version index, which is not an
+ * invention for this purpose -- it is the document `shadcn-svelte` fetches
+ * before anything else, and it carries `title` and `description` for every
+ * item because the published items do. One `curl` therefore answers "what
+ * exists and what is each one for", on the exact base this project is pinned
+ * to, with no MCP server and no second API to keep in step.
+ *
+ * What this deliberately does not say is "there is a shadcn MCP server here".
+ * `shadcn-svelte@1.8.1` ships no MCP server and no `registry list` command
+ * (verified against the published CLI: `registry` has one subcommand, `build`),
+ * so pointing an agent at one would be the same class of mistake as a
+ * `registries` block in `components.json`: config that reads as working.
+ */
+function renderBrowseSection(baseFn, version) {
+  const base = baseFn();
+  return `
+## Finding a block
+
+The registry's own version index is the catalogue, and it is the same document
+the CLI fetches before it installs anything. Every item carries a \`title\` and a
+\`description\` that says what it is for, so one request answers "what exists"
+and "which one is this page":
+
+\`\`\`bash
+curl -s ${base}/index.json | python3 -c 'import json,sys
+for item in json.load(sys.stdin): print(item["name"], "--", item.get("description", ""))'
+\`\`\`
+
+- **Read the index before writing markup.** ${capitalise(countWord(NB_BLOCKS.length))} named layouts already exist;
+  the registry renders the same catalogue with live examples at its root (the
+  gallery), which is the faster read when you are choosing by eye rather than
+  scripting.
+- **Select by name, install with the pinned base.** Any name in that index
+  installs the same way the blocks above do:
+
+  \`\`\`bash
+  COMPONENTS_REGISTRY_URL=${base} npx shadcn-svelte@${SHADCN_CLI_VERSION} add <name> --yes --overwrite
+  \`\`\`
+
+- **If the block is not there, say so and build it.** A near-miss block
+  installed to avoid writing a layout is how a design system becomes a tax: the
+  page ends up shaped like something it is not, and the next agent copies it.
+  \`${version}\` is this project's pin; a block published after it needs a
+  deliberate version bump, not a different base URL.
+`;
+}
+
 function renderBlocksSection(blocks, unknownBlocks, baseFn) {
   if (blocks.length === 0 && unknownBlocks.length === 0) return "";
 
@@ -3987,7 +4068,9 @@ function renderBlocksSection(blocks, unknownBlocks, baseFn) {
         (single ? "was" : "were") +
         " dropped:** " +
         quoted(unknownBlocks) +
-        ". The registry publishes nine blocks - " +
+        ". The registry publishes " +
+        countWord(NB_BLOCKS.length) +
+        " blocks - " +
         quoted(NB_BLOCKS) +
         " - and installing one that does not exist fails at the end of a scaffold instead of at the start, so nothing was emitted for " +
         (single ? "it" : "them") +
@@ -4191,7 +4274,7 @@ ${
   present in \`dev\`, \`stg\` and \`prd\`). Nothing here points at a guessed host.
 `
 }
-${renderBlocksSection(blocks, unknownBlocks, () => blocksBase)}
+${renderBlocksSection(blocks, unknownBlocks, () => blocksBase)}${renderBrowseSection(() => blocksBase, themeVersion)}
 `;
 
   return [

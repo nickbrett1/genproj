@@ -127,13 +127,19 @@ describe("ui-shadcn: components.json", () => {
     expect(rules).toContain(`/v${catalogDefault} npx shadcn-svelte@`);
 
     // 1.2.0 is the first version published as `cssVars` + `css` with no
-    // `files[]`: what `shadcn-svelte@1.8.1` merges into src/app.css. 1.8.0 is
-    // where the nine blocks live, at the same version as the theme, so a
+    // `files[]`: what `shadcn-svelte@1.8.1` merges into src/app.css. 1.10.1 is
+    // where all eleven blocks live, at the same version as the theme, so a
     // project that installs blocks must not pin 1.2.0 - that base 404s on
     // `add app-shell`. 1.1.0 carried `target: src/nb-theme.css`, which the CLI
     // resolved against the basename of app.css used as a directory and wrote
     // into a folder named `app.css`; 1.0.0 targeted src/app.css.
-    expect(catalogDefault).toBe("1.8.0");
+    //
+    // The patch matters as much as the minor: a version index is a *snapshot*
+    // of the whole catalogue (ui-registry's lesson), so 1.10.0 and 1.10.1 were
+    // only usable once every item was published into them. 1.10.1 also carries
+    // app-shell's sticky-inset fix, which is why it is the floor rather than
+    // 1.10.0.
+    expect(catalogDefault).toBe("1.10.1");
   });
 
   it("resolves the base from Doppler when no registry URL is given", async () => {
@@ -298,10 +304,10 @@ describe("ui-shadcn: blocks are opt-in and pinned like the theme", () => {
     // The same base as the theme: the version segment is the pin, and blocks
     // are published at that version rather than floating on latest.
     expect(rules).toContain(
-      `COMPONENTS_REGISTRY_URL=${BASE_URL}/v1.8.0 npx shadcn-svelte@1.8.1 add app-shell --yes --overwrite`,
+      `COMPONENTS_REGISTRY_URL=${BASE_URL}/v1.10.1 npx shadcn-svelte@1.8.1 add app-shell --yes --overwrite`,
     );
     expect(rules).toContain(
-      `COMPONENTS_REGISTRY_URL=${BASE_URL}/v1.8.0 npx shadcn-svelte@1.8.1 add result-list --yes --overwrite`,
+      `COMPONENTS_REGISTRY_URL=${BASE_URL}/v1.10.1 npx shadcn-svelte@1.8.1 add result-list --yes --overwrite`,
     );
     // --yes is not a substitute for --overwrite: without it the CLI exits 0
     // having written nothing.
@@ -349,5 +355,75 @@ describe("ui-shadcn: blocks are opt-in and pinned like the theme", () => {
       'COMPONENTS_REGISTRY_URL="$(doppler secrets get COMPONENTS_REGISTRY_URL --project common --config dev --plain)" npx shadcn-svelte@1.8.1 add app-shell --yes --overwrite',
     );
     expect(rules).not.toContain("registry.invalid");
+  });
+});
+
+describe("ui-shadcn: browsing the catalogue is part of selecting from it", () => {
+  const BASE_URL = "http://ryzen:3012/r";
+
+  it("accepts every published block, including the chart and the table", async () => {
+    const blocks = [
+      "app-shell",
+      "stat-strip",
+      "result-list",
+      "filter-panel",
+      "empty-state",
+      "status-view",
+      "detail-panel",
+      "burst-timeline",
+      "bar-series",
+      "data-table",
+      "request-form",
+    ];
+    const { find } = await render([...BASE, "ui-shadcn"], {
+      registryUrl: BASE_URL,
+      blocks,
+    });
+
+    const rules = find(".agents/.rules/styling_guidelines.md");
+    for (const name of blocks) {
+      expect(rules).toContain(`add ${name} --yes --overwrite`);
+    }
+    // Nothing was dropped, so the "does not exist" paragraph is absent - a
+    // requested block the whitelist forgot used to fail silently here.
+    expect(rules).not.toContain("does not exist");
+  });
+
+  it("points an agent at the version index before it writes markup", async () => {
+    const { find } = await render([...BASE, "ui-shadcn"], {
+      registryUrl: BASE_URL,
+    });
+
+    const rules = find(".agents/.rules/styling_guidelines.md");
+    // The browse surface is the registry's own index, on the same pinned base
+    // as the install commands: the CLI fetches it anyway, and each entry
+    // carries the `title`/`description` that make it a catalogue rather than a
+    // list of file names.
+    expect(rules).toContain("## Finding a block");
+    expect(rules).toContain(`curl -s ${BASE_URL}/v1.10.1/index.json`);
+    expect(rules).toContain('item["name"]');
+    // Select: the same command as a requested block, with the name to be
+    // chosen from the index.
+    expect(rules).toContain(
+      `COMPONENTS_REGISTRY_URL=${BASE_URL}/v1.10.1 npx shadcn-svelte@1.8.1 add <name> --yes --overwrite`,
+    );
+    // And the honest instruction for a genuine gap, because "install the
+    // nearest block" is how a design system becomes a tax.
+    expect(rules).toContain("If the block is not there");
+  });
+
+  it("does not claim a registry MCP server the CLI does not ship", async () => {
+    const { find } = await render([...BASE, "ui-shadcn"], {
+      registryUrl: BASE_URL,
+      blocks: ["app-shell"],
+    });
+
+    const rules = find(".agents/.rules/styling_guidelines.md");
+    // `shadcn-svelte@1.8.1 registry` has exactly one subcommand, `build`, and
+    // the bundle has no MCP entry point (verified against the published CLI).
+    // Pointing at one would be config that reads as working and does nothing -
+    // the same defect class as a `registries` block in components.json.
+    expect(rules).not.toContain("shadcn-svelte mcp");
+    expect(rules).not.toMatch(/mcpServers/);
   });
 });
