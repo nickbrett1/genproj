@@ -3882,6 +3882,17 @@ export const NB_REGISTRY_PLACEHOLDER_URL =
   "https://registry.invalid/r/{name}.json";
 
 /**
+ * The `@nb/theme` version `ui-shadcn` pins when the configuration does not
+ * name one. It must be a version whose item `target` is `src/nb-theme.css`,
+ * because that is the path the emitted `src/app.css` imports - registry items
+ * are immutable, so a corrected target only ever arrives as a new version.
+ * v1.1.0 is that version; v1.0.0 targets `src/app.css` and would overwrite the
+ * project's own `@import "tailwindcss"`. Kept in lockstep with the catalog's
+ * `themeVersion` default by a test, not by memory.
+ */
+export const NB_THEME_DEFAULT_VERSION = "1.1.0";
+
+/**
  * The `ui-shadcn` capability's files: Tailwind's entry stylesheet, a
  * `components.json` wired to the house `@nb` registry, the `cn()` helper the
  * shadcn-svelte primitives import, and the agent-facing styling rules.
@@ -3901,7 +3912,8 @@ export function buildUiShadcnFiles(context) {
 
   const prefix = sveltePrefix(context);
   const config = context.configuration?.["ui-shadcn"] || {};
-  const themeVersion = String(config.themeVersion ?? "").trim() || "1.0.0";
+  const themeVersion =
+    String(config.themeVersion ?? "").trim() || NB_THEME_DEFAULT_VERSION;
   const registryUrl = String(config.registryUrl ?? "").trim();
   const registryConfigured = registryUrl.length > 0;
   const registryBase = registryConfigured
@@ -3923,7 +3935,7 @@ export function buildUiShadcnFiles(context) {
     registries: {
       "@nb": {
         // `{name}.json` plus `params.version` is the only shape the registry
-        // answers for an item: `/r/theme.json?version=1.0.0`. An unversioned
+        // answers for an item: `/r/theme.json?version=1.1.0`. An unversioned
         // request is a 400 by design (spec 025 of the registry, §3.6.9), so a
         // capability that omitted `params.version` would produce a project
         // that cannot install anything.

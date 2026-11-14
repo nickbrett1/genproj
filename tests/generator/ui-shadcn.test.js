@@ -20,6 +20,7 @@
  */
 
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
 import { generateAllFiles } from "../../src/generator/file-generator.js";
 import { resolveDependencies } from "../../src/generator/capability-resolver.js";
 
@@ -61,7 +62,7 @@ describe("ui-shadcn: components.json", () => {
     const components = JSON.parse(find("components.json"));
     const registry = components.registries["@nb"];
 
-    expect(registry.params).toEqual({ version: "1.0.0" });
+    expect(registry.params).toEqual({ version: "1.1.0" });
     // A literal, not a resolved value: `${VAR}` expansion is the CLI's job at
     // `shadcn add` time. Interpolating it here would put a live token in git.
     expect(registry.headers.Authorization).toBe("Bearer ${NB_REGISTRY_TOKEN}");
@@ -70,6 +71,33 @@ describe("ui-shadcn: components.json", () => {
     expect(registry.url).toContain("{name}.json");
     expect(components.typescript).toBe(true);
     expect(components.tailwind.css).toBe("src/app.css");
+  });
+
+  it("pins the catalog's default version and says so in the rules", async () => {
+    const catalog = JSON.parse(
+      readFileSync(
+        new URL("../../src/catalog/catalog.json", import.meta.url),
+        "utf8",
+      ),
+    );
+    const entry = catalog.capabilities.find((c) => c.id === "ui-shadcn");
+    const catalogDefault =
+      entry.configurationSchema.properties.themeVersion.default;
+
+    // The emitted pin and the catalog default are one decision. When they drift
+    // a project silently pins a version whose item target is not the path this
+    // capability imports - it builds, looks unstyled, and nothing says why.
+    const { find } = await render([...BASE, "ui-shadcn"]);
+    const registry = JSON.parse(find("components.json")).registries["@nb"];
+    expect(registry.params.version).toBe(catalogDefault);
+
+    // 1.1.0 is the first version whose item targets `src/nb-theme.css`, the
+    // path the emitted `src/app.css` imports. 1.0.0 targeted `src/app.css` and
+    // overwrote the project's own `@import "tailwindcss"`.
+    expect(catalogDefault).toBe("1.1.0");
+    expect(find(".agents/.rules/styling_guidelines.md")).toContain(
+      "`@nb/theme` at `1.1.0`",
+    );
   });
 
   it("honours a configured registry URL and strips a trailing slash", async () => {

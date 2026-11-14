@@ -1,6 +1,8 @@
 # 026 — `ui-shadcn`: a generated SvelteKit project starts on the house design system
 
-**Status:** implemented (2026-11-14). Design rationale: `projects/genproj/genproj-ui-shadcn-capability.md`.
+**Status:** implemented (2026-11-14). Theme pin corrected to `1.1.0` after
+`ui-registry` shipped the `src/nb-theme.css` target (2026-11-14). Design
+rationale: `projects/genproj/genproj-ui-shadcn-capability.md`.
 
 Every generated UI project starts from a bare framework default, so the house
 look is re-derived per project — the proof being a `theme.css` that has been
@@ -19,7 +21,7 @@ capability can honestly promise — see "What it does not do" below.
 | `id`                  | `ui-shadcn`                                                                      |
 | `category`            | `frameworks`                                                                     |
 | `dependencies`        | `["sveltekit", "doppler"]`                                                       |
-| `configurationSchema` | `registryUrl` (string, **empty** by default), `themeVersion` (string, `"1.0.0"`) |
+| `configurationSchema` | `registryUrl` (string, **empty** by default), `themeVersion` (string, `"1.1.0"`) |
 | `vscodeExtensions`    | `bradlc.vscode-tailwindcss`                                                      |
 
 `sveltekit` because the theme and `components.json` are only meaningful in a
@@ -50,7 +52,7 @@ directory (`web/`) when the primary language is not node:
 Two details in `components.json` are load-bearing:
 
 - **`{name}.json` plus `params.version`** is the only shape the registry answers
-  for an item (`/r/theme.json?version=1.0.0`). An unversioned request is a `400`
+  for an item (`/r/theme.json?version=1.1.0`). An unversioned request is a `400`
   by design, so a capability that omitted `params.version` would produce a
   project that cannot install anything.
 - **`Bearer ${NB_REGISTRY_TOKEN}` is a literal.** `${VAR}` expansion is the
@@ -81,13 +83,19 @@ item from the public repo pinned by commit SHA and inline `files[0].content`
 into `src/nb-theme.css` — is the natural next increment, needs no Worker secret
 and no public endpoint, and is not implemented here.
 
-**The `target` question (§5.2) is answered the same way:** the item should
-target `src/nb-theme.css`, with the capability and the styling rules both
-stating the explicit `@import "./nb-theme.css"` line. `ui-registry`'s
-`registry.json` currently declares `target: "src/app.css"`, which in a Tailwind
-v4 consumer collides with the `@import "tailwindcss"` line. **That is
-`ui-registry`'s change to make**; until it lands, `add @nb/theme` overwrites the
-Tailwind import. Recorded here rather than worked around silently.
+**The `target` question (§5.2) is closed.** The item targets
+`src/nb-theme.css`, and the capability plus the styling rules both state the
+explicit `@import "./nb-theme.css"` line, so the two agree.
+
+That agreement is why the pinned version's `target` is load-bearing.
+`ui-registry` published `@nb/theme` **v1.1.0** on 2026-11-14 with the only
+change being `target: "src/nb-theme.css"` (v1.0.0 declared `src/app.css`,
+which in a Tailwind v4 consumer collides with the `@import "tailwindcss"`
+line). v1.0.0 is frozen and still serves `src/app.css`: registry items are
+immutable, so it can never be corrected in place, and a fix ships only as a new
+version. The capability therefore pins **1.1.0** by default — a default that
+pinned 1.0.0 would install the tokens to a path nothing imports, and the
+project would build, look unstyled, and give no hint why.
 
 ## What it does not do
 
@@ -104,8 +112,9 @@ Tailwind import. Recorded here rather than worked around silently.
 `tests/generator/ui-shadcn.test.js`:
 
 - absent unless selected — no files, no Tailwind dependency, no Vite plugin;
-- `components.json` pins `1.0.0`, keeps the literal `${NB_REGISTRY_TOKEN}`,
-  uses `{name}.json`, honours a configured URL (trailing slash stripped) and a
+- `components.json` pins `1.1.0` (the catalog default, which a test keeps in
+  lockstep with the generator), keeps the literal `${NB_REGISTRY_TOKEN}`, uses
+  `{name}.json`, honours a configured URL (trailing slash stripped) and a
   version override;
 - an unset `registryUrl` yields the `.invalid` placeholder **and** an explicit
   "the block is inert" statement in the styling rules; a set one removes it;
@@ -116,4 +125,4 @@ Tailwind import. Recorded here rather than worked around silently.
 - a non-node frontend relocates the whole set under `web/` while the agent rules
   stay at the repository root.
 
-All 1026 tests pass; the coverage gate is unchanged.
+All 1027 tests pass; the coverage gate is unchanged.

@@ -415,8 +415,8 @@
           },
           "themeVersion": {
             "type": "string",
-            "default": "1.0.0",
-            "description": "The @nb/theme version to pin. Published versions are immutable, so a project that pins 1.0.0 keeps exactly the token sheet it was generated with; bump it deliberately, never to \"latest\"."
+            "default": "1.1.0",
+            "description": "The @nb/theme version to pin. Published registry items are immutable: a released version's files and target can never be corrected in place, so a fix ships as a new version and the capability has to pin the one whose `target` matches what this capability's emitted src/app.css imports. 1.1.0 targets src/nb-theme.css; 1.0.0 targets src/app.css and would overwrite the project's own Tailwind import. A default therefore moves with a new registry version, deliberately - bump it to a released version, never to \"latest\"."
           }
         }
       },
