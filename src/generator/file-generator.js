@@ -4443,6 +4443,14 @@ export async function generateAllFiles(context) {
       filePath: `${svelte}tests/smoke.test.js`,
       content: buildSveltekitSmokeTest(hasHealth),
     });
+    // src/app.html carries the iOS home-screen fix (opaque status bar, no
+    // `viewport-fit=cover`, and a paint surface that renders before any
+    // stylesheet loads). Pin it here: the symptom only shows on a device, so
+    // without a test the fix is one innocent meta edit away from regressing.
+    allGeneratedFiles.push({
+      filePath: `${svelte}tests/app-html.test.js`,
+      content: buildSveltekitAppHtmlTest(),
+    });
   }
 
   if (context.capabilities.includes("sonarcloud")) {
@@ -4630,6 +4638,92 @@ describe("generated app smoke test", () => {
     fireEvent.click(btn);
     expect(btn.textContent).toContain("1");
   });${healthTest}
+});
+`;
+}
+
+/**
+ * Builds the test that pins the iOS home-screen fix in the generated
+ * `src/app.html`: an opaque status bar, no `viewport-fit=cover`, and a
+ * status-bar paint surface. Two *separate* orderings are pinned, because they
+ * are in different elements and only one of them can be about `head`:
+ *
+ * - the inline `<style>` block precedes `%sveltekit.head%` in `<head>`, so the
+ *   `.pwa-status-bar-surface` selector exists before any stylesheet loads;
+ * - the `<div class="pwa-status-bar-surface">` is the first child of `<body>`,
+ *   ahead of the app's own markup and `%sveltekit.body%`.
+ *
+ * It reads the document shell as text rather than rendering it: the bug is in
+ * the head, and a device is the only place the symptom shows, so a plain string
+ * assertion is the only test that can catch a regression here.
+ * @returns {string} The app.html assertion test source
+ */
+export function buildSveltekitAppHtmlTest() {
+  // Must be Prettier-clean on generation (double quotes, 2-space indent), since
+  // the CircleCI lint step runs `prettier --check .`.
+  return `import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
+// The document shell SvelteKit serves for every route. These assertions pin the
+// iOS home-screen fix that app.html documents in place: an opaque status bar,
+// no \`viewport-fit=cover\`, and a paint surface that is declared before any
+// stylesheet loads.
+const appHtml = readFileSync(
+  fileURLToPath(new URL("../src/app.html", import.meta.url)),
+  "utf8",
+);
+
+// Parse the attribute instead of scanning the whole file: app.html's own
+// explanatory comment names \`viewport-fit=cover\`, so a substring check would
+// fail against the fix itself.
+function metaContent(name) {
+  const tag = appHtml
+    .split("<meta")
+    .map((chunk) => chunk.split(">")[0])
+    .find((chunk) => chunk.includes('name="' + name + '"'));
+  if (!tag) return null;
+  const match = tag.match(/content="([^"]*)"/);
+  return match ? match[1] : null;
+}
+
+describe("src/app.html iOS home-screen fix", () => {
+  it("never asks the web view to draw under the status bar", () => {
+    const viewport = metaContent("viewport");
+    expect(viewport).not.toBeNull();
+    expect(viewport).not.toContain("cover");
+  });
+
+  it("asks for an opaque status bar", () => {
+    expect(metaContent("apple-mobile-web-app-status-bar-style")).toBe("black");
+  });
+
+  it("declares the status-bar style before %sveltekit.head%", () => {
+    // A <head> ordering guarantee, and only that: the inline <style> block must
+    // precede %sveltekit.head% so the selector exists before any stylesheet the
+    // app injects. It says nothing about the <div>, which cannot be in <head>.
+    expect(appHtml).toContain('class="pwa-status-bar-surface"');
+    expect(appHtml).toContain("background-clip: text");
+    const style = appHtml.indexOf("<style>");
+    const head = appHtml.indexOf("%sveltekit.head%");
+    expect(style).toBeGreaterThan(-1);
+    expect(head).toBeGreaterThan(-1);
+    expect(style).toBeLessThan(head);
+  });
+
+  it("puts the status-bar surface first in <body>", () => {
+    // The real, assertable ordering for the <div>: it is the first child of
+    // <body>, so it paints ahead of the app's markup and %sveltekit.body%.
+    const body = appHtml.indexOf("<body");
+    const bodyEnd = appHtml.indexOf(">", body);
+    const div = appHtml.indexOf('<div class="pwa-status-bar-surface"');
+    const slot = appHtml.indexOf("%sveltekit.body%");
+    expect(body).toBeGreaterThan(-1);
+    expect(div).toBeGreaterThan(bodyEnd);
+    expect(appHtml.slice(bodyEnd + 1, div).trim()).toBe("");
+    expect(slot).toBeGreaterThan(-1);
+    expect(div).toBeLessThan(slot);
+  });
 });
 `;
 }

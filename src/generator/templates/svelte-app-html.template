@@ -3,10 +3,38 @@
   <head>
     <meta charset="utf-8" />
     <link rel="icon" href="%sveltekit.assets%/favicon.png" />
-    <meta name="viewport" content="width=device-width" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+    <meta name="apple-mobile-web-app-title" content="{{projectName}}" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!--
+      Never `viewport-fit=cover` together with `black-translucent`: that asks the
+      web view to draw under the iOS status bar, where the system composites a
+      glass edge surface over the page.
+    -->
+    <style>
+      .pwa-status-bar-surface {
+        display: none;
+      }
+      @supports (-webkit-touch-callout: none) and (background-clip: text) {
+        @media (display-mode: standalone) {
+          .pwa-status-bar-surface {
+            display: block;
+            position: fixed;
+            inset: 0 0 auto;
+            height: calc(11px + env(safe-area-inset-top, 0px));
+            z-index: 100;
+            pointer-events: none;
+            background-color: inherit;
+            -webkit-background-clip: text;
+            background-clip: text;
+          }
+        }
+      }
+    </style>
     %sveltekit.head%
   </head>
   <body data-sveltekit-preload-data="hover">
+    <div class="pwa-status-bar-surface" aria-hidden="true"></div>
     <div style="display: contents">%sveltekit.body%</div>
   </body>
 </html>

@@ -149,6 +149,84 @@ describe("SvelteKit File Generation", () => {
     expect(files.find((f) => f.filePath === ".env.example")).toBeDefined();
   });
 
+  it("ships app.html with the iOS home-screen fix and a test that pins it", async () => {
+    const files = await generateAllFiles({
+      name: "pwa-demo",
+      capabilities: ["devcontainer-node", "sveltekit"],
+      configuration: {},
+    });
+    const appHtml = files.find((f) => f.filePath === "src/app.html").content;
+
+    // An opaque status bar, and never `viewport-fit=cover` (the comment in the
+    // file names it, so assert on the viewport attribute's value).
+    expect(appHtml).toContain(
+      '<meta name="apple-mobile-web-app-status-bar-style" content="black" />',
+    );
+    const viewport = appHtml.match(
+      /<meta name="viewport" content="([^"]*)" \/>/,
+    );
+    expect(viewport).not.toBeNull();
+    expect(viewport[1]).not.toContain("cover");
+
+    // The surface is inert unless the engine composites the edge: the
+    // background-clip feature-detect is load-bearing, and the colour is
+    // inherited from the page (never hardcoded here).
+    expect(appHtml).toContain('class="pwa-status-bar-surface"');
+    expect(appHtml).toContain("background-clip: text");
+    expect(appHtml).toContain("background-color: inherit");
+    expect(appHtml).not.toMatch(/background-color:\s*#/);
+
+    // <head> ordering: the inline <style> block must precede %sveltekit.head%
+    // so the .pwa-status-bar-surface selector exists before any stylesheet the
+    // app injects. This asserts head order only - it is not a body-order
+    // guarantee, and the body <div> is asserted separately below.
+    const styleOpen = appHtml.indexOf("<style>");
+    const headPlaceholder = appHtml.indexOf("%sveltekit.head%");
+    expect(styleOpen).toBeGreaterThan(-1);
+    expect(headPlaceholder).toBeGreaterThan(-1);
+    expect(styleOpen).toBeLessThan(headPlaceholder);
+    // ...and that <style> is closed before the placeholder, so its rule is not
+    // escaped by a half-open block.
+    expect(appHtml.indexOf("</style>")).toBeLessThan(headPlaceholder);
+    // The <div> is not in <head>: it cannot precede the head placeholder.
+    expect(
+      appHtml.indexOf('<div class="pwa-status-bar-surface"'),
+    ).toBeGreaterThan(headPlaceholder);
+
+    // <body> ordering, which is what the <div> can actually promise: it is the
+    // first child of <body>, ahead of the app markup and %sveltekit.body%.
+    const bodyEnd = appHtml.indexOf(">", appHtml.indexOf("<body"));
+    const surfaceDiv = appHtml.indexOf('<div class="pwa-status-bar-surface"');
+    const bodyPlaceholder = appHtml.indexOf("%sveltekit.body%");
+    expect(bodyEnd).toBeGreaterThan(-1);
+    expect(surfaceDiv).toBeGreaterThan(bodyEnd);
+    expect(appHtml.slice(bodyEnd + 1, surfaceDiv).trim()).toBe("");
+    expect(bodyPlaceholder).toBeGreaterThan(-1);
+    expect(surfaceDiv).toBeLessThan(bodyPlaceholder);
+
+    // The generated project pins all of the above in its own suite.
+    const appHtmlTest = files.find(
+      (f) => f.filePath === "tests/app-html.test.js",
+    );
+    expect(appHtmlTest).toBeDefined();
+    expect(appHtmlTest.content).toContain("../src/app.html");
+    expect(appHtmlTest.content).toContain("background-clip: text");
+  });
+
+  it("relocates the app.html test with the frontend", async () => {
+    const files = await generateAllFiles({
+      name: "roost",
+      capabilities: ["devcontainer-rust", "devcontainer-node", "sveltekit"],
+      configuration: { language: "rust" },
+    });
+    expect(files.map((f) => f.filePath)).toContain(
+      "web/tests/app-html.test.js",
+    );
+    expect(files.map((f) => f.filePath)).not.toContain(
+      "tests/app-html.test.js",
+    );
+  });
+
   it("lets a bare Node project pass with no test files", async () => {
     // A bare scaffold generates no test files at all, and vitest exits 1 with
     // "No test files found" - so the first CI run of a freshly generated
