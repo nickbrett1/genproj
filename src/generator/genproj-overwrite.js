@@ -67,6 +67,7 @@ const GENPROJ_OWNED_SCRIPTS = new Set([
   "scripts/run-wrangler-dev.sh",
   "scripts/setup-wrangler-config.sh",
   "scripts/sync-doppler-secrets.sh",
+  "scripts/ui-check.mjs",
 ]);
 
 /**
