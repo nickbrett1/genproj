@@ -1,0 +1,39 @@
+import { test, expect } from './fixtures.js';
+
+/**
+ * End-to-end smoke: one REAL assertion set, run against the app's preview
+ * server (UI_BASE_URL, defaulting to 127.0.0.1:4173 — see playwright.config.js
+ * and the README for starting it).
+ *
+ * This is intentionally not a duplicate of `npm run check:ui`: that script is
+ * the cheap deterministic gate; this one proves the app actually boots in a
+ * browser. It reports which browser tier ran so a pass on the bundled fallback
+ * is never mistaken for a pass against the shared browser.
+ */
+test('app shell loads', async ({ page, browserMode }) => {
+  const pageErrors = [];
+  page.on('pageerror', (error) => pageErrors.push(error));
+
+  const response = await page.goto('/');
+  expect(response, 'navigation produced no response').not.toBeNull();
+  expect(response.ok(), `GET / returned ${response.status()}`).toBe(true);
+
+  await expect(page).toHaveTitle(/.+/);
+  const title = await page.title();
+  expect(title.trim().length).toBeGreaterThan(0);
+
+  // The app shell must actually mount something: an empty #app or a
+  // half-rendered layout is a failure the response check cannot see.
+  const text = (await page.locator('body').innerText()).trim();
+  const mountedChildren = await page.locator('body *').count();
+  expect(
+    text.length > 0 || mountedChildren > 0,
+    'body is empty: the app shell did not mount',
+  ).toBe(true);
+
+  expect(pageErrors, 'uncaught page error during load').toEqual([]);
+
+  // Name the tier that ran (see fixtures.js).
+  test.info().annotations.push({ type: 'browser', description: browserMode });
+  console.log(`[e2e] smoke ran via ${browserMode}`);
+});

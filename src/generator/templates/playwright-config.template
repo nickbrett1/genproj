@@ -1,13 +1,31 @@
-import { defineConfig } from '@playwright/test';
+import { defineConfig, devices } from '@playwright/test';
 
+/**
+ * Playwright e2e config.
+ *
+ * `testDir` points at ./tests/e2e, NOT ./tests: `tests/smoke.test.js` belongs
+ * to vitest and would otherwise be collected as a Playwright spec.
+ *
+ * `testMatch` is restricted to `*.e2e.js` on purpose. vitest's default include
+ * is `**/*.{test,spec}.?(c|m)[jt]s?(x)`, so a Playwright `smoke.spec.js` would
+ * be picked up by vitest too. Choosing an extension neither default matches
+ * means no vitest include/exclude list has to be maintained (and drift).
+ *
+ * There is deliberately NO `webServer` block: the project may be built by a
+ * non-node primary language, and a block that runs `npm run build` would be
+ * wrong for every one of those. Start the preview server yourself and point
+ * UI_BASE_URL at it (see the project README).
+ */
 export default defineConfig({
-  testDir: './tests',
+  testDir: './tests/e2e',
+  testMatch: '**/*.e2e.js',
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   workers: process.env.CI ? 1 : undefined,
   reporter: 'html',
   use: {
+    baseURL: process.env.UI_BASE_URL ?? 'http://127.0.0.1:4173',
     trace: 'on-first-retry',
   },
   projects: [

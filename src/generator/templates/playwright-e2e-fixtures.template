@@ -1,0 +1,98 @@
+import { test as base, expect, chromium } from '@playwright/test';
+
+/**
+ * Hybrid e2e fixtures: run against a SHARED Chrome over the DevTools Protocol
+ * when one answers, and fall back to the bundled chromium otherwise.
+ *
+ * The shared browser is the estate's long-lived Chrome, and it lives on the
+ * Mac HOST. These tests run inside a devcontainer, so the container reaches
+ * that browser at the OrbStack fixed host alias `0.250.250.254:9222`.
+ * `127.0.0.1:9222` means "the browser on the Mac itself" and is only correct
+ * when the suite is run directly on the Mac — inside the container it is the
+ * container, where nothing listens. A dev machine with that browser asleep must
+ * degrade to the bundled binary, never fail the suite.
+ *
+ * A green run on the fallback is NOT a shared-browser pass. `browserMode` names
+ * the tier that actually ran — `shared-cdp (<url>)` for a real shared pass,
+ * `bundled-chromium` for the fallback — so a fallback can never be reported as
+ * a shared-browser pass. The smoke test prints it; the address in the mode
+ * string names the endpoint that actually answered.
+ *
+ * Only the browser this module launched is ever closed. The CDP connection is
+ * left open on purpose: closing it would not just drop this worker, it would
+ * take the shared Chrome down for every other user in the estate. Contexts are
+ * incognito and are closed per test by Playwright's own `context` fixture.
+ */
+
+const CDP_CANDIDATES = [
+  process.env.PLAYWRIGHT_CDP_URL,
+  'http://0.250.250.254:9222', // OrbStack host alias — the in-container address
+  'http://host.docker.internal:9222',
+  'http://127.0.0.1:9222', // last: correct only when run ON the Mac
+].filter(Boolean);
+
+/** Cheap liveness probe. A sleeping host must cost one short timeout, not a
+ * slow, noisy `connectOverCDP` throw. Every error means "not there". */
+async function isCdpAlive(url) {
+  try {
+    const response = await fetch(`${url}/json/version`, {
+      signal: AbortSignal.timeout(750),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function connectSharedBrowser() {
+  for (const url of CDP_CANDIDATES) {
+    if (!(await isCdpAlive(url))) continue;
+    try {
+      return {
+        browser: await chromium.connectOverCDP(url),
+        // The address is part of the mode string on purpose: it names the
+        // endpoint that answered, so a real shared-browser pass is
+        // distinguishable from the bundled fallback below.
+        mode: `shared-cdp (${url})`,
+      };
+    } catch {
+      // Probe said yes, connect said no: try the next candidate.
+    }
+  }
+  return null;
+}
+
+export const test = base.extend({
+  // One tier resolution per worker; `browser` and `browserMode` both read it.
+  browserTier: [
+    async ({}, use) => {
+      const shared = await connectSharedBrowser();
+      if (shared) {
+        await use(shared);
+        // Deliberately no close: the shared browser outlives this worker.
+        return;
+      }
+      const bundled = await chromium.launch();
+      try {
+        await use({ browser: bundled, mode: 'bundled-chromium' });
+      } finally {
+        await bundled.close();
+      }
+    },
+    { scope: 'worker' },
+  ],
+  // The default `browser` fixture is worker-scoped; the override must match.
+  browser: [
+    async ({ browserTier }, use) => {
+      await use(browserTier.browser);
+    },
+    { scope: 'worker' },
+  ],
+  // Which tier ran, for reporting: a fallback pass must not be reported as a
+  // shared-browser pass.
+  browserMode: async ({ browserTier }, use) => {
+    await use(browserTier.mode);
+  },
+});
+
+export { expect };

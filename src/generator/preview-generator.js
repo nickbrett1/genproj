@@ -27,7 +27,6 @@ import {
   gooseInstallFragment,
   gooseWorktreeZshrc,
   hasGoose,
-  PLAYWRIGHT_SETUP_SCRIPT,
   PYTHON_SETUP_SCRIPT,
   NODE_SETUP_SCRIPT,
   generateDopplerSetupScript,
@@ -404,9 +403,6 @@ function createDevelopmentContainerShellFiles(
             // handler stamps the deployment's MCPHub origin onto the config.
             mcpHubBaseUrl: projectConfig.mcpHubBaseUrl,
           })
-        : "",
-      playwrightSetup: allCapabilities.includes("playwright")
-        ? PLAYWRIGHT_SETUP_SCRIPT
         : "",
       gitHooksSetup: allCapabilities.includes("secret-scan")
         ? `echo "INFO: Installing git hooks and gitleaks..."\n(cd /workspaces/${projectConfig.name || "my-project"} && bash scripts/setup-git-hooks.sh) || exit 1\n`

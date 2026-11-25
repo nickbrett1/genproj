@@ -133,6 +133,32 @@ export const capabilityTemplates = {
       filePath: "package.json",
       templateId: "svelte-package-json",
     },
+    // Playwright's e2e files live under the FRONTEND capability, not under a
+    // `playwright` key. Collection relocates every template of a capability
+    // providing `frontend` (see file-generator collectCapabilityFiles), so a
+    // static filePath lands next to package.json for free: the repo root for a
+    // node-primary project, `web/` otherwise. Keying here IS the frontend gate
+    // — selecting `playwright` without a frontend emits none of these files.
+    // Mirrored under `sveltekit` because a `sveltekit`-only selection does not
+    // add `svelte` to context.capabilities.
+    {
+      id: "playwright-config",
+      filePath: "playwright.config.js",
+      templateId: "playwright-config",
+      when: (context) => context.capabilities.includes("playwright"),
+    },
+    {
+      id: "playwright-e2e-smoke",
+      filePath: "tests/e2e/smoke.e2e.js",
+      templateId: "playwright-e2e-smoke",
+      when: (context) => context.capabilities.includes("playwright"),
+    },
+    {
+      id: "playwright-e2e-fixtures",
+      filePath: "tests/e2e/fixtures.js",
+      templateId: "playwright-e2e-fixtures",
+      when: (context) => context.capabilities.includes("playwright"),
+    },
   ],
   sveltekit: [
     {
@@ -154,6 +180,28 @@ export const capabilityTemplates = {
       id: "svelte-vite-config-js",
       filePath: "vite.config.js",
       templateId: "svelte-vite-config-js",
+    },
+    // Same three e2e entries as `svelte` (see the comment there): a
+    // `sveltekit`-only selection never carries `svelte` in
+    // context.capabilities, so the files must be keyed here too. Duplicates
+    // collapse by filePath in the collector's last-wins dedupe.
+    {
+      id: "playwright-config",
+      filePath: "playwright.config.js",
+      templateId: "playwright-config",
+      when: (context) => context.capabilities.includes("playwright"),
+    },
+    {
+      id: "playwright-e2e-smoke",
+      filePath: "tests/e2e/smoke.e2e.js",
+      templateId: "playwright-e2e-smoke",
+      when: (context) => context.capabilities.includes("playwright"),
+    },
+    {
+      id: "playwright-e2e-fixtures",
+      filePath: "tests/e2e/fixtures.js",
+      templateId: "playwright-e2e-fixtures",
+      when: (context) => context.capabilities.includes("playwright"),
     },
   ],
   "devcontainer-python": [

@@ -52,7 +52,6 @@ vi.mock("../../src/generator/file-generator.js", async (importOriginal) => {
     GIT_SAFE_DIR_SCRIPT: "git-safe-dir-script-mock",
     GIT_GITHUB_AUTH_SETUP_SCRIPT: "git-github-auth-setup-script-mock",
     AGY_SETUP_SCRIPT: "agy-setup-script-mock",
-    PLAYWRIGHT_SETUP_SCRIPT: "playwright-setup-script-mock",
     PYTHON_SETUP_SCRIPT: "python-setup-script-mock",
     NODE_SETUP_SCRIPT: "node-setup-script-mock",
     generateDopplerSetupScript: vi.fn(() => "doppler-setup-script-mock"),

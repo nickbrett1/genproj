@@ -66,8 +66,6 @@ fi
 
 {{gitHooksSetup}}
 
-{{playwrightSetup}}
-
 {{agySetup}}
 {{gooseSetup}}
 
