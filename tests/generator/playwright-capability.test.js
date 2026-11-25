@@ -87,7 +87,17 @@ describe("the generated e2e files are real, not decorative", () => {
     );
     const fixtures = find("tests/e2e/fixtures.js");
     expect(fixtures).toContain("PLAYWRIGHT_CDP_URL");
-    expect(fixtures).toContain("http://127.0.0.1:9222");
+    // The default is the in-container address (OrbStack host alias), because
+    // the suite runs inside the devcontainer. 127.0.0.1 is only the browser on
+    // the Mac itself, so it must come after the alias — never first.
+    expect(fixtures).toContain("http://0.250.250.254:9222");
+    expect(fixtures.indexOf("http://0.250.250.254:9222")).toBeLessThan(
+      fixtures.indexOf("http://127.0.0.1:9222"),
+    );
+    // PLAYWRIGHT_CDP_URL still takes precedence over every default.
+    expect(fixtures.indexOf("process.env.PLAYWRIGHT_CDP_URL")).toBeLessThan(
+      fixtures.indexOf("http://0.250.250.254:9222"),
+    );
     expect(fixtures).toContain("/json/version");
     expect(fixtures).toContain("chromium.connectOverCDP");
     expect(fixtures).toContain("chromium.launch()");
@@ -180,6 +190,11 @@ describe("the README documents the manual server start", () => {
     expect(readme).toContain("npm run test:e2e");
     // The manifest is in web/, so the README has to say where to run them.
     expect(readme).toContain("cd web");
+    // The shared browser is on the host; the README must give the in-container
+    // address, not the Mac-side 127.0.0.1, and name the override + CI fallback.
+    expect(readme).toContain("0.250.250.254:9222");
+    expect(readme).toContain("PLAYWRIGHT_CDP_URL");
+    expect(readme).toContain("bundled Chromium");
   });
 });
 

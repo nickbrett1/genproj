@@ -3244,11 +3244,15 @@ npm run test:e2e      # Playwright, in another terminal
 
 Point \`UI_BASE_URL\` at a different origin if your server listens elsewhere.
 
-The fixtures are hybrid: if a shared Chrome answers on \`127.0.0.1:9222\` (or
-\`PLAYWRIGHT_CDP_URL\`), the suite drives it and leaves it running; otherwise it
-falls back to a bundled Chromium. Each run prints which tier it used — a pass
-on the fallback is not a pass against the shared browser. CI installs the
-bundled Chromium, so a CI run is always the fallback tier.
+The fixtures are hybrid. The shared browser lives on the Mac host, and these
+tests run inside the devcontainer, so the container reaches it at
+\`0.250.250.254:9222\` (OrbStack's fixed host alias). If that browser answers, the
+suite drives it and leaves it running; set \`PLAYWRIGHT_CDP_URL\` to override the
+address. Otherwise the suite falls back to a bundled Chromium. Note that
+\`127.0.0.1:9222\` is the browser on the Mac itself — correct only when the suite
+is run directly on the Mac, not inside the container. Each run prints which tier
+it used — a pass on the fallback is not a pass against the shared browser. CI
+installs the bundled Chromium, so a CI run is always the fallback tier.
 `;
         })()
       : "";
