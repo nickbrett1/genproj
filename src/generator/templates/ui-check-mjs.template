@@ -487,7 +487,7 @@ async function runTier2(opts, verdict, deadline) {
     if (navigatingLoopbackInHostBrowser) {
       verdict.warn(
         'browser-url-is-loopback',
-        `tier 2 loaded ${pageUrl} in a host browser. That only works while VS Code forwards the container port; set --browser-url to a host-reachable URL for headless runs.`,
+        `tier 2 loaded ${pageUrl} in a host browser. That only works while VS Code forwards the container port, so this run falls back to tier 1 if the host browser cannot reach it; set --browser-url to a host-reachable URL for headless runs.`,
       );
     }
 

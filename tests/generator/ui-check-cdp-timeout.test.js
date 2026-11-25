@@ -127,6 +127,7 @@ function drainFrames(buffer, onText, onClose) {
 async function startFakeCdp(options = {}) {
   const stall = new Set(options.stall ?? []);
   const emitAfterNavigate = options.emitAfterNavigate ?? [];
+  const received = [];
   const sockets = new Set();
   let port = 0;
   const server = createServer((req, res) => {
@@ -163,6 +164,7 @@ async function startFakeCdp(options = {}) {
         Buffer.concat([buffer, chunk]),
         (text) => {
           const msg = JSON.parse(text);
+          received.push(msg.method);
           if (stall.has(msg.method)) return;
           let result = {};
           if (msg.method === "Target.createTarget")
@@ -198,6 +200,7 @@ async function startFakeCdp(options = {}) {
   port = server.address().port;
   return {
     base: `http://127.0.0.1:${port}`,
+    received,
     async close() {
       for (const socket of sockets) socket.destroy();
       await new Promise((resolve) => server.close(resolve));
@@ -323,6 +326,9 @@ describe("a stalled Page.navigate degrades to tier 1, it does not hang", () => {
       expect(verdict.tier2SkipReason).toMatch(/did not complete/);
       expect(verdict.evidence.tier2StoppedEarly).toBe(true);
       expect(verdict.durationMs).toBeLessThan(5000);
+      // A shared estate browser must not be left with a tab behind: the
+      // timeout path still reaches the finally block and closes its target.
+      expect(cdp.received).toContain("Target.closeTarget");
     } finally {
       await page.close();
       await cdp.close();
