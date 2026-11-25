@@ -96,6 +96,7 @@ const svelteFrontendConfigJs =
 const svelteFrontendViteConfigJs =
   templateFiles["svelte-frontend-vite-config-js.template"];
 const sveltePackageJson = templateFiles["svelte-package-json.template"];
+const uiCheckMjs = templateFiles["ui-check-mjs.template"];
 const docsifyIndex = templateFiles["docsify-index.template"];
 const docsifyReadme = templateFiles["docsify-readme.template"];
 const devcontainerServeDocumentsCjs =
@@ -1101,6 +1102,7 @@ const templateImports = {
   "svelte-frontend-config-js": svelteFrontendConfigJs,
   "svelte-frontend-vite-config-js": svelteFrontendViteConfigJs,
   "svelte-package-json": sveltePackageJson,
+  "ui-check-mjs": uiCheckMjs,
   "docsify-index": docsifyIndex,
   "docsify-readme": docsifyReadme,
   "devcontainer-serve-docs-cjs": devcontainerServeDocumentsCjs,
@@ -1959,6 +1961,17 @@ function _getFrameworkConfig(context) {
   const hasWrangler = context.capabilities.includes("cloudflare-wrangler");
   const hasDocker = context.capabilities.includes("docker-container");
   const language = resolveProjectLanguage(context);
+  // `scripts/ui-check.mjs` always lives at the repository root (it is a project
+  // tool, emitted at root by generateUiCheckScript), but the manifest that
+  // references it is relocated into the Svelte directory whenever the frontend
+  // is (see generateAllFiles). So the reference is relative to the manifest's
+  // directory, derived from the SAME predicate generateAllFiles relocates on:
+  // a truthy sveltePrefix(). Duplicating that rule here would let the two
+  // drift, and a relocated manifest pointing at `scripts/ui-check.mjs` resolves
+  // to `web/scripts/ui-check.mjs`, which does not exist.
+  const uiCheckPath = sveltePrefix(context)
+    ? "../scripts/ui-check.mjs"
+    : "scripts/ui-check.mjs";
   let scripts =
     ',\n    "test": "echo \\"Error: no test specified\\" && exit 1",\n    "build": "echo \'No build step required\'"';
   let devDependencies = "";
@@ -1973,7 +1986,9 @@ function _getFrameworkConfig(context) {
     overrides =
       ',\n  "overrides": {\n    "cookie": "^1.0.2",\n    "@sveltejs/vite-plugin-svelte": "^7.3.0",\n    "vite": "^8.2.2"\n  }';
     scripts =
-      ',\n    "test": "echo \\"Error: no test specified\\" && exit 1",\n    "dev": "vite dev",\n    "build": "vite build",\n    "preview": "vite preview --host 127.0.0.1",\n    "check": "svelte-kit sync && svelte-check",\n    "check:watch": "svelte-kit sync && svelte-check --watch"';
+      ',\n    "test": "echo \\"Error: no test specified\\" && exit 1",\n    "dev": "vite dev",\n    "build": "vite build",\n    "preview": "vite preview --host 127.0.0.1",\n    "check": "svelte-kit sync && svelte-check",\n    "check:watch": "svelte-kit sync && svelte-check --watch",\n    "check:ui": "node ' +
+      uiCheckPath +
+      '"';
     devDependencies +=
       '"@sveltejs/kit": "^2.70.3",\n    "@sveltejs/vite-plugin-svelte": "^7.3.0",\n    "svelte": "^5.53.8",\n    "svelte-check": "^4.1.1",\n    "typescript": "^5.7.2",\n    "vite": "^8.2.2"';
 
@@ -1999,7 +2014,9 @@ function _getFrameworkConfig(context) {
     overrides =
       ',\n  "overrides": {\n    "@sveltejs/vite-plugin-svelte": "^7.3.0",\n    "vite": "^8.2.2"\n  }';
     scripts =
-      ',\n    "test": "echo \\"Error: no test specified\\" && exit 1",\n    "dev": "vite",\n    "build": "vite build",\n    "preview": "vite preview --host 127.0.0.1"';
+      ',\n    "test": "echo \\"Error: no test specified\\" && exit 1",\n    "dev": "vite",\n    "build": "vite build",\n    "preview": "vite preview --host 127.0.0.1",\n    "check:ui": "node ' +
+      uiCheckPath +
+      '"';
     devDependencies +=
       '"@sveltejs/vite-plugin-svelte": "^7.3.0",\n    "svelte": "^5.53.8",\n    "vite": "^8.2.2"';
     if (hasWrangler) {
@@ -3424,6 +3441,23 @@ export function generateGitignoreFile(templateEngine, context) {
   };
 }
 
+/**
+ * `scripts/ui-check.mjs`: a deterministic text verdict for a running dev
+ * server, so checking a page does not need a screenshot plus a vision model.
+ * Emitted from the project-level file list (not `capabilityTemplates`) so it
+ * always lands at the repository root — a capability template for a `frontend`
+ * capability would move it under the Svelte directory (`web/`) in a non-node
+ * project, and this is a project tool rather than a frontend asset.
+ * @param {TemplateEngine} templateEngine Initialised engine.
+ * @returns {{filePath: string, content: string}} Generated file.
+ */
+export function generateUiCheckScript(templateEngine) {
+  return {
+    filePath: "scripts/ui-check.mjs",
+    content: templateEngine.generateFile("ui-check-mjs", {}),
+  };
+}
+
 export function generatePrettierIgnoreFile() {
   // Generated infra files are machine output (or build templates) and are
   // excluded from `prettier --check` so a generated project's lint step
@@ -4369,6 +4403,8 @@ export async function generateAllFiles(context) {
     generateVscodeSettingsFile(templateEngine, context),
     generateVscodeExtensionsFile(),
     generateNpmrcFile(context),
+    // Root-level UI verdict script, only when there is a frontend to check.
+    hasFrontend(context) ? generateUiCheckScript(templateEngine) : null,
     // 2.5: root README (language-aware quickstart).
     generateReadmeFile(context),
   ].filter(Boolean);
