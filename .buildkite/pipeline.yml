@@ -80,6 +80,43 @@ steps:
         echo "registry: $$COMPONENTS_REGISTRY_URL"
         node scripts/verify-generated-ui-shadcn-e2e.mjs
 
+  # The hybrid Playwright fixtures (shared-CDP when a Chrome answers, bundled
+  # Chromium otherwise), the config and the smoke test were merged WITHOUT ever
+  # being executed — every existing test only reads the emitted text. This step
+  # generates a project and actually runs its `npm run test:e2e`, over a real
+  # CDP endpoint, then asserts the Chromium it launched is still alive (the
+  # runtime form of "fixtures must never close the shared browser").
+  #
+  # It depends only on `build` on purpose and deploy does NOT depend on it: it
+  # is a signal, and a brand-new check must not become a deploy-blocking
+  # footgun on day one. No Doppler or registry secret: this capability set does
+  # not touch the registry.
+  - label: ":performing_arts: Generated project e2e (playwright suite actually runs)"
+    key: generated_playwright_e2e
+    depends_on:
+      - build
+    timeout_in_minutes: 25
+    agents:
+      queue: mac-studio-linux
+    plugins:
+      - docker#v5.13.0:
+          image: "node:22-bookworm"
+          platform: linux/arm64
+          workdir: /workdir
+    commands:
+      - |
+        PINNED="$$(node -p "require('./package.json').packageManager || ''" | sed -e 's/^npm@//')"
+        if [ -n "$$PINNED" ]; then npm install -g "npm@$$PINNED"; fi
+      - if [ -f package-lock.json ]; then npm ci --no-audit --no-fund --prefer-offline; else npm install --no-audit --no-fund; fi
+      - |
+        # The generated project installs its OWN @playwright/test and its
+        # version-matched Chromium; that is what makes client and server agree.
+        # These OS libraries are the one thing npm cannot supply, and they are
+        # generic — hence --with-deps once, at the root, before the script.
+        npm install --no-save --no-audit --no-fund playwright
+        npx playwright install --with-deps chromium
+      - node scripts/verify-generated-playwright-e2e.mjs
+
   - label: ":rocket: Deploy (production)"
     key: deploy
     depends_on:
