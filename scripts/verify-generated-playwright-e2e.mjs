@@ -43,7 +43,7 @@
  *                            for a busy 4173; CI leaves it unset.
  */
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
@@ -239,6 +239,20 @@ async function main() {
   check(
     config.includes("testMatch: '**/*.e2e.js'"),
     "playwright.config.js sets testMatch: '**/*.e2e.js'",
+  );
+  // The config is ESM (`export default`), so it is parsed as such. A config
+  // that does not parse must fail HERE, in the shape stage, and not halfway
+  // through the actual Playwright run (a block comment closed early by the
+  // `**/*` glob once made exactly that happen).
+  const configParse = spawnSync(
+    process.execPath,
+    ["--check", path.join(workDir, "playwright.config.js")],
+    { encoding: "utf8" },
+  );
+  check(
+    configParse.status === 0,
+    "playwright.config.js parses under `node --check`",
+    configParse.stderr?.trim() || undefined,
   );
 
   // --- (c) install ---------------------------------------------------------

@@ -7,9 +7,10 @@ import { defineConfig, devices } from '@playwright/test';
  * to vitest and would otherwise be collected as a Playwright spec.
  *
  * `testMatch` is restricted to `*.e2e.js` on purpose. vitest's default include
- * is `**/*.{test,spec}.?(c|m)[jt]s?(x)`, so a Playwright `smoke.spec.js` would
- * be picked up by vitest too. Choosing an extension neither default matches
- * means no vitest include/exclude list has to be maintained (and drift).
+ * glob also matches the `*.test.*` / `*.spec.*` families (with the usual
+ * cjs/mjs/cts/mts variants), so a Playwright spec named that way would be
+ * picked up by vitest too. Choosing an extension neither default matches means
+ * no vitest include/exclude list has to be maintained (and drift).
  *
  * There is deliberately NO `webServer` block: the project may be built by a
  * non-node primary language, and a block that runs `npm run build` would be
