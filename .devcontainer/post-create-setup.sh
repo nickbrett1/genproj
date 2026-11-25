@@ -3,6 +3,20 @@
 # For example:
 # echo "Running devcontainer setup script..."
 # npm install
+#
+# NOTE (2026-11-25): this file is generated once, then hand-edited. Do NOT
+# full-refresh it from the current template without reading this list — a
+# blind refresh would revert deliberate improvements and delete repo-only work.
+# Known divergences from current template output:
+#   - AHEAD: the goose version-check (4a3c4d1) — compares the installed build
+#     against the latest stable tag instead of running `goose update` blindly.
+#   - AHEAD: the agy-telemetry hook — template output does not carry it.
+#   - BEHIND: the npm-missing branch — repo still assumes npm is present.
+#   - BEHIND: the goose-config managed-extensions merge — repo has the older
+#     single-shot config write.
+#   - REPO-ONLY: the uv install — the template does not emit it.
+# (The socat tunnel was removed on the same date; see the NOTE in
+# post-start-setup.sh for why it must not return.)
 
 CURRENT_USER=$(whoami)
 USER_HOME_DIR="$HOME"
@@ -292,11 +306,6 @@ echo "INFO: goose configuration complete."
 
 echo "INFO: Installing specdag globally..."
 npm install -g @japorto100/specdag
-
-if ! pgrep -f "socat TCP-LISTEN:9222" > /dev/null; then
-    echo "Setup bridget to access Chrome DevTools Protocol over a secure tunnel..."
-    sudo start-stop-daemon --start --background --pidfile /var/run/socat-9222.pid --make-pidfile --chuid $(id -un):$(id -gn) --exec /usr/bin/socat -- TCP-LISTEN:9222,fork,bind=127.0.0.1 TCP:host.docker.internal:9222
-fi
 
 
 echo "INFO: Checking Tailscale status..."
