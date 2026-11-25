@@ -1,0 +1,85 @@
+import { test as base, expect, chromium } from '@playwright/test';
+
+/**
+ * Hybrid e2e fixtures: run against a SHARED Chrome over the DevTools Protocol
+ * when one answers, and fall back to the bundled chromium otherwise.
+ *
+ * The shared browser is the estate's long-lived Chrome (reached over the dev
+ * tunnel on 127.0.0.1:9222). A dev machine with that browser asleep must
+ * degrade to the bundled binary, never fail the suite. A green run on the
+ * fallback is NOT a shared-browser pass, so `browserMode` names the tier that
+ * actually ran and the smoke test prints it.
+ *
+ * Only the browser this module launched is ever closed. The CDP connection is
+ * left open on purpose: closing it would not just drop this worker, it would
+ * take the shared Chrome down for every other user in the estate. Contexts are
+ * incognito and are closed per test by Playwright's own `context` fixture.
+ */
+
+const CDP_CANDIDATES = [
+  process.env.PLAYWRIGHT_CDP_URL,
+  'http://127.0.0.1:9222',
+].filter(Boolean);
+
+/** Cheap liveness probe. A sleeping host must cost one short timeout, not a
+ * slow, noisy `connectOverCDP` throw. Every error means "not there". */
+async function isCdpAlive(url) {
+  try {
+    const response = await fetch(`${url}/json/version`, {
+      signal: AbortSignal.timeout(750),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function connectSharedBrowser() {
+  for (const url of CDP_CANDIDATES) {
+    if (!(await isCdpAlive(url))) continue;
+    try {
+      return {
+        browser: await chromium.connectOverCDP(url),
+        mode: `shared-cdp (${url})`,
+      };
+    } catch {
+      // Probe said yes, connect said no: try the next candidate.
+    }
+  }
+  return null;
+}
+
+export const test = base.extend({
+  // One tier resolution per worker; `browser` and `browserMode` both read it.
+  browserTier: [
+    async ({}, use) => {
+      const shared = await connectSharedBrowser();
+      if (shared) {
+        await use(shared);
+        // Deliberately no close: the shared browser outlives this worker.
+        return;
+      }
+      const bundled = await chromium.launch();
+      try {
+        await use({ browser: bundled, mode: 'bundled-chromium' });
+      } finally {
+        await bundled.close();
+      }
+    },
+    { scope: 'worker' },
+  ],
+  // The default `browser` fixture is worker-scoped; the override must match.
+  browser: [
+    async ({ browserTier }, use) => {
+      await use(browserTier.browser);
+    },
+    { scope: 'worker' },
+  ],
+  // Which tier ran, for reporting: a fallback pass must not be reported as a
+  // shared-browser pass.
+  browserMode: async ({ browserTier }, use) => {
+    await use(browserTier.mode);
+  },
+});
+
+export { expect };

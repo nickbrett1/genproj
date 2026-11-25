@@ -30,6 +30,8 @@ const devcontainerZshrc = templateFiles["devcontainer-zshrc.template"];
 const devcontainerTmuxConf = templateFiles["devcontainer-tmux-conf.template"];
 const dopplerYaml = templateFiles["doppler-yaml.template"];
 const playwrightConfig = templateFiles["playwright-config.template"];
+const playwrightE2eSmoke = templateFiles["playwright-e2e-smoke.template"];
+const playwrightE2eFixtures = templateFiles["playwright-e2e-fixtures.template"];
 const lighthouseCiConfig = templateFiles["lighthouse-ci-config.template"];
 const circleCiConfig = templateFiles["circleci-config.template"];
 const buildkitePipeline = templateFiles["buildkite-pipeline.template"];
@@ -612,11 +614,6 @@ mkdir -p "$USER_HOME_DIR/.agy"
 printf '{\n  "selectedAuthType": "oauth-personal",\n  "general": {\n    "sessionRetention": {\n      "enabled": true,\n      "maxAge": "30d",\n      "warningAcknowledged": true\n    }\n  },\n  "ide": {\n    "hasSeenNudge": true,\n    "enabled": true\n  }\n}\n' > "$USER_HOME_DIR/.agy/settings.json"
 sudo chown -R "$CURRENT_USER:$CURRENT_USER" "$USER_HOME_DIR/.agy"`;
 
-export const PLAYWRIGHT_SETUP_SCRIPT = `
-echo "INFO: Installing Playwright and its Chromium dependencies..."
-npx --yes playwright install --with-deps chromium
-echo "INFO: Playwright Chromium installation complete."`;
-
 export const PYTHON_SETUP_SCRIPT = `
 # Setup python virtual environment and install dependencies.
 #
@@ -1046,6 +1043,8 @@ const templateImports = {
   "devcontainer-zshrc": devcontainerZshrc,
   "devcontainer-tmux-conf": devcontainerTmuxConf,
   "playwright-config": playwrightConfig,
+  "playwright-e2e-smoke": playwrightE2eSmoke,
+  "playwright-e2e-fixtures": playwrightE2eFixtures,
   "lighthouse-ci-config": lighthouseCiConfig,
   "circleci-config": circleCiConfig,
   "buildkite-pipeline": buildkitePipeline,
@@ -1918,9 +1917,6 @@ fi
           gooseSetup: hasGoose(context.capabilities)
             ? generateGooseSetupScript(context)
             : "",
-          playwrightSetup: context.capabilities.includes("playwright")
-            ? PLAYWRIGHT_SETUP_SCRIPT
-            : "",
           // The hooks are installed through `core.hooksPath`, which is what
           // makes the repository's own `.githooks/pre-commit` authoritative.
           // Deliberately NOT `|| true`: the bug this replaces reported success
@@ -2096,6 +2092,34 @@ function _addNodeDevcontainerConfig(context, config) {
   }
 }
 
+/**
+ * Playwright's manifest entries. There is no per-capability hook for
+ * package.json, so this mirrors the devcontainer-node vitest block: append to
+ * the fragments, guarded so a second pass cannot duplicate a JSON key.
+ *
+ * Only for a project that has BOTH `playwright` and a frontend — the same
+ * condition the template entries are keyed under (see capability-templates.js).
+ * `test` is already vitest's, so the e2e run gets its own `test:e2e` key rather
+ * than replacing anything.
+ * @param {Object} context - Generation context
+ * @param {Object} config - Manifest fragments from _getFrameworkConfig
+ */
+function _addPlaywrightConfig(context, config) {
+  if (
+    !context.capabilities.includes("playwright") ||
+    !hasFrontend(context) ||
+    config.devDependencies.includes("@playwright/test")
+  ) {
+    return;
+  }
+  config.devDependencies += config.devDependencies
+    ? ',\n    "@playwright/test": "^1.56.0"'
+    : '"@playwright/test": "^1.56.0"';
+  if (!config.scripts.includes('"test:e2e"')) {
+    config.scripts += ',\n    "test:e2e": "playwright test"';
+  }
+}
+
 const CODE_QUALITY_DEV_DEPS = [
   '"@eslint/js": "^10.0.1"',
   '"eslint": "^10.8.0"',
@@ -2173,6 +2197,7 @@ export function generatePackageJson(templateEngine, context) {
   const config = _getFrameworkConfig(context);
   _addNodeDevcontainerConfig(context, config);
   _addCodeQualityConfig(context, config);
+  _addPlaywrightConfig(context, config);
 
   if (
     context.capabilities.includes("devcontainer-node") ||
@@ -3197,6 +3222,37 @@ purpose.
 `
     : "";
 
+  // playwright: the e2e config deliberately has no `webServer` block (it would
+  // be wrong for a non-node primary language), so the README has to say how to
+  // start the server by hand and which browser tier a run used. Dev uses the
+  // shared Chrome over CDP when it answers; CI downloads chromium itself.
+  const playwrightSection =
+    context.capabilities.includes("playwright") && hasFrontend(context)
+      ? (() => {
+          const frontendDir = sveltePrefix(context) || ".";
+          const cd = sveltePrefix(context) ? `cd ${frontendDir}\n` : "";
+          return `## End-to-end tests (Playwright)
+
+The e2e suite lives in \`${sveltePrefix(context)}tests/e2e/\` and runs against
+a server you start yourself — the config has **no \`webServer\` block**, because
+this project's server is not necessarily Node:
+
+\`\`\`sh
+${cd}npm run preview     # serves the built app on 127.0.0.1:4173
+npm run test:e2e      # Playwright, in another terminal
+\`\`\`
+
+Point \`UI_BASE_URL\` at a different origin if your server listens elsewhere.
+
+The fixtures are hybrid: if a shared Chrome answers on \`127.0.0.1:9222\` (or
+\`PLAYWRIGHT_CDP_URL\`), the suite drives it and leaves it running; otherwise it
+falls back to a bundled Chromium. Each run prints which tier it used — a pass
+on the fallback is not a pass against the shared browser. CI installs the
+bundled Chromium, so a CI run is always the fallback tier.
+`;
+        })()
+      : "";
+
   const content = `# ${projectName}
 
 ${description}
@@ -3209,6 +3265,7 @@ ${deploySection}
 ${containerAgentSection}
 ${micropythonSection}
 ${micropythonLintingSection}
+${playwrightSection}
 ## Generated by genproj
 
 This project was generated using the genproj tool.

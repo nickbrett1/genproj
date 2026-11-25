@@ -15,7 +15,6 @@ vi.mock("../../src/generator/file-generator.js", () => ({
   AGY_DEV_ALIAS: "agy-dev-alias",
   GIT_SAFE_DIR_SCRIPT: "git-safe-dir-script",
   AGY_SETUP_SCRIPT: "agy-setup-script",
-  PLAYWRIGHT_SETUP_SCRIPT: "playwright-setup-script",
   PYTHON_SETUP_SCRIPT: "python-setup-script",
   NODE_SETUP_SCRIPT: "node-setup-script",
   generateDopplerSetupScript: () => "doppler-setup-script",
