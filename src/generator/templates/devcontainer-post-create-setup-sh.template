@@ -72,7 +72,6 @@ fi
 {{gooseSetup}}
 
 {{specdagSetup}}
-{{socatSetup}}
 
 echo "INFO: Checking Tailscale status..."
 if ! command -v tailscale &> /dev/null; then
