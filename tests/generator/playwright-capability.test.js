@@ -1,5 +1,30 @@
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { describe, it, expect } from "vitest";
 import { generateAllFiles } from "../../src/generator/file-generator.js";
+
+/**
+ * Parse `content` as an ES module by writing it to a `.mjs` file and asking
+ * node itself. `node --check` is the exact parser the emitted config must
+ * survive, so this catches a block comment closed early by a glob literal:
+ * something a `toContain` assertion cannot see.
+ */
+function expectParsesAsModule(content, label) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "genproj-parse-"));
+  const file = path.join(dir, "playwright.config.mjs");
+  fs.writeFileSync(file, content);
+  try {
+    const result = spawnSync(process.execPath, ["--check", file], {
+      encoding: "utf8",
+    });
+    expect(result.status, `${label} does not parse:\n${result.stderr}`).toBe(0);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
 
 /**
  * The `playwright` capability: honest e2e scaffolding.
@@ -78,6 +103,18 @@ describe("the generated e2e files are real, not decorative", () => {
     expect(config).toContain("trace: 'on-first-retry'");
     // A dev webServer would be wrong for every non-node primary language.
     expect(config).not.toContain("webServer:");
+  });
+
+  it("the config parses as an ES module (no block comment closed early)", async () => {
+    const { find } = await renderFiles(
+      ["devcontainer-node", "sveltekit", PLAYWRIGHT],
+      { language: "node" },
+    );
+    const config = find("playwright.config.js");
+    // The header comment explains vitest's include glob in prose instead of
+    // pasting a glob whose `**/*` contains the `*` + `/` that ends a block
+    // comment. That made the emitted file invalid JavaScript.
+    expectParsesAsModule(config, "playwright.config.js");
   });
 
   it("the fixtures prefer CDP, fall back to bundled chromium, and never close the shared browser", async () => {

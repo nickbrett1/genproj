@@ -213,6 +213,34 @@ describe("SvelteKit File Generation", () => {
     expect(appHtmlTest.content).toContain("background-clip: text");
   });
 
+  it("gives the SvelteKit route its own <title> via svelte:head", async () => {
+    const files = await generateAllFiles({
+      projectName: "titled-app",
+      capabilities: ["devcontainer-node", "sveltekit"],
+      configuration: {},
+    });
+    const page = files.find(
+      (f) => f.filePath === "src/routes/+page.svelte",
+    ).content;
+    // Per-route ownership: a static <title> in app.html would be shared by
+    // every route and duplicate with a page that sets its own via svelte:head.
+    expect(page).toContain("<svelte:head>");
+    expect(page).toContain("<title>titled-app</title>");
+    // ...and app.html still owns no title.
+    const appHtml = files.find((f) => f.filePath === "src/app.html").content;
+    expect(appHtml).not.toContain("<title>");
+
+    // The plain `svelte` shape keeps its index.html title (the shape that was
+    // already correct, pinned so the two cannot drift apart).
+    const plain = await generateAllFiles({
+      projectName: "titled-app",
+      capabilities: ["devcontainer-node", "svelte"],
+      configuration: {},
+    });
+    const indexHtml = plain.find((f) => f.filePath === "index.html").content;
+    expect(indexHtml).toContain("<title>titled-app</title>");
+  });
+
   it("relocates the app.html test with the frontend", async () => {
     const files = await generateAllFiles({
       name: "roost",

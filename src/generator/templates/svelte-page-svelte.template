@@ -6,6 +6,16 @@
 	}
 </script>
 
+<!--
+  The title belongs to the route, not to app.html. `app.html` is shared by
+  every route, so a static <title> there would duplicate with any page that
+  later sets its own title via <svelte:head>. Per-route ownership scales; a
+  shared static title does not.
+-->
+<svelte:head>
+	<title>{{projectName}}</title>
+</svelte:head>
+
 <h1>Welcome to SvelteKit</h1>
 <p>Visit <a href="https://kit.svelte.dev">kit.svelte.dev</a> to read the documentation</p>
 
