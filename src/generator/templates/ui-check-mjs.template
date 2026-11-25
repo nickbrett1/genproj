@@ -61,6 +61,46 @@ const DEFAULT_CDP_CANDIDATES = ['http://0.250.250.254:9222', 'http://host.docker
 
 const OVERFLOW_TOLERANCE_PX = 2;
 
+// A CDP command that never gets a response must not be allowed to outlive the
+// overall budget: Page.navigate in particular stays pending for as long as the
+// loader is unresolved (a blackholed host, or a container-loopback URL the host
+// browser cannot route to). This is the per-command ceiling; `CdpSession` also
+// clamps it to whatever remains of --timeout, so --timeout bounds the whole run.
+const DEFAULT_CDP_COMMAND_TIMEOUT_MS = 10000;
+
+// A cleanup command (today only Target.closeTarget) must NOT inherit the run's
+// verdict deadline. The deadline exists to bound *producing a verdict*, and the
+// paths that exhaust it — a stalled navigation, a page that never fires load, a
+// slow Runtime.evaluate — are exactly the paths where a browser target was
+// created and has to be closed. `send()` clamps to whatever remains of the
+// deadline, so after an overrun its budget collapses to the 1ms floor and the
+// close rejects; the caller swallows that reject, so the tab leaks silently.
+// Hence a small, fixed allowance that ignores the deadline. This is not a second
+// clock: it bounds one cleanup round-trip, not the run. Cost: wall-clock may
+// exceed --timeout by up to this much, and only when the target was created.
+const CDP_CLEANUP_TIMEOUT_MS = 2000;
+
+// When tier 2 is about to load a loopback URL in a *host* browser with no
+// --browser-url, the odds are known-bad: the host's 127.0.0.1 is the host, not
+// the container. It still works under VS Code's port auto-forward, so it is
+// attempted rather than skipped — but with a short cap, so the common failing
+// case degrades in ~3s instead of burning the whole budget to learn it.
+//
+// THE TRADE, STATED SO NOBODY "FIXES" THIS UPWARD WITHOUT READING IT:
+// 3s is shorter than the 15s default overall budget on purpose, and that means
+// a loopback page that is slow-but-working — most often a *cold* port forward
+// that needs more than 3s to establish on the first navigation — is demoted to
+// tier 1's verdict on that run even though the page itself is fine. That is
+// accepted: the alternative (the old behaviour) was to hang with no verdict at
+// all, which is strictly worse. Do not raise this toward the overall budget to
+// "avoid the demotion": that reintroduces the hang for the common no-forward
+// case, which is the case this script exists to survive. A caller who needs a
+// genuinely slow loopback page checked must pass --browser-url (a host-reachable
+// URL, no leash) rather than widen this.
+const LOOPBACK_NAVIGATION_TIMEOUT_MS = 3000;
+
+const isLoopbackUrl = (url) => /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])[:/]/.test(url);
+
 // ---------------------------------------------------------------------------
 // args
 // ---------------------------------------------------------------------------
@@ -265,8 +305,13 @@ async function runTier1(opts, verdict, deadline) {
 // ---------------------------------------------------------------------------
 
 class CdpSession {
-  constructor(ws) {
+  /**
+   * @param ws        an open WebSocket
+   * @param deadline  epoch ms after which no command may still be pending
+   */
+  constructor(ws, deadline = Number.POSITIVE_INFINITY) {
     this.ws = ws;
+    this.deadline = deadline;
     this.nextId = 1;
     this.pending = new Map();
     this.listeners = [];
@@ -281,8 +326,9 @@ class CdpSession {
       return;
     }
     if (msg.id !== undefined && this.pending.has(msg.id)) {
-      const { resolve, reject } = this.pending.get(msg.id);
+      const { resolve, reject, timer } = this.pending.get(msg.id);
       this.pending.delete(msg.id);
+      clearTimeout(timer);
       if (msg.error) reject(new Error(`${msg.error.message}${msg.error.data ? ` (${msg.error.data})` : ''}`));
       else resolve(msg.result);
       return;
@@ -292,22 +338,59 @@ class CdpSession {
 
   on(fn) { this.listeners.push(fn); }
 
-  send(method, params = {}, sessionId = undefined) {
+  /**
+   * Send a CDP command and settle on its response, its send error, or the
+   * command timeout — never on silence. The timeout is the smaller of the
+   * per-command ceiling and whatever remains of the overall deadline, so a
+   * stalled command cannot make the run outlive --timeout.
+   */
+  send(method, params = {}, sessionId = undefined, timeoutMs = undefined) {
+    const budget = Math.max(
+      1,
+      Math.min(timeoutMs ?? DEFAULT_CDP_COMMAND_TIMEOUT_MS, this.deadline - Date.now()),
+    );
+    return this._dispatch(method, params, sessionId, budget);
+  }
+
+  /**
+   * Like send(), but with a fixed budget that deliberately ignores the overall
+   * deadline. Only for cleanup that must still happen once the verdict budget
+   * is spent — see CDP_CLEANUP_TIMEOUT_MS for why inheriting the deadline here
+   * makes the close a silent no-op on exactly the paths that need it.
+   */
+  sendCleanup(method, params = {}, sessionId = undefined) {
+    return this._dispatch(method, params, sessionId, CDP_CLEANUP_TIMEOUT_MS);
+  }
+
+  _dispatch(method, params, sessionId, budget) {
     const id = this.nextId++;
     const payload = { id, method, params };
     if (sessionId) payload.sessionId = sessionId;
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+      const timer = setTimeout(() => {
+        if (!this.pending.has(id)) return;
+        this.pending.delete(id);
+        reject(new Error(`CDP command ${method} did not respond within ${budget}ms`));
+      }, budget);
+      this.pending.set(id, { resolve, reject, timer });
       try {
         this.ws.send(JSON.stringify(payload));
       } catch (err) {
+        clearTimeout(timer);
         this.pending.delete(id);
         reject(err);
       }
     });
   }
 
-  close() { try { this.ws.close(); } catch { /* already gone */ } }
+  close() {
+    for (const [id, pending] of this.pending) {
+      this.pending.delete(id);
+      clearTimeout(pending.timer);
+      pending.reject(new Error('CDP session closed before the command responded'));
+    }
+    try { this.ws.close(); } catch { /* already gone */ }
+  }
 }
 
 function openWebSocket(url, timeoutMs) {
@@ -376,7 +459,7 @@ async function runTier2(opts, verdict, deadline) {
     return;
   }
 
-  const session = new CdpSession(ws);
+  const session = new CdpSession(ws, deadline);
   let targetId = null;
 
   try {
@@ -432,14 +515,38 @@ async function runTier2(opts, verdict, deadline) {
     await session.send('Page.enable', {}, sessionId);
 
     const pageUrl = opts.browserUrl || opts.url;
-    if (!opts.browserUrl && /^https?:\/\/(127\.0\.0\.1|localhost)[:/]/.test(opts.url)) {
+    // When no browser URL is supplied and the page is loopback, tier 2 loads
+    // the container's own 127.0.0.1 in a *host* browser. That cannot work
+    // unless VS Code auto-forwards the port, so it is warned about and then
+    // attempted with a short leash: a bounded attempt that degrades is worth
+    // one cheap try, because the auto-forward is exactly the interactive
+    // devcontainer case this script is written for. See LOOPBACK_NAVIGATION_TIMEOUT_MS.
+    const navigatingLoopbackInHostBrowser = !opts.browserUrl && isLoopbackUrl(opts.url);
+    if (navigatingLoopbackInHostBrowser) {
       verdict.warn(
         'browser-url-is-loopback',
-        `tier 2 loaded ${pageUrl} in a host browser. That only works while VS Code forwards the container port; set --browser-url to a host-reachable URL for headless runs.`,
+        `tier 2 loaded ${pageUrl} in a host browser. That only works while VS Code forwards the container port, so this run falls back to tier 1 if the host browser cannot reach it; set --browser-url to a host-reachable URL for headless runs.`,
       );
     }
 
-    const nav = await session.send('Page.navigate', { url: pageUrl }, sessionId);
+    let nav;
+    try {
+      nav = await session.send(
+        'Page.navigate',
+        { url: pageUrl },
+        sessionId,
+        navigatingLoopbackInHostBrowser ? LOOPBACK_NAVIGATION_TIMEOUT_MS : undefined,
+      );
+    } catch (err) {
+      // The browser accepted Page.navigate but never answered. In practice this
+      // is the loopback/no-port-forward case: the navigation never settles and
+      // the page is simply not reachable from the host browser. That is an
+      // infrastructure gap, not a defect in the page — tier 1 already judged
+      // the page itself, so keep its verdict and say why tier 2 stopped.
+      verdict.tier2SkipReason = `page did not load in the host browser (navigation to ${pageUrl} did not complete: ${err.message})`;
+      verdict.evidence.tier2StoppedEarly = true;
+      return;
+    }
     if (nav && nav.errorText) {
       verdict.tier2SkipReason = `browser could not load the page: ${nav.errorText}`;
       verdict.evidence.tier2StoppedEarly = true;
@@ -549,7 +656,11 @@ async function runTier2(opts, verdict, deadline) {
     else verdict.error('cdp-failure', `could not complete the browser pass: ${err.message}`);
   } finally {
     if (targetId) {
-      try { await session.send('Target.closeTarget', { targetId }); } catch { /* browser may be gone */ }
+      // sendCleanup, not send: by the time we get here the deadline may already
+      // be spent (that is often why we are here), and send() would clamp the
+      // close to 1ms and reject into the catch below — leaving the tab behind
+      // with no evidence. See CDP_CLEANUP_TIMEOUT_MS.
+      try { await session.sendCleanup('Target.closeTarget', { targetId }); } catch { /* browser may be gone */ }
     }
     session.close();
   }
