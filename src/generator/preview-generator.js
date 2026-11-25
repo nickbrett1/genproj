@@ -414,9 +414,6 @@ function createDevelopmentContainerShellFiles(
       specdagSetup: allCapabilities.includes("spec-kit")
         ? `echo "INFO: Installing specdag globally..."\nnpm install -g @japorto100/specdag\n`
         : "",
-      socatSetup: allCapabilities.includes("coding-agents")
-        ? `if ! pgrep -f "socat TCP-LISTEN:9222" > /dev/null; then\n    echo "Setup bridget to access Chrome DevTools Protocol over a secure tunnel..."\n    sudo start-stop-daemon --start --background --pidfile /var/run/socat-9222.pid --make-pidfile --chuid $(id -un):$(id -gn) --exec /usr/bin/socat -- TCP-LISTEN:9222,fork,bind=127.0.0.1 TCP:host.docker.internal:9222\nfi\n`
-        : "",
       cloudLoginSetup:
         allCapabilities.includes("doppler") ||
         allCapabilities.includes("cloudflare-wrangler") ||

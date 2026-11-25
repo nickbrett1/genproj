@@ -173,6 +173,13 @@ What genproj generates, and what every generated project must keep:
   scraper keys on. A bare port number is not matched — a `host:port` or a URL
   is.
 
+The socat tunnel that forwarded container `9222` to `host.docker.internal:9222`
+was removed (Nov 2026); the shared Chrome CDP endpoint is
+`http://0.250.250.254:9222` (OrbStack's fixed host alias). Do not reintroduce it
+on any port — a container listener is auto-forwarded to the host, so the loop
+re-forms. Full reasoning: the NOTE at the top of
+[`.devcontainer/post-start-setup.sh`](.devcontainer/post-start-setup.sh).
+
 ### Rule for anything that picks a host port
 
 A process that binds a port **on the host** (an agent runtime, a service, a
