@@ -276,6 +276,41 @@ describe("CdpSession bounds every command (unit)", () => {
     );
   });
 
+  it("closes its target even when the deadline is already spent", async () => {
+    // The path this guards: a command (Page.navigate / Runtime.evaluate) runs the
+    // deadline out, then finally tries Target.closeTarget. send() clamps to the
+    // 1ms floor there, so the close rejected and the swallowed error leaked the
+    // tab. sendCleanup() must ignore the deadline and still complete.
+    const { CdpSession } = loadTemplateExports();
+    class SlowWebSocket {
+      constructor() {
+        this.listeners = [];
+      }
+      addEventListener(type, fn) {
+        if (type === "message") this.listeners.push(fn);
+      }
+      send(raw) {
+        const { id } = JSON.parse(raw);
+        setTimeout(
+          () =>
+            this.listeners.forEach((fn) =>
+              fn({ data: JSON.stringify({ id, result: { success: true } }) }),
+            ),
+          20,
+        );
+      }
+      close() {}
+    }
+    const expired = () => new CdpSession(new SlowWebSocket(), Date.now() - 1);
+
+    await expect(
+      expired().send("Target.closeTarget", { targetId: "T" }),
+    ).rejects.toThrow(/did not respond within 1ms/);
+    await expect(
+      expired().sendCleanup("Target.closeTarget", { targetId: "T" }),
+    ).resolves.toEqual({ success: true });
+  });
+
   it("still resolves a command the browser answers", async () => {
     const { CdpSession } = loadTemplateExports();
     class EchoWebSocket {
