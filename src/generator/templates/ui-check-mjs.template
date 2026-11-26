@@ -54,9 +54,10 @@ const DEFAULT_TIMEOUT_MS = 15000;
 const DEFAULT_PAGE_URL = 'http://127.0.0.1:4173';
 
 // Resolution order for the CDP endpoint. The OrbStack host alias is a DEFAULT,
-// not a hardcode: host.docker.internal is broken in this estate by design
-// (in-container tailscaled answers NXDOMAIN with an SOA, so glibc will not
-// fall through), and UI_CDP_URL overrides both.
+// not a hardcode: host.docker.internal does not resolve inside these containers
+// (`getent hosts` exits 2, Node dns gives ENOTFOUND; lookups go to the Tailscale
+// MagicDNS nameserver at 100.100.100.100). So 0.250.250.254 is the default
+// because it works here, and UI_CDP_URL overrides both.
 const DEFAULT_CDP_CANDIDATES = ['http://0.250.250.254:9222', 'http://host.docker.internal:9222'];
 
 const OVERFLOW_TOLERANCE_PX = 2;
