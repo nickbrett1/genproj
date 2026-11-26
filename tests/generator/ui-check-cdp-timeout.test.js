@@ -55,12 +55,14 @@ function loadTemplateExports() {
     setTimeout,
     clearTimeout,
     Buffer,
+    URL,
     WebSocket: class {},
   });
   // eslint-disable-next-line sonarjs/code-eval -- deliberate: execute the template's own source in an isolated vm context to reach CdpSession without running main().
   vm.runInContext(
     `${withoutRunner}\n;globalThis.__exports = {
       CdpSession,
+      shouldDemoteTier2OnDocumentStatus,
       DEFAULT_CDP_COMMAND_TIMEOUT_MS: typeof DEFAULT_CDP_COMMAND_TIMEOUT_MS === "undefined" ? undefined : DEFAULT_CDP_COMMAND_TIMEOUT_MS,
       LOOPBACK_NAVIGATION_TIMEOUT_MS: typeof LOOPBACK_NAVIGATION_TIMEOUT_MS === "undefined" ? undefined : LOOPBACK_NAVIGATION_TIMEOUT_MS,
     };`,
@@ -208,10 +210,10 @@ async function startFakeCdp(options = {}) {
   };
 }
 
-/** Static page that tier 1 will fetch successfully. */
-async function startPageServer(html) {
+/** Static page that tier 1 will fetch; `status` defaults to 200. */
+async function startPageServer(html, status = 200) {
   const server = createServer((req, res) => {
-    res.writeHead(200, { "content-type": "text/html" });
+    res.writeHead(status, { "content-type": "text/html" });
     res.end(html);
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -400,6 +402,190 @@ describe("a stalled Page.navigate degrades to tier 1, it does not hang", () => {
       expect(verdict.tier).toBe(2);
       expect(verdict.tier2SkipReason).toBeNull();
       expect(verdict.errors.map((e) => e.code)).toContain("uncaught-exception");
+    } finally {
+      await page.close();
+      await cdp.close();
+    }
+  }, 30000);
+});
+
+/** Args shared by the document-status integration tests. */
+function uiCheckArgs(page, cdp, extra = []) {
+  return [
+    "--json",
+    "--url",
+    page.url,
+    "--cdp",
+    cdp.base,
+    "--timeout",
+    "5000",
+    ...extra,
+  ];
+}
+
+/** A main-frame Document response as Chrome reports it. */
+function documentResponse(url, status) {
+  return {
+    method: "Network.responseReceived",
+    params: {
+      type: "Document",
+      response: { url, status, mimeType: "text/html" },
+    },
+  };
+}
+
+const LOAD_EVENT = { method: "Page.loadEventFired", params: {} };
+
+function consoleErrorEvent(value) {
+  return {
+    method: "Runtime.consoleAPICalled",
+    params: { type: "error", args: [{ value }] },
+  };
+}
+
+describe("shouldDemoteTier2OnDocumentStatus (unit)", () => {
+  const SAME = "http://127.0.0.1:4173/";
+  const base = {
+    expectStatus: 200,
+    tier1Status: 200,
+    tier1ErrorCount: 0,
+    documentStatus: 404,
+    pageUrl: SAME,
+    url: SAME,
+  };
+
+  it.each([
+    ["tier 1 clean 200, tier 2 document 404", {}, true],
+    ["both see 200", { documentStatus: 200 }, false],
+    ["both see 404", { tier1Status: 404, documentStatus: 404 }, false],
+    [
+      "tier 2 page is a different origin",
+      { pageUrl: "http://other.example/", url: SAME },
+      false,
+    ],
+    ["tier 1 never got a status", { tier1Status: null }, false],
+  ])("%s → demote=%s", (_label, overrides, expected) => {
+    const { shouldDemoteTier2OnDocumentStatus } = loadTemplateExports();
+    expect(shouldDemoteTier2OnDocumentStatus({ ...base, ...overrides })).toBe(
+      expected,
+    );
+  });
+
+  it("never demotes when tier 1 already failed", () => {
+    const { shouldDemoteTier2OnDocumentStatus } = loadTemplateExports();
+    expect(
+      shouldDemoteTier2OnDocumentStatus({ ...base, tier1ErrorCount: 1 }),
+    ).toBe(false);
+  });
+});
+
+describe("a foreign 404 document is not attributed to the app", () => {
+  it("keeps tier 1 and records the document status, with no console-error", async () => {
+    const page = await startPageServer(PAGE_HTML);
+    const documentUrl = new URL("not-here", page.url).href;
+    const cdp = await startFakeCdp({
+      emitAfterNavigate: [
+        documentResponse(documentUrl, 404),
+        LOAD_EVENT,
+        consoleErrorEvent("foreign page boom"),
+      ],
+    });
+    try {
+      const result = await runUiCheck(uiCheckArgs(page, cdp), 20000);
+
+      expect(
+        result.code,
+        `stdout=${result.stdout} stderr=${result.stderr}`,
+      ).toBe(0);
+      const verdict = JSON.parse(result.stdout.trim());
+      expect(verdict.ok).toBe(true);
+      expect(verdict.tier).toBe(1);
+      expect(verdict.tier2SkipReason).toMatch(/different document/);
+      expect(verdict.evidence.tier2StoppedEarly).toBe(true);
+      expect(verdict.evidence.documentStatus).toBe(404);
+      expect(verdict.evidence.documentUrl).toBe(documentUrl);
+      expect(verdict.errors).toEqual([]);
+      // The foreign page's console error must not become the app's failure.
+      expect(verdict.errors.map((e) => e.code)).not.toContain("console-error");
+      // Tier 1's HTML-derived title stays authoritative.
+      expect(verdict.evidence.title).toBe("Local App");
+    } finally {
+      await page.close();
+      await cdp.close();
+    }
+  }, 30000);
+
+  it("still treats a console error as a failure when the document is 200", async () => {
+    const page = await startPageServer(PAGE_HTML);
+    const cdp = await startFakeCdp({
+      emitAfterNavigate: [
+        documentResponse(page.url, 200),
+        LOAD_EVENT,
+        consoleErrorEvent("real app error"),
+      ],
+    });
+    try {
+      const result = await runUiCheck(uiCheckArgs(page, cdp), 20000);
+
+      expect(
+        result.code,
+        `stdout=${result.stdout} stderr=${result.stderr}`,
+      ).toBe(1);
+      const verdict = JSON.parse(result.stdout.trim());
+      expect(verdict.tier).toBe(2);
+      expect(verdict.tier2SkipReason).toBeNull();
+      expect(verdict.errors.map((e) => e.code)).toContain("console-error");
+    } finally {
+      await page.close();
+      await cdp.close();
+    }
+  }, 30000);
+
+  it("does not demote a genuine 404 when 404 is the expected status", async () => {
+    const page = await startPageServer(PAGE_HTML, 404);
+    const cdp = await startFakeCdp({
+      emitAfterNavigate: [documentResponse(page.url, 404), LOAD_EVENT],
+    });
+    try {
+      const result = await runUiCheck(
+        uiCheckArgs(page, cdp, ["--expect-status", "404"]),
+        20000,
+      );
+
+      expect(
+        result.code,
+        `stdout=${result.stdout} stderr=${result.stderr}`,
+      ).toBe(0);
+      const verdict = JSON.parse(result.stdout.trim());
+      expect(verdict.tier).toBe(2);
+      expect(verdict.tier2SkipReason).toBeNull();
+      expect(verdict.evidence.documentStatus).toBe(404);
+    } finally {
+      await page.close();
+      await cdp.close();
+    }
+  }, 30000);
+
+  it("reports bad-status (and does not demote) when the real server 404s but 200 was expected", async () => {
+    const page = await startPageServer(PAGE_HTML, 404);
+    const cdp = await startFakeCdp({
+      emitAfterNavigate: [
+        documentResponse(page.url, 404),
+        LOAD_EVENT,
+        consoleErrorEvent("genuine 404 page"),
+      ],
+    });
+    try {
+      const result = await runUiCheck(uiCheckArgs(page, cdp), 20000);
+
+      expect(
+        result.code,
+        `stdout=${result.stdout} stderr=${result.stderr}`,
+      ).toBe(1);
+      const verdict = JSON.parse(result.stdout.trim());
+      expect(verdict.errors.map((e) => e.code)).toContain("bad-status");
+      expect(verdict.tier2SkipReason).toBeNull();
+      expect(verdict.evidence.documentStatus).toBe(404);
     } finally {
       await page.close();
       await cdp.close();

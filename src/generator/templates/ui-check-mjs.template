@@ -443,6 +443,52 @@ async function resolveCdpBase(opts, deadline) {
 // tier 2 — run the page in the shared browser
 // ---------------------------------------------------------------------------
 
+function originOf(url) {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Decide whether tier 2 looked at a DIFFERENT document than tier 1, and so
+ * whether its runtime findings must not be attributed to the app.
+ *
+ * This is the misattribution guard. When the preview server is not the one the
+ * check thinks it is (a squatter on the port, a stale tab, a proxy), tier 2 can
+ * load a foreign error page — a same-origin 404 document, for example — and
+ * report *its* console error as the app's. Tier 1 already fetched the real page
+ * and got `expectStatus` cleanly, so the honest outcome is to keep tier 1's
+ * verdict and say tier 2 stopped early. It is the same degradation contract as
+ * an unreachable browser: demote, never pass.
+ *
+ * The trigger is the main-frame DOCUMENT status and nothing else. A client-side
+ * title change after hydration is legitimate; title may corroborate a message,
+ * never fire the demotion. All of the following are required:
+ *   - tier 1 saw exactly `expectStatus`, with no errors;
+ *   - tier 2's document status is >= 400 and differs from tier 1's;
+ *   - tier 2's page origin is the same origin as `opts.url` (a cross-origin
+ *     page is a deliberate --browser-url, not a squatter).
+ */
+function shouldDemoteTier2OnDocumentStatus({
+  expectStatus,
+  tier1Status,
+  tier1ErrorCount,
+  documentStatus,
+  pageUrl,
+  url,
+}) {
+  if (tier1Status === null || tier1Status === undefined) return false;
+  if (tier1Status !== expectStatus || tier1ErrorCount !== 0) return false;
+  if (documentStatus === null || documentStatus === undefined) return false;
+  if (documentStatus < 400) return false;
+  if (documentStatus === tier1Status) return false;
+  const pageOrigin = originOf(pageUrl);
+  if (pageOrigin === null || pageOrigin !== originOf(url)) return false;
+  return true;
+}
+
 async function runTier2(opts, verdict, deadline) {
   verdict.tiersAttempted.push(2);
 
@@ -477,6 +523,15 @@ async function runTier2(opts, verdict, deadline) {
     const consoleErrors = [];
     const failedRequests = [];
     let loadFired = false;
+    // The main-frame document response, as the browser saw it.
+    // `responseReceived` fires again for each hop in a redirect chain and once
+    // for the final response, so the last Document entry is the document
+    // actually rendered. A 404 *document* is not a Network.loadingFailed — which
+    // is why a foreign error page used to be attributed to the app instead of
+    // ending the check.
+    let documentStatus = null;
+    let documentUrl = null;
+    let documentMimeType = null;
 
     session.on((msg) => {
       if (!msg.method) return;
@@ -497,6 +552,15 @@ async function runTier2(opts, verdict, deadline) {
           if (params.type !== 'error') break;
           const text = (params.args || []).map((a) => a.value ?? a.description ?? a.type).join(' ');
           consoleErrors.push(`console: ${String(text).slice(0, 300)}`);
+          break;
+        }
+        case 'Network.responseReceived': {
+          // Last Document wins, so a redirect chain resolves to the document
+          // the browser actually rendered.
+          if (params.type !== 'Document' || !params.response) break;
+          documentStatus = params.response.status;
+          documentUrl = params.response.url || null;
+          documentMimeType = params.response.mimeType || null;
           break;
         }
         case 'Network.loadingFailed': {
@@ -566,6 +630,39 @@ async function runTier2(opts, verdict, deadline) {
       // (no port forward), not a defect in the page — tier 1 already judged the
       // page itself. Say so rather than inventing a failure.
       verdict.tier2SkipReason = 'page did not load in the host browser (likely no container→host port forward)';
+      verdict.evidence.tier2StoppedEarly = true;
+      return;
+    }
+
+    // Record what the browser actually loaded. Kept even when tier 2 proceeds:
+    // the document status is the primary evidence that tier 1 and tier 2 looked
+    // at the same page.
+    if (documentStatus !== null) {
+      verdict.evidence.documentStatus = documentStatus;
+      verdict.evidence.documentUrl = documentUrl;
+      verdict.evidence.documentMimeType = documentMimeType;
+    }
+
+    // Misattribution guard: if the browser loaded a foreign (same-origin 4xx/5xx)
+    // document, its console errors belong to that page, not the app. Keep tier 1's
+    // verdict and stop BEFORE verdict.tier = 2 and before emitting any tier-2
+    // finding, so the foreign document cannot overwrite evidence.title/h1 either.
+    // Title and h1 never participate in this decision: a client-side title change
+    // after hydration is legitimate.
+    if (
+      shouldDemoteTier2OnDocumentStatus({
+        expectStatus: opts.expectStatus,
+        tier1Status: verdict.evidence.status,
+        tier1ErrorCount: verdict.errors.length,
+        documentStatus,
+        pageUrl,
+        url: opts.url,
+      })
+    ) {
+      verdict.tier2SkipReason =
+        `tier 2 loaded a different document (HTTP ${documentStatus} from ${documentUrl || pageUrl}) ` +
+        `than tier 1 (HTTP ${verdict.evidence.status} from ${opts.url}); ` +
+        'its console/network findings are not attributed to the app';
       verdict.evidence.tier2StoppedEarly = true;
       return;
     }

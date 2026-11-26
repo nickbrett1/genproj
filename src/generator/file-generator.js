@@ -1965,6 +1965,13 @@ function _getFrameworkConfig(context) {
   const uiCheckPath = sveltePrefix(context)
     ? "../scripts/ui-check.mjs"
     : "scripts/ui-check.mjs";
+  // The preview scripts below pin `--port 4173 --strictPort` rather than
+  // relying on Vite's default: when 4173 is busy Vite silently increments to
+  // 4174, so the README, ui-check's DEFAULT_PAGE_URL and the Playwright
+  // config would all advertise an address nothing is listening on.
+  // `--strictPort` turns that into a loud "Port 4173 is already in use".
+  // The `npm run preview -- --port 4198` escape hatch still works: npm appends
+  // after the script's own arguments, and a later --port wins.
   let scripts =
     ',\n    "test": "echo \\"Error: no test specified\\" && exit 1",\n    "build": "echo \'No build step required\'"';
   let devDependencies = "";
@@ -1979,7 +1986,7 @@ function _getFrameworkConfig(context) {
     overrides =
       ',\n  "overrides": {\n    "cookie": "^1.0.2",\n    "@sveltejs/vite-plugin-svelte": "^7.3.0",\n    "vite": "^8.2.2"\n  }';
     scripts =
-      ',\n    "test": "echo \\"Error: no test specified\\" && exit 1",\n    "dev": "vite dev",\n    "build": "vite build",\n    "preview": "vite preview --host 127.0.0.1",\n    "check": "svelte-kit sync && svelte-check",\n    "check:watch": "svelte-kit sync && svelte-check --watch",\n    "check:ui": "node ' +
+      ',\n    "test": "echo \\"Error: no test specified\\" && exit 1",\n    "dev": "vite dev",\n    "build": "vite build",\n    "preview": "vite preview --host 127.0.0.1 --port 4173 --strictPort",\n    "check": "svelte-kit sync && svelte-check",\n    "check:watch": "svelte-kit sync && svelte-check --watch",\n    "check:ui": "node ' +
       uiCheckPath +
       '"';
     devDependencies +=
@@ -2007,7 +2014,7 @@ function _getFrameworkConfig(context) {
     overrides =
       ',\n  "overrides": {\n    "@sveltejs/vite-plugin-svelte": "^7.3.0",\n    "vite": "^8.2.2"\n  }';
     scripts =
-      ',\n    "test": "echo \\"Error: no test specified\\" && exit 1",\n    "dev": "vite",\n    "build": "vite build",\n    "preview": "vite preview --host 127.0.0.1",\n    "check:ui": "node ' +
+      ',\n    "test": "echo \\"Error: no test specified\\" && exit 1",\n    "dev": "vite",\n    "build": "vite build",\n    "preview": "vite preview --host 127.0.0.1 --port 4173 --strictPort",\n    "check:ui": "node ' +
       uiCheckPath +
       '"';
     devDependencies +=
