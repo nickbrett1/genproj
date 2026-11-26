@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * ui-check.mjs — cheap, deterministic UI verdict for a running dev server.
+ * ui-check.mjs — cheap, deterministic UI verdict for a running preview server
+ * (point UI_BASE_URL at a dev server to check that instead).
  *
  * Replaces "screenshot the page and ask a vision model" with a text verdict:
  * a few hundred tokens of JSON instead of a ~25k-token image call.
@@ -149,7 +150,7 @@ function parseArgs(argv) {
   return opts;
 }
 
-const HELP = `ui-check.mjs — cheap UI verdict for a running dev server.
+const HELP = `ui-check.mjs — cheap UI verdict for a running preview server.
 
   node scripts/ui-check.mjs [--url URL] [--expect-text S] [--expect-selector CSS]
 
@@ -251,7 +252,10 @@ async function runTier1(opts, verdict, deadline) {
     });
     html = await res.text();
   } catch (err) {
-    verdict.error('unreachable', `${opts.url} could not be fetched: ${err.message}`);
+    verdict.error(
+      'unreachable',
+      `no server answered at ${opts.url} (${err.message}); "npm run preview" serves ${DEFAULT_PAGE_URL}, and UI_BASE_URL points this check at a dev server (vite dev defaults to 5173)`,
+    );
     return;
   }
 
